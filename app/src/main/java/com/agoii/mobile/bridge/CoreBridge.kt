@@ -10,6 +10,7 @@ import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayState
 import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.core.ReplayVerification
+import com.agoii.mobile.irs.CertifiedIntent
 
 /**
  * CoreBridge — mobile runtime adapter.
@@ -18,6 +19,10 @@ import com.agoii.mobile.core.ReplayVerification
  *  - Provide a single entry point for the UI layer to call core functions.
  *  - Never introduce logic; only delegate to core modules.
  *  - Each method corresponds to exactly one core operation.
+ *
+ * IRS-01 invariant (enforced here):
+ *  - Raw user input MUST NOT enter core.
+ *  - Only a [CertifiedIntent] produced by IRS-01 may be submitted as intent_submitted.
  */
 class CoreBridge(context: Context) {
 
@@ -27,12 +32,27 @@ class CoreBridge(context: Context) {
     private val replay      = Replay(eventStore)
     private val replayTest  = ReplayTest(eventStore)
 
-    /** Append an intent_submitted event. Called when the user sends an objective. */
-    fun submitIntent(projectId: String, objective: String) {
+    /**
+     * Append an intent_submitted event from a certified intent.
+     *
+     * SYSTEM LAW: Only a [CertifiedIntent] produced by IRS-01 is accepted.
+     * Raw user input must never be passed directly here; it must first pass
+     * through [com.agoii.mobile.irs.IntentResolutionSystem.process].
+     */
+    fun submitCertifiedIntent(projectId: String, certifiedIntent: CertifiedIntent) {
         eventStore.appendEvent(
             projectId,
             "intent_submitted",
-            mapOf("objective" to objective)
+            mapOf(
+                "intent_id"            to certifiedIntent.intentId,
+                "objective"            to certifiedIntent.objective,
+                "success_criteria"     to certifiedIntent.successCriteria,
+                "constraints"          to certifiedIntent.constraints,
+                "environment"          to certifiedIntent.environment,
+                "resources"            to certifiedIntent.resources,
+                "acceptance_boundary"  to certifiedIntent.acceptanceBoundary,
+                "validation_status"    to certifiedIntent.validationStatus
+            )
         )
     }
 

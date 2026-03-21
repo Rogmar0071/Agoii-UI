@@ -7,15 +7,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -26,6 +23,8 @@ import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.Governor
 import com.agoii.mobile.core.ReplayState
 import com.agoii.mobile.core.ReplayVerification
+import com.agoii.mobile.irs.IntentResolutionSystem
+import com.agoii.mobile.irs.IrsResult
 import com.agoii.mobile.ui.theme.*
 
 /**
@@ -158,12 +157,21 @@ fun ProjectScreen(projectId: String) {
             text      = inputText,
             onTextChange = { inputText = it },
             onSend    = {
-                val objective = inputText.trim()
-                if (objective.isNotEmpty()) {
-                    bridge.submitIntent(projectId, objective)
-                    inputText = ""
-                    statusMsg = "Intent submitted."
-                    reload()
+                val rawInput = inputText.trim()
+                if (rawInput.isNotEmpty()) {
+                    when (val result = IntentResolutionSystem.process(rawInput)) {
+                        is IrsResult.Certified -> {
+                            bridge.submitCertifiedIntent(projectId, result.intent)
+                            inputText = ""
+                            statusMsg = "IRS-01: Intent certified [${result.intent.intentId.take(8)}] — submitted."
+                            reload()
+                        }
+                        is IrsResult.Rejected -> {
+                            val label = result.failureState.name.replace('_', ' ').lowercase()
+                                .replaceFirstChar { it.uppercase() }
+                            statusMsg = "IRS-01 rejected — $label: ${result.reason}"
+                        }
+                    }
                 }
             }
         )
@@ -328,6 +336,15 @@ private fun ActionBar(
 
 // ── INPUT BAR ────────────────────────────────────────────────────────────────
 
+private val INTENT_PLACEHOLDER = """
+objective: <goal>
+success_criteria: <done when>
+constraints: <limits>
+environment: <platform>
+resources: <tools>
+acceptance_boundary: <exit condition>
+""".trimIndent()
+
 @Composable
 private fun InputBar(
     text:         String,
@@ -339,29 +356,35 @@ private fun InputBar(
             .fillMaxWidth()
             .background(SurfaceVariant)
             .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.Top
     ) {
         OutlinedTextField(
             value         = text,
             onValueChange = onTextChange,
-            placeholder   = { Text("Enter objective…", color = OnSurface.copy(alpha = 0.4f), fontSize = 13.sp) },
-            modifier      = Modifier.weight(1f),
-            singleLine    = true,
-            colors        = OutlinedTextFieldDefaults.colors(
+            placeholder   = {
+                Text(
+                    INTENT_PLACEHOLDER,
+                    color    = OnSurface.copy(alpha = 0.4f),
+                    fontSize = 11.sp,
+                    style    = MonoStyle
+                )
+            },
+            modifier  = Modifier.weight(1f),
+            maxLines  = 8,
+            colors    = OutlinedTextFieldDefaults.colors(
                 focusedTextColor       = OnBackground,
                 unfocusedTextColor     = OnBackground,
                 focusedBorderColor     = Primary,
                 unfocusedBorderColor   = OnSurface.copy(alpha = 0.3f),
                 cursorColor            = Primary
             ),
-            textStyle = MonoStyle.copy(fontSize = 13.sp),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(onSend = { onSend() })
+            textStyle = MonoStyle.copy(fontSize = 12.sp)
         )
         Spacer(modifier = Modifier.width(8.dp))
         Button(
-            onClick = onSend,
-            colors  = ButtonDefaults.buttonColors(containerColor = Primary)
+            onClick  = onSend,
+            modifier = Modifier.padding(top = 4.dp),
+            colors   = ButtonDefaults.buttonColors(containerColor = Primary)
         ) {
             Text("SEND", color = Color.Black, fontSize = 13.sp)
         }
