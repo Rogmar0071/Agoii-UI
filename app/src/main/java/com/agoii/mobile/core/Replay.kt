@@ -20,6 +20,11 @@ data class ReplayState(
  *  - State is NEVER stored; it is always freshly derived from events.
  *  - The replay function must be deterministic: same events → same state.
  *  - No side effects are allowed inside this class.
+ *
+ * Contract progress:
+ *  - [contractsCompleted] counts only CONTRACT_COMPLETED events.
+ *  - CONTRACT_STARTED updates the phase but does NOT increment the counter
+ *    (a contract is only considered done once it is completed).
  */
 class Replay(private val eventStore: EventRepository) {
 
@@ -63,8 +68,13 @@ class Replay(private val eventStore: EventRepository) {
                                 ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
                     }
                 }
-                EventTypes.CONTRACT_EXECUTED -> {
-                    phase = EventTypes.CONTRACT_EXECUTED
+                EventTypes.CONTRACT_STARTED -> {
+                    // A contract has been opened; not yet counted as completed.
+                    phase = EventTypes.CONTRACT_STARTED
+                }
+                EventTypes.CONTRACT_COMPLETED -> {
+                    // A contract has been fully executed; increment the counter.
+                    phase = EventTypes.CONTRACT_COMPLETED
                     contractsCompleted++
                 }
                 EventTypes.ASSEMBLY_COMPLETED -> {

@@ -55,7 +55,9 @@ User taps APPROVE:
 User taps RUN STEP (repeat until complete):
   → run_governor(project_id)
   → Appends: execution_started
-  → Appends: contract_executed × 3
+  → Appends: contract_started (contract 1) → contract_completed (contract 1)
+  → Appends: contract_started (contract 2) → contract_completed (contract 2)
+  → Appends: contract_started (contract 3) → contract_completed (contract 3)
   → Appends: assembly_completed
 
 After every action, UI reloads:
@@ -92,8 +94,9 @@ Valid automatic transitions:
 intent_submitted    → contracts_generated
 contracts_generated → contracts_ready
 contracts_approved  → execution_started
-execution_started   → contract_executed (× total_contracts)
-contract_executed   → assembly_completed (when all executed)
+execution_started   → contract_started (contract 1)
+contract_started    → contract_completed (per contract)
+contract_completed  → contract_started (next contract) OR assembly_completed (when all done)
 ```
 
 User-driven events (not governor):
@@ -133,7 +136,7 @@ fun verifyReplay(projectId: String): ReplayVerification
 ```
 
 Allowed event types: `intent_submitted`, `contracts_generated`, `contracts_ready`,
-`contracts_approved`, `execution_started`, `contract_executed`, `assembly_completed`
+`contracts_approved`, `execution_started`, `contract_started`, `contract_completed`, `assembly_completed`
 
 ---
 

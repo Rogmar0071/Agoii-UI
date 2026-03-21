@@ -11,7 +11,8 @@ object EventTypes {
     const val CONTRACTS_READY     = "contracts_ready"
     const val CONTRACTS_APPROVED  = "contracts_approved"
     const val EXECUTION_STARTED   = "execution_started"
-    const val CONTRACT_EXECUTED   = "contract_executed"
+    const val CONTRACT_STARTED    = "contract_started"
+    const val CONTRACT_COMPLETED  = "contract_completed"
     const val ASSEMBLY_COMPLETED  = "assembly_completed"
 
     val ALL: Set<String> = setOf(
@@ -20,7 +21,8 @@ object EventTypes {
         CONTRACTS_READY,
         CONTRACTS_APPROVED,
         EXECUTION_STARTED,
-        CONTRACT_EXECUTED,
+        CONTRACT_STARTED,
+        CONTRACT_COMPLETED,
         ASSEMBLY_COMPLETED
     )
 

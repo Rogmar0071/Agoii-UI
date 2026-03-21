@@ -12,6 +12,11 @@ data class AuditResult(
 /**
  * Validates that every event in the ledger follows the legal transition table.
  * No state is mutated; only the ledger file is read.
+ *
+ * Contract lifecycle enforced:
+ *   execution_started → contract_started → contract_completed
+ *                                       ↗ (next contract)
+ *                       contract_started → contract_completed → assembly_completed
  */
 class LedgerAudit(private val eventStore: EventRepository) {
 
@@ -54,15 +59,18 @@ class LedgerAudit(private val eventStore: EventRepository) {
     }
 
     private fun isLegalTransition(from: String, to: String): Boolean {
-        // Standard governor-driven transitions
+        // Standard governor-driven single-step transitions
         if (Governor.VALID_TRANSITIONS[from] == to) return true
         // User-driven: approval after contracts are ready
         if (from == EventTypes.CONTRACTS_READY && to == EventTypes.CONTRACTS_APPROVED) return true
-        // Repeated governor step: contract execution
-        if ((from == EventTypes.EXECUTION_STARTED || from == EventTypes.CONTRACT_EXECUTED) &&
-            to == EventTypes.CONTRACT_EXECUTED) return true
-        // Final assembly after all contracts executed
-        if (from == EventTypes.CONTRACT_EXECUTED && to == EventTypes.ASSEMBLY_COMPLETED) return true
+        // Governor: execution begins — start the first contract
+        if (from == EventTypes.EXECUTION_STARTED && to == EventTypes.CONTRACT_STARTED) return true
+        // Governor: open contract is completed
+        if (from == EventTypes.CONTRACT_STARTED && to == EventTypes.CONTRACT_COMPLETED) return true
+        // Governor: completed contract leads to the next one
+        if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.CONTRACT_STARTED) return true
+        // Governor: all contracts completed — assemble
+        if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.ASSEMBLY_COMPLETED) return true
         return false
     }
 }

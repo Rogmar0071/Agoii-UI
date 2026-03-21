@@ -284,10 +284,11 @@ private fun EventRow(event: Event) {
 }
 
 private fun eventBubbleColor(type: String): Color = when (type) {
-    EventTypes.ASSEMBLY_COMPLETED                    -> EventComplete
-    EventTypes.CONTRACTS_APPROVED, EventTypes.CONTRACTS_READY -> EventApproval
-    EventTypes.CONTRACT_EXECUTED, EventTypes.EXECUTION_STARTED -> EventExecution
-    else                                             -> EventSystem  // intent_submitted, contracts_generated
+    EventTypes.ASSEMBLY_COMPLETED                                                   -> EventComplete
+    EventTypes.CONTRACTS_APPROVED, EventTypes.CONTRACTS_READY                      -> EventApproval
+    EventTypes.CONTRACT_STARTED, EventTypes.CONTRACT_COMPLETED,
+    EventTypes.EXECUTION_STARTED                                                    -> EventExecution
+    else                                                                            -> EventSystem
 }
 
 // ── ACTION BAR ───────────────────────────────────────────────────────────────
