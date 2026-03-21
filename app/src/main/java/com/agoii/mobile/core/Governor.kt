@@ -10,13 +10,17 @@ package com.agoii.mobile.core
  *  - Never mutates state directly.
  *  - Stops and returns WAITING_FOR_APPROVAL when the last event is contracts_ready.
  *
- * Contract execution lifecycle (one governor call per step):
+ * Full execution lifecycle (one governor call per arrow):
  *   execution_started
- *     → contract_started  (contract 1)
- *     → contract_completed (contract 1)
- *     → contract_started  (contract 2)
- *     → contract_completed (contract 2)
+ *     → contract_started  (position=1, total=N)
+ *     → contract_completed (position=1, total=N)
+ *     → contract_started  (position=2, total=N)
+ *     → contract_completed (position=2, total=N)
  *     …
+ *     → contract_completed (position=N, total=N)
+ *     → execution_completed
+ *     → assembly_started
+ *     → assembly_validated
  *     → assembly_completed
  */
 class Governor(private val eventStore: EventRepository) {
@@ -27,13 +31,17 @@ class Governor(private val eventStore: EventRepository) {
          * User-driven transitions (intent_submitted, contracts_approved) are NOT listed here
          * because they are triggered by UI actions, not the governor.
          *
-         * Contract lifecycle steps (contract_started ↔ contract_completed) are handled
-         * separately because they repeat N times and depend on ledger-derived state.
+         * Contract lifecycle steps (contract_started ↔ contract_completed) repeat N times
+         * and depend on ledger-derived state; they are handled in dedicated branches below.
+         * The full assembly pipeline is driven entirely by this map after all contracts complete.
          */
         val VALID_TRANSITIONS: Map<String, String> = mapOf(
             EventTypes.INTENT_SUBMITTED    to EventTypes.CONTRACTS_GENERATED,
             EventTypes.CONTRACTS_GENERATED to EventTypes.CONTRACTS_READY,
-            EventTypes.CONTRACTS_APPROVED  to EventTypes.EXECUTION_STARTED
+            EventTypes.CONTRACTS_APPROVED  to EventTypes.EXECUTION_STARTED,
+            EventTypes.EXECUTION_COMPLETED to EventTypes.ASSEMBLY_STARTED,
+            EventTypes.ASSEMBLY_STARTED    to EventTypes.ASSEMBLY_VALIDATED,
+            EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED
         )
     }
 
@@ -42,7 +50,7 @@ class Governor(private val eventStore: EventRepository) {
         ADVANCED,
         /** Governor is paused; waiting for explicit user approval. */
         WAITING_FOR_APPROVAL,
-        /** Execution is complete (assembly_completed reached). */
+        /** Execution is fully complete (assembly_completed reached). */
         COMPLETED,
         /** Ledger is empty or in an unknown terminal state. */
         NO_EVENT
@@ -56,56 +64,68 @@ class Governor(private val eventStore: EventRepository) {
         val lastType  = lastEvent.type
 
         return when {
-            // ── Approval gate — MUST stop; do not append anything ─────────
+            // ── Approval gate — MUST stop; do not append anything ─────────────────
             lastType == EventTypes.CONTRACTS_READY    -> GovernorResult.WAITING_FOR_APPROVAL
 
-            // ── Terminal state ─────────────────────────────────────────────
+            // ── Terminal state ────────────────────────────────────────────────────
             lastType == EventTypes.ASSEMBLY_COMPLETED -> GovernorResult.COMPLETED
 
-            // ── Start first contract after execution_started ───────────────
+            // ── execution_started → start the first contract ──────────────────────
+            // Reads total from replay so the value is ledger-derived, not inferred.
             lastType == EventTypes.EXECUTION_STARTED -> {
+                val total = Replay(eventStore).replay(projectId).totalContracts
                 eventStore.appendEvent(
                     projectId, EventTypes.CONTRACT_STARTED,
-                    mapOf("contract_index" to 0, "contract_id" to "contract_1")
+                    mapOf(
+                        "contract_id" to "contract_1",
+                        "position"    to 1,
+                        "total"       to total
+                    )
                 )
                 GovernorResult.ADVANCED
             }
 
-            // ── Complete the currently open contract ───────────────────────
+            // ── contract_started → complete the same contract ─────────────────────
+            // Reads position/total from the last event payload — no inference needed.
             lastType == EventTypes.CONTRACT_STARTED -> {
+                val position = resolveInt(lastEvent.payload["position"]) ?: 1
+                val total    = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
                 eventStore.appendEvent(
                     projectId, EventTypes.CONTRACT_COMPLETED,
                     mapOf(
-                        "contract_index" to (lastEvent.payload["contract_index"] ?: 0),
-                        "contract_id"    to (lastEvent.payload["contract_id"]    ?: "unknown")
+                        "contract_id" to (lastEvent.payload["contract_id"] ?: "unknown"),
+                        "position"    to position,
+                        "total"       to total
                     )
                 )
                 GovernorResult.ADVANCED
             }
 
-            // ── After a contract completes: start next or assemble ─────────
+            // ── contract_completed → start next contract OR emit execution_completed
+            // Reads position/total from the last event payload — fully explicit, no replay.
             lastType == EventTypes.CONTRACT_COMPLETED -> {
-                val state = Replay(eventStore).replay(projectId)
-                if (state.contractsCompleted < state.totalContracts) {
-                    val idx = state.contractsCompleted          // next contract (0-based)
+                val position = resolveInt(lastEvent.payload["position"]) ?: 1
+                val total    = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
+                if (position < total) {
+                    val nextPosition = position + 1
                     eventStore.appendEvent(
                         projectId, EventTypes.CONTRACT_STARTED,
                         mapOf(
-                            "contract_index" to idx,
-                            "contract_id"    to "contract_${idx + 1}"
+                            "contract_id" to "contract_$nextPosition",
+                            "position"    to nextPosition,
+                            "total"       to total
                         )
                     )
-                    GovernorResult.ADVANCED
                 } else {
                     eventStore.appendEvent(
-                        projectId, EventTypes.ASSEMBLY_COMPLETED,
-                        mapOf("contracts_completed" to state.totalContracts)
+                        projectId, EventTypes.EXECUTION_COMPLETED,
+                        mapOf("contracts_completed" to total)
                     )
-                    GovernorResult.COMPLETED
                 }
+                GovernorResult.ADVANCED
             }
 
-            // ── Standard single-step governor transition ───────────────────
+            // ── Standard single-step governor transition (covers assembly pipeline) ─
             VALID_TRANSITIONS.containsKey(lastType) -> {
                 val nextType = VALID_TRANSITIONS[lastType]!!
                 val payload  = buildPayload(nextType, lastEvent)
@@ -135,4 +155,13 @@ class Governor(private val eventStore: EventRepository) {
             EventTypes.EXECUTION_STARTED -> mapOf("total_contracts" to EventTypes.DEFAULT_TOTAL_CONTRACTS)
             else                         -> emptyMap()
         }
+
+    /** Gson deserialises all numbers as Double; this helper normalises to Int. */
+    private fun resolveInt(value: Any?): Int? = when (value) {
+        is Int    -> value
+        is Double -> value.toInt()
+        is Long   -> value.toInt()
+        is String -> value.toIntOrNull()
+        else      -> null
+    }
 }

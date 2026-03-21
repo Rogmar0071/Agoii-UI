@@ -18,12 +18,15 @@ import org.junit.Test
  *
  * Canonical contract lifecycle (per Agoii Master governance):
  *   execution_started
- *     → contract_started  (contract 1)
- *     → contract_completed (contract 1)
- *     → contract_started  (contract 2)
- *     → contract_completed (contract 2)
- *     → contract_started  (contract 3)
- *     → contract_completed (contract 3)
+ *     → contract_started  (position=1, total=N)
+ *     → contract_completed (position=1, total=N)
+ *     → contract_started  (position=2, total=N)
+ *     → contract_completed (position=2, total=N)
+ *     …
+ *     → contract_completed (position=N, total=N)
+ *     → execution_completed
+ *     → assembly_started
+ *     → assembly_validated
  *     → assembly_completed
  */
 class CoreTest {
@@ -38,6 +41,8 @@ class CoreTest {
         assertEquals(0, state.totalContracts)
         assertFalse(state.executionStarted)
         assertFalse(state.executionCompleted)
+        assertFalse(state.assemblyStarted)
+        assertFalse(state.assemblyValidated)
         assertNull(state.objective)
     }
 
@@ -69,26 +74,53 @@ class CoreTest {
             Event("contracts_ready",     emptyMap()),
             Event("contracts_approved",  emptyMap()),
             Event("execution_started",   mapOf("total_contracts" to 3.0)),
-            Event("contract_started",    mapOf("contract_index" to 0, "contract_id" to "contract_1")),
-            Event("contract_completed",  mapOf("contract_index" to 0, "contract_id" to "contract_1")),
-            Event("contract_started",    mapOf("contract_index" to 1, "contract_id" to "contract_2"))
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+            Event("contract_started",    mapOf("contract_id" to "contract_2", "position" to 2, "total" to 3))
         )
         val state = Replay(store()).deriveState(events)
         assertEquals(EventTypes.CONTRACT_STARTED, state.phase)
-        // Only the one contract_completed event counts
+        // Only the one contract_completed event counts; contract_started does not
         assertEquals(1, state.contractsCompleted)
         assertTrue(state.executionStarted)
         assertFalse(state.executionCompleted)
+        assertFalse(state.assemblyStarted)
+        assertFalse(state.assemblyValidated)
     }
 
     @Test
-    fun `replay marks execution completed on assembly_completed`() {
+    fun `replay sets executionCompleted on execution_completed event`() {
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 2.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 2.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 2)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 2)),
+            Event("contract_started",    mapOf("contract_id" to "contract_2", "position" to 2, "total" to 2)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_2", "position" to 2, "total" to 2)),
+            Event("execution_completed", mapOf("contracts_completed" to 2))
+        )
+        val state = Replay(store()).deriveState(events)
+        assertEquals(EventTypes.EXECUTION_COMPLETED, state.phase)
+        assertEquals(2, state.contractsCompleted)
+        assertTrue(state.executionStarted)
+        assertTrue(state.executionCompleted)
+        assertFalse(state.assemblyStarted)
+        assertFalse(state.assemblyValidated)
+    }
+
+    @Test
+    fun `replay tracks full assembly pipeline flags`() {
         val state = Replay(store()).deriveState(buildFullLedger())
-        assertEquals("assembly_completed", state.phase)
+        assertEquals(EventTypes.ASSEMBLY_COMPLETED, state.phase)
         assertEquals(3, state.contractsCompleted)
         assertEquals(3, state.totalContracts)
         assertTrue(state.executionStarted)
         assertTrue(state.executionCompleted)
+        assertTrue(state.assemblyStarted)
+        assertTrue(state.assemblyValidated)
     }
 
     // ── LedgerAudit tests ────────────────────────────────────────────────────
@@ -104,9 +136,9 @@ class CoreTest {
     fun `audit passes for complete valid ledger`() {
         val result = LedgerAudit(store(buildFullLedger())).auditLedger("proj")
         assertTrue("Unexpected errors: ${result.errors}", result.valid)
-        // 1 intent + 1 generated + 1 ready + 1 approved + 1 started
-        // + 3*(contract_started + contract_completed) + 1 assembly = 12
-        assertEquals(12, result.checkedEvents)
+        // 5 pre-execution + 3*(contract_started+contract_completed)
+        // + execution_completed + assembly_started + assembly_validated + assembly_completed = 15
+        assertEquals(15, result.checkedEvents)
     }
 
     @Test
@@ -162,7 +194,46 @@ class CoreTest {
             Event("contracts_approved",  emptyMap()),
             Event("execution_started",   mapOf("total_contracts" to 3.0)),
             // Skipping contract_started — illegal
-            Event("contract_completed",  mapOf("contract_index" to 0))
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3))
+        )
+        val result = LedgerAudit(store(events)).auditLedger("proj")
+        assertFalse(result.valid)
+        assertTrue(result.errors.any { it.contains("Illegal transition") })
+    }
+
+    @Test
+    fun `audit rejects direct jump from contract_completed to assembly_completed`() {
+        // contract_completed must now go through execution_completed → assembly_started → ...
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 1.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 1.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            // Skipping execution_completed → assembly_started → assembly_validated — illegal
+            Event("assembly_completed",  emptyMap())
+        )
+        val result = LedgerAudit(store(events)).auditLedger("proj")
+        assertFalse(result.valid)
+        assertTrue(result.errors.any { it.contains("Illegal transition") })
+    }
+
+    @Test
+    fun `audit rejects skipping assembly_validated`() {
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 1.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 1.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("execution_completed", mapOf("contracts_completed" to 1)),
+            Event("assembly_started",    emptyMap()),
+            // Skipping assembly_validated — illegal
+            Event("assembly_completed",  emptyMap())
         )
         val result = LedgerAudit(store(events)).auditLedger("proj")
         assertFalse(result.valid)
@@ -179,19 +250,45 @@ class CoreTest {
 
     @Test
     fun `verify_replay detects illegal transition when jumping to assembly early`() {
+        // Jumps from contract_completed (1 of 3) directly to assembly_completed — illegal.
+        // The audit catches this because contract_completed → assembly_completed is not a
+        // legal transition (must flow through execution_completed first).
         val events = listOf(
             Event("intent_submitted",    mapOf("objective" to "obj")),
             Event("contracts_generated", mapOf("total" to 3.0)),
             Event("contracts_ready",     emptyMap()),
             Event("contracts_approved",  emptyMap()),
             Event("execution_started",   mapOf("total_contracts" to 3.0)),
-            Event("contract_started",    mapOf("contract_index" to 0, "contract_id" to "contract_1")),
-            Event("contract_completed",  mapOf("contract_index" to 0, "contract_id" to "contract_1")),
-            // Jump to assembly after only 1 of 3 contracts — illegal
-            Event("assembly_completed",  mapOf("contracts_completed" to 3))
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+            Event("assembly_completed",  emptyMap())
         )
         val result = ReplayTest(store(events)).verifyReplay("proj")
         assertFalse(result.valid)
+    }
+
+    @Test
+    fun `verify_replay detects execution_completed before all contracts done`() {
+        // Manually crafted ledger with execution_completed but only 1 of 3 contracts done.
+        // ReplayTest invariant 3 catches this.
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 3.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 3.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+            // execution_completed with only 1 of 3 contracts done
+            Event("execution_completed", mapOf("contracts_completed" to 1)),
+            Event("assembly_started",    emptyMap()),
+            Event("assembly_validated",  emptyMap()),
+            Event("assembly_completed",  emptyMap())
+        )
+        val result = ReplayTest(store(events)).verifyReplay("proj")
+        // Replay invariant: execution_completed only if all contracts completed
+        assertFalse(result.valid)
+        assertTrue(result.invariantErrors.any { it.contains("execution_completed") })
     }
 
     // ── Governor tests ────────────────────────────────────────────────────────
@@ -232,7 +329,10 @@ class CoreTest {
         )
         val s = store(events)
         assertEquals(Governor.GovernorResult.ADVANCED, Governor(s).runGovernor("proj"))
-        assertEquals(EventTypes.CONTRACT_STARTED, s.loadEvents("proj").last().type)
+        val last = s.loadEvents("proj").last()
+        assertEquals(EventTypes.CONTRACT_STARTED, last.type)
+        assertEquals(1, last.payload["position"])
+        assertEquals(3, last.payload["total"])
     }
 
     @Test
@@ -243,15 +343,84 @@ class CoreTest {
             Event("contracts_ready",     emptyMap()),
             Event("contracts_approved",  emptyMap()),
             Event("execution_started",   mapOf("total_contracts" to 3.0)),
-            Event("contract_started",    mapOf("contract_index" to 0, "contract_id" to "contract_1"))
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3))
         )
         val s = store(events)
         assertEquals(Governor.GovernorResult.ADVANCED, Governor(s).runGovernor("proj"))
-        assertEquals(EventTypes.CONTRACT_COMPLETED, s.loadEvents("proj").last().type)
+        val last = s.loadEvents("proj").last()
+        assertEquals(EventTypes.CONTRACT_COMPLETED, last.type)
+        assertEquals(1, last.payload["position"])
+        assertEquals(3, last.payload["total"])
     }
 
     @Test
-    fun `governor executes all contracts step by step then assembles`() {
+    fun `governor advances to next contract after contract_completed when more remain`() {
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 3.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 3.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3))
+        )
+        val s = store(events)
+        assertEquals(Governor.GovernorResult.ADVANCED, Governor(s).runGovernor("proj"))
+        val last = s.loadEvents("proj").last()
+        assertEquals(EventTypes.CONTRACT_STARTED, last.type)
+        assertEquals(2, last.payload["position"])
+        assertEquals(3, last.payload["total"])
+    }
+
+    @Test
+    fun `governor emits execution_completed after last contract_completed`() {
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 2.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 2.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 2)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 2)),
+            Event("contract_started",    mapOf("contract_id" to "contract_2", "position" to 2, "total" to 2)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_2", "position" to 2, "total" to 2))
+        )
+        val s = store(events)
+        assertEquals(Governor.GovernorResult.ADVANCED, Governor(s).runGovernor("proj"))
+        assertEquals(EventTypes.EXECUTION_COMPLETED, s.loadEvents("proj").last().type)
+    }
+
+    @Test
+    fun `governor drives full assembly pipeline after execution_completed`() {
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 1.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 1.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("execution_completed", mapOf("contracts_completed" to 1))
+        )
+        val s   = store(events)
+        val gov = Governor(s)
+
+        assertEquals(Governor.GovernorResult.ADVANCED,  gov.runGovernor("proj"))
+        assertEquals(EventTypes.ASSEMBLY_STARTED,   s.loadEvents("proj").last().type)
+
+        assertEquals(Governor.GovernorResult.ADVANCED,  gov.runGovernor("proj"))
+        assertEquals(EventTypes.ASSEMBLY_VALIDATED, s.loadEvents("proj").last().type)
+
+        assertEquals(Governor.GovernorResult.ADVANCED,  gov.runGovernor("proj"))
+        assertEquals(EventTypes.ASSEMBLY_COMPLETED, s.loadEvents("proj").last().type)
+
+        // Terminal — no further events appended
+        assertEquals(Governor.GovernorResult.COMPLETED, gov.runGovernor("proj"))
+        assertEquals(EventTypes.ASSEMBLY_COMPLETED, s.loadEvents("proj").last().type)
+    }
+
+    @Test
+    fun `governor executes all contracts step by step then full assembly pipeline`() {
         val initial = listOf(
             Event("intent_submitted",    mapOf("objective" to "obj")),
             Event("contracts_generated", mapOf("total" to 3.0)),
@@ -262,8 +431,11 @@ class CoreTest {
         val s   = store(initial)
         val gov = Governor(s)
 
-        // 3 contracts × 2 steps (started + completed) = 6 ADVANCED, then 1 COMPLETED
-        repeat(6) { step ->
+        // 3 contracts × 2 steps each = 6 ADVANCED
+        // + execution_completed, assembly_started, assembly_validated = 3 ADVANCED
+        // + assembly_completed (emitted via VALID_TRANSITIONS) = 1 ADVANCED
+        // + terminal detection (ASSEMBLY_COMPLETED already last) = 1 COMPLETED
+        repeat(10) { step ->
             assertEquals(
                 "Expected ADVANCED at step $step",
                 Governor.GovernorResult.ADVANCED, gov.runGovernor("proj")
@@ -273,16 +445,19 @@ class CoreTest {
 
         val events = s.loadEvents("proj")
         assertEquals(EventTypes.ASSEMBLY_COMPLETED, events.last().type)
-        assertEquals(3, events.count { it.type == EventTypes.CONTRACT_STARTED })
-        assertEquals(3, events.count { it.type == EventTypes.CONTRACT_COMPLETED })
+        assertEquals(3,  events.count { it.type == EventTypes.CONTRACT_STARTED })
+        assertEquals(3,  events.count { it.type == EventTypes.CONTRACT_COMPLETED })
+        assertEquals(1,  events.count { it.type == EventTypes.EXECUTION_COMPLETED })
+        assertEquals(1,  events.count { it.type == EventTypes.ASSEMBLY_STARTED })
+        assertEquals(1,  events.count { it.type == EventTypes.ASSEMBLY_VALIDATED })
         // Must not contain the removed event type
-        assertEquals(0, events.count { it.type == "contract_executed" })
+        assertEquals(0,  events.count { it.type == "contract_executed" })
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /**
-     * Canonical 12-event full ledger for a completed 3-contract project.
+     * Canonical 15-event full ledger for a completed 3-contract project.
      *
      * Sequence:
      *   intent_submitted, contracts_generated, contracts_ready, contracts_approved,
@@ -290,7 +465,8 @@ class CoreTest {
      *   contract_started (1), contract_completed (1),
      *   contract_started (2), contract_completed (2),
      *   contract_started (3), contract_completed (3),
-     *   assembly_completed
+     *   execution_completed,
+     *   assembly_started, assembly_validated, assembly_completed
      */
     private fun buildFullLedger(): List<Event> = listOf(
         Event("intent_submitted",    mapOf("objective" to "Build the core")),
@@ -298,13 +474,16 @@ class CoreTest {
         Event("contracts_ready",     mapOf("total_contracts" to 3.0)),
         Event("contracts_approved",  emptyMap()),
         Event("execution_started",   mapOf("total_contracts" to 3.0)),
-        Event("contract_started",    mapOf("contract_index" to 0, "contract_id" to "contract_1")),
-        Event("contract_completed",  mapOf("contract_index" to 0, "contract_id" to "contract_1")),
-        Event("contract_started",    mapOf("contract_index" to 1, "contract_id" to "contract_2")),
-        Event("contract_completed",  mapOf("contract_index" to 1, "contract_id" to "contract_2")),
-        Event("contract_started",    mapOf("contract_index" to 2, "contract_id" to "contract_3")),
-        Event("contract_completed",  mapOf("contract_index" to 2, "contract_id" to "contract_3")),
-        Event("assembly_completed",  mapOf("contracts_completed" to 3))
+        Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+        Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+        Event("contract_started",    mapOf("contract_id" to "contract_2", "position" to 2, "total" to 3)),
+        Event("contract_completed",  mapOf("contract_id" to "contract_2", "position" to 2, "total" to 3)),
+        Event("contract_started",    mapOf("contract_id" to "contract_3", "position" to 3, "total" to 3)),
+        Event("contract_completed",  mapOf("contract_id" to "contract_3", "position" to 3, "total" to 3)),
+        Event("execution_completed", mapOf("contracts_completed" to 3)),
+        Event("assembly_started",    emptyMap()),
+        Event("assembly_validated",  emptyMap()),
+        Event("assembly_completed",  emptyMap())
     )
 
     private fun store(initial: List<Event> = emptyList()): EventRepository =

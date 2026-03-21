@@ -10,6 +10,8 @@ data class ReplayState(
     val totalContracts: Int,
     val executionStarted: Boolean,
     val executionCompleted: Boolean,
+    val assemblyStarted: Boolean,
+    val assemblyValidated: Boolean,
     val objective: String?
 )
 
@@ -22,9 +24,9 @@ data class ReplayState(
  *  - No side effects are allowed inside this class.
  *
  * Contract progress:
- *  - [contractsCompleted] counts only CONTRACT_COMPLETED events.
- *  - CONTRACT_STARTED updates the phase but does NOT increment the counter
- *    (a contract is only considered done once it is completed).
+ *  - [contractsCompleted] counts ONLY contract_completed events.
+ *  - contract_started advances the phase but does NOT increment the counter.
+ *  - execution_completed sets [executionCompleted]; assembly events advance their own flags.
  */
 class Replay(private val eventStore: EventRepository) {
 
@@ -40,6 +42,8 @@ class Replay(private val eventStore: EventRepository) {
         var totalContracts = 0
         var executionStarted = false
         var executionCompleted = false
+        var assemblyStarted = false
+        var assemblyValidated = false
         var objective: String? = null
 
         for (event in events) {
@@ -69,17 +73,29 @@ class Replay(private val eventStore: EventRepository) {
                     }
                 }
                 EventTypes.CONTRACT_STARTED -> {
-                    // A contract has been opened; not yet counted as completed.
+                    // Contract has been opened; not yet counted as completed.
                     phase = EventTypes.CONTRACT_STARTED
                 }
                 EventTypes.CONTRACT_COMPLETED -> {
-                    // A contract has been fully executed; increment the counter.
+                    // Contract has been fully executed; increment the counter.
                     phase = EventTypes.CONTRACT_COMPLETED
                     contractsCompleted++
                 }
+                EventTypes.EXECUTION_COMPLETED -> {
+                    // All contracts done; contract-execution phase is closed.
+                    phase = EventTypes.EXECUTION_COMPLETED
+                    executionCompleted = true
+                }
+                EventTypes.ASSEMBLY_STARTED -> {
+                    phase = EventTypes.ASSEMBLY_STARTED
+                    assemblyStarted = true
+                }
+                EventTypes.ASSEMBLY_VALIDATED -> {
+                    phase = EventTypes.ASSEMBLY_VALIDATED
+                    assemblyValidated = true
+                }
                 EventTypes.ASSEMBLY_COMPLETED -> {
                     phase = EventTypes.ASSEMBLY_COMPLETED
-                    executionCompleted = true
                 }
             }
         }
@@ -90,6 +106,8 @@ class Replay(private val eventStore: EventRepository) {
             totalContracts = totalContracts,
             executionStarted = executionStarted,
             executionCompleted = executionCompleted,
+            assemblyStarted = assemblyStarted,
+            assemblyValidated = assemblyValidated,
             objective = objective
         )
     }

@@ -13,10 +13,11 @@ data class AuditResult(
  * Validates that every event in the ledger follows the legal transition table.
  * No state is mutated; only the ledger file is read.
  *
- * Contract lifecycle enforced:
- *   execution_started → contract_started → contract_completed
- *                                       ↗ (next contract)
- *                       contract_started → contract_completed → assembly_completed
+ * Full legal lifecycle enforced:
+ *   execution_started → contract_started (position=1)
+ *   contract_started  → contract_completed (same position)
+ *   contract_completed → contract_started (next) OR execution_completed (when all done)
+ *   execution_completed → assembly_started → assembly_validated → assembly_completed
  */
 class LedgerAudit(private val eventStore: EventRepository) {
 
@@ -59,7 +60,7 @@ class LedgerAudit(private val eventStore: EventRepository) {
     }
 
     private fun isLegalTransition(from: String, to: String): Boolean {
-        // Standard governor-driven single-step transitions
+        // Standard governor-driven single-step transitions (includes assembly pipeline)
         if (Governor.VALID_TRANSITIONS[from] == to) return true
         // User-driven: approval after contracts are ready
         if (from == EventTypes.CONTRACTS_READY && to == EventTypes.CONTRACTS_APPROVED) return true
@@ -69,8 +70,8 @@ class LedgerAudit(private val eventStore: EventRepository) {
         if (from == EventTypes.CONTRACT_STARTED && to == EventTypes.CONTRACT_COMPLETED) return true
         // Governor: completed contract leads to the next one
         if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.CONTRACT_STARTED) return true
-        // Governor: all contracts completed — assemble
-        if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.ASSEMBLY_COMPLETED) return true
+        // Governor: all contracts completed — close the execution phase
+        if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.EXECUTION_COMPLETED) return true
         return false
     }
 }
