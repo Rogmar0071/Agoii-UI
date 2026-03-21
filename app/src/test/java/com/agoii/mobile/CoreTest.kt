@@ -454,6 +454,124 @@ class CoreTest {
         assertEquals(0,  events.count { it.type == "contract_executed" })
     }
 
+    // ── Governor Lock Certification tests ────────────────────────────────────
+
+    /**
+     * LOCK STEP 1 — EVENT MODEL LOCK
+     * Verifies EventTypes.ALL is frozen: exactly the 11 defined event types, no more, no less.
+     */
+    @Test
+    fun `lock - EventTypes ALL is frozen with exactly the 11 locked event types`() {
+        val locked = setOf(
+            "intent_submitted",
+            "contracts_generated",
+            "contracts_ready",
+            "contracts_approved",
+            "execution_started",
+            "contract_started",
+            "contract_completed",
+            "execution_completed",
+            "assembly_started",
+            "assembly_validated",
+            "assembly_completed"
+        )
+        assertEquals("EventTypes.ALL must contain exactly 11 locked event types", 11, EventTypes.ALL.size)
+        assertEquals("EventTypes.ALL must match the locked set exactly", locked, EventTypes.ALL)
+    }
+
+    /**
+     * LOCK STEP 2 — TRANSITION LOCK
+     * Verifies Governor.VALID_TRANSITIONS is frozen: exactly the 6 defined governor transitions.
+     */
+    @Test
+    fun `lock - Governor VALID_TRANSITIONS is frozen with exactly the 6 locked entries`() {
+        val locked = mapOf(
+            "intent_submitted"    to "contracts_generated",
+            "contracts_generated" to "contracts_ready",
+            "contracts_approved"  to "execution_started",
+            "execution_completed" to "assembly_started",
+            "assembly_started"    to "assembly_validated",
+            "assembly_validated"  to "assembly_completed"
+        )
+        assertEquals("VALID_TRANSITIONS must contain exactly 6 locked entries", 6, Governor.VALID_TRANSITIONS.size)
+        assertEquals("VALID_TRANSITIONS must match the locked map exactly", locked, Governor.VALID_TRANSITIONS)
+    }
+
+    /**
+     * LOCK STEP 7 — CANONICAL 2-CONTRACT FULL FLOW
+     * Validates the exact 13-event sequence specified in the lock certification:
+     *   intent_submitted → contracts_generated → contracts_ready → contracts_approved
+     *   → execution_started
+     *   → contract_started (1) → contract_completed (1)
+     *   → contract_started (2) → contract_completed (2)
+     *   → execution_completed → assembly_started → assembly_validated → assembly_completed
+     * ASSERTS: exact event count, exact order, no duplicates, replay = VALID, audit = VALID.
+     */
+    @Test
+    fun `lock - canonical 2-contract full flow passes audit and replay`() {
+        val expectedOrder = listOf(
+            "intent_submitted",
+            "contracts_generated",
+            "contracts_ready",
+            "contracts_approved",
+            "execution_started",
+            "contract_started",
+            "contract_completed",
+            "contract_started",
+            "contract_completed",
+            "execution_completed",
+            "assembly_started",
+            "assembly_validated",
+            "assembly_completed"
+        )
+        val ledger = listOf(
+            Event("intent_submitted",    mapOf("objective" to "Build the lock")),
+            Event("contracts_generated", mapOf("total" to 2.0, "source_intent" to "Build the lock")),
+            Event("contracts_ready",     mapOf("total_contracts" to 2.0)),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 2.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 2)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 2)),
+            Event("contract_started",    mapOf("contract_id" to "contract_2", "position" to 2, "total" to 2)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_2", "position" to 2, "total" to 2)),
+            Event("execution_completed", mapOf("contracts_completed" to 2)),
+            Event("assembly_started",    emptyMap()),
+            Event("assembly_validated",  emptyMap()),
+            Event("assembly_completed",  emptyMap())
+        )
+
+        // Exact event count
+        assertEquals("Canonical 2-contract flow must have exactly 13 events", 13, ledger.size)
+
+        // Exact order — no duplicates, no skips
+        ledger.forEachIndexed { i, event ->
+            assertEquals("Event[$i] type mismatch", expectedOrder[i], event.type)
+        }
+
+        val s = store(ledger)
+
+        // Audit must pass — all transitions legal
+        val audit = LedgerAudit(s).auditLedger("proj")
+        assertTrue("Audit must be VALID. Errors: ${audit.errors}", audit.valid)
+        assertEquals(13, audit.checkedEvents)
+
+        // Replay must reconstruct correct state with zero inference
+        val verification = ReplayTest(s).verifyReplay("proj")
+        assertTrue(
+            "ReplayTest must be VALID. Invariant errors: ${verification.invariantErrors} " +
+                    "| Audit errors: ${verification.auditResult.errors}",
+            verification.valid
+        )
+        val state = verification.replayState
+        assertEquals(EventTypes.ASSEMBLY_COMPLETED, state.phase)
+        assertEquals(2, state.contractsCompleted)
+        assertEquals(2, state.totalContracts)
+        assertTrue(state.executionStarted)
+        assertTrue(state.executionCompleted)
+        assertTrue(state.assemblyStarted)
+        assertTrue(state.assemblyValidated)
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     /**
