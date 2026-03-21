@@ -23,8 +23,8 @@ import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.Governor
 import com.agoii.mobile.core.ReplayState
 import com.agoii.mobile.core.ReplayVerification
-import com.agoii.mobile.irs.IntentResolutionSystem
-import com.agoii.mobile.irs.IrsResult
+import com.agoii.mobile.irs.IrsOrchestrator
+import com.agoii.mobile.irs.OrchestratorResult
 import com.agoii.mobile.ui.theme.*
 
 /**
@@ -46,8 +46,9 @@ import com.agoii.mobile.ui.theme.*
  */
 @Composable
 fun ProjectScreen(projectId: String) {
-    val context = LocalContext.current
-    val bridge  = remember { CoreBridge(context) }
+    val context      = LocalContext.current
+    val bridge       = remember { CoreBridge(context) }
+    val orchestrator = remember { IrsOrchestrator() }
 
     // ── UI state — all derived from ledger, never directly mutated ──────────
     var events       by remember { mutableStateOf(emptyList<Event>()) }
@@ -159,17 +160,30 @@ fun ProjectScreen(projectId: String) {
             onSend    = {
                 val rawInput = inputText.trim()
                 if (rawInput.isNotEmpty()) {
-                    when (val result = IntentResolutionSystem.process(rawInput)) {
-                        is IrsResult.Certified -> {
+                    when (val result = orchestrator.process(rawInput)) {
+                        is OrchestratorResult.Certified -> {
                             bridge.submitCertifiedIntent(projectId, result.intent)
                             inputText = ""
-                            statusMsg = "IRS-01: Intent certified [${result.intent.intentId.take(8)}] — submitted."
+                            statusMsg = "IRS-02: Intent certified [${result.intent.intentId.take(8)}] — submitted."
                             reload()
                         }
-                        is IrsResult.Rejected -> {
-                            val label = result.failureState.name.replace('_', ' ').lowercase()
+                        is OrchestratorResult.NeedsClarification -> {
+                            val req   = result.request
+                            val label = if (req.missingFields.isNotEmpty())
+                                "Missing: ${req.missingFields.joinToString(", ")}"
+                            else
+                                "Conflicts: ${req.conflicts.firstOrNull()}"
+                            statusMsg = "IRS-02: Clarification required — $label"
+                        }
+                        is OrchestratorResult.Rejected -> {
+                            val stateLabel = result.state.status.name
+                                .replace('_', ' ').lowercase()
                                 .replaceFirstChar { it.uppercase() }
-                            statusMsg = "IRS-01 rejected — $label: ${result.reason}"
+                            statusMsg = "IRS-02 rejected [$stateLabel]: ${result.reason}"
+                        }
+                        is OrchestratorResult.Advanced,
+                        is OrchestratorResult.AlreadyTerminal -> {
+                            statusMsg = "IRS-02: Unexpected terminal state — ${result.javaClass.simpleName}"
                         }
                     }
                 }
