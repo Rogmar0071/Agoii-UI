@@ -1,0 +1,31 @@
+# Android build artifacts
+*.iml
+.gradle/
+/local.properties
+/.idea/
+.DS_Store
+/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# App module build
+app/build/
+
+# Gradle caches
+.gradle/
+build/
+
+# IDE
+*.iml
+.idea/
+*.ipr
+*.iws
+out/
+
+# Generated
+gen/
