@@ -26,7 +26,8 @@ class IntentStateManager {
         val availableEvidence:       Map<String, List<EvidenceRef>>,
         val scoutReport:             KnowledgeScoutReport?,
         val evidenceValidationResult: EvidenceValidationResult?,
-        val realityValidationResult:  RealityValidationResult?
+        val realityValidationResult:  RealityValidationResult?,
+        val contractScopeInput:      ContractScopeInput
     )
 
     private val records = mutableMapOf<String, SessionRecord>()
@@ -61,7 +62,8 @@ class IntentStateManager {
             availableEvidence       = availableEvidence,
             scoutReport             = null,
             evidenceValidationResult = null,
-            realityValidationResult  = null
+            realityValidationResult  = null,
+            contractScopeInput      = ContractScopeInput.default()
         )
         return session
     }
@@ -136,13 +138,16 @@ class IntentStateManager {
     fun realityValidationResult(sessionId: String): RealityValidationResult? =
         records[sessionId]?.realityValidationResult
 
-    /**
-     * Return the reality simulation result stored during reality validation, or null.
+    /** Return the reality simulation result stored during reality validation, or null.
      * Provides direct traceability access to the simulation sub-result without navigating
      * through the full [RealityValidationResult].
      */
     fun realitySimulationResult(sessionId: String): RealitySimulationResult? =
         records[sessionId]?.realityValidationResult?.simulationResult
+
+    /** Return the contract scope input for [sessionId], or null if not found. */
+    fun contractScopeInput(sessionId: String): ContractScopeInput? =
+        records[sessionId]?.contractScopeInput
 
     /**
      * Replay the full snapshot history for [sessionId].

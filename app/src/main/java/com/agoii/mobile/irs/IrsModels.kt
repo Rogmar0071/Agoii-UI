@@ -367,13 +367,15 @@ data class PCCVResult(
  *  - [UNSTABLE]              — swarm validation failed; agents did not reach consensus (step 6)
  *  - [INFEASIBLE]            — simulation infeasible; real-world constraints cannot be met (step 7)
  *  - [PCCV_FAIL]             — precondition/certification-condition validation failed (step 8)
+ *  - [CSL_SCOPE_EXCEEDED]    — contract scope law enforcement failed; EL > VC (step 9)
  */
 enum class FailureType {
     EVIDENCE_INVALID,
     REALITY_UNVERIFIABLE,
     UNSTABLE,
     INFEASIBLE,
-    PCCV_FAIL
+    PCCV_FAIL,
+    CSL_SCOPE_EXCEEDED
 }
 
 /**
@@ -382,7 +384,7 @@ enum class FailureType {
  */
 sealed class OrchestratorResult {
     /** Intent is fully certified; no assumptions remain. */
-    object Certified : OrchestratorResult()
+    data class Certified(val contractScopeResult: ContractScopeResult) : OrchestratorResult()
 
     /** One or more mandatory fields lack sufficient evidence. */
     data class NeedsClarification(val gaps: List<String>) : OrchestratorResult()
@@ -515,4 +517,50 @@ data class IrsAuditReport(
     val divergenceDetected:   Boolean,
     val ccf:                  CcfScore,
     val approvalStatus:       String
+)
+
+// ─── CSL-1: Contract Scope Law Models ────────────────────────────────────────
+
+enum class SurfaceType { SP, GL, ST, LG, TS }
+
+val SurfaceType.weight: Int
+    get() = when (this) {
+        SurfaceType.SP -> 5
+        SurfaceType.GL -> 4
+        SurfaceType.ST -> 3
+        SurfaceType.LG -> 2
+        SurfaceType.TS -> 1
+    }
+
+data class MutationSurface(
+    val type: SurfaceType,
+    val name: String
+)
+
+data class ContractScopeInput(
+    val surfaces: List<MutationSurface>,
+    val edges: Int,
+    val crossCouplingFactor: Int,
+    val ec: Int,
+    val rc: Int,
+    val sc: Int,
+    val cc: Int,
+    val dc: Int
+) {
+    companion object {
+        fun default() = ContractScopeInput(
+            surfaces = emptyList(),
+            edges = 0,
+            crossCouplingFactor = 0,
+            ec = 1, rc = 1, sc = 1, cc = 1, dc = 1
+        )
+    }
+}
+
+data class ContractScopeResult(
+    val executionLoad: Int,
+    val validationCapacity: Int,
+    val safetyCondition: Boolean,
+    val status: String,
+    val requiredAction: String
 )

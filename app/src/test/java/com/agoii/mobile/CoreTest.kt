@@ -8,8 +8,14 @@ import com.agoii.mobile.core.LedgerAudit
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.irs.ConsensusRule
+import com.agoii.mobile.irs.ContractScopeInput
+import com.agoii.mobile.irs.ContractScopeLaw
+import com.agoii.mobile.irs.ContractScopeResult
 import com.agoii.mobile.irs.EvidenceRef
 import com.agoii.mobile.irs.EvidenceValidator
+import com.agoii.mobile.irs.MutationSurface
+import com.agoii.mobile.irs.SurfaceType
+import com.agoii.mobile.irs.weight
 import com.agoii.mobile.irs.FailureType
 import com.agoii.mobile.irs.GapDetector
 import com.agoii.mobile.irs.IntentField
@@ -1674,6 +1680,68 @@ class CoreTest {
         assertTrue(report.ccf.totalScore >= 13)
         assertEquals("LOW", report.ccf.riskLevel)
         assertEquals("APPROVED", report.approvalStatus)
+    }
+
+    // ── CSL: Contract Scope Law tests ─────────────────────────────────────────
+
+    @Test
+    fun `ContractScopeLaw EL and VC are computed correctly`() {
+        val input = ContractScopeInput(
+            surfaces = listOf(
+                MutationSurface(SurfaceType.ST, "IrsModels.kt")
+            ),
+            edges = 1,
+            crossCouplingFactor = 0,
+            ec = 2, rc = 2, sc = 0, cc = 0, dc = 3
+        )
+        val result = ContractScopeLaw().evaluate(input)
+        assertEquals(SurfaceType.ST.weight + 1 + 0, result.executionLoad)   // 3+1+0 = 4
+        assertEquals(2 + 2 + 0 + 0 + 3, result.validationCapacity)          // 7
+    }
+
+    @Test
+    fun `ContractScopeLaw VALID path when EL le VC`() {
+        val input = ContractScopeInput(
+            surfaces = listOf(MutationSurface(SurfaceType.ST, "IrsModels.kt")),
+            edges = 1,
+            crossCouplingFactor = 0,
+            ec = 2, rc = 2, sc = 0, cc = 0, dc = 3
+        )
+        val result = ContractScopeLaw().evaluate(input)
+        assertTrue(result.safetyCondition)
+        assertEquals("VALID", result.status)
+        assertEquals("PROCEED", result.requiredAction)
+    }
+
+    @Test
+    fun `ContractScopeLaw INVALID path when EL gt VC`() {
+        val input = ContractScopeInput(
+            surfaces = listOf(
+                MutationSurface(SurfaceType.SP, "BigFile.kt"),
+                MutationSurface(SurfaceType.GL, "OtherFile.kt")
+            ),
+            edges = 5,
+            crossCouplingFactor = 3,
+            ec = 1, rc = 1, sc = 0, cc = 0, dc = 1
+        )
+        val result = ContractScopeLaw().evaluate(input)
+        assertFalse(result.safetyCondition)
+        assertEquals("INVALID", result.status)
+        assertEquals("SPLIT_REQUIRED", result.requiredAction)
+    }
+
+    @Test
+    fun `ContractScopeLaw is deterministic across multiple evaluations`() {
+        val input = ContractScopeInput(
+            surfaces = listOf(MutationSurface(SurfaceType.LG, "ContractScopeLaw.kt")),
+            edges = 1,
+            crossCouplingFactor = 0,
+            ec = 2, rc = 2, sc = 0, cc = 0, dc = 3
+        )
+        val law = ContractScopeLaw()
+        val r1 = law.evaluate(input)
+        val r2 = law.evaluate(input)
+        assertEquals(r1, r2)
     }
 }
 

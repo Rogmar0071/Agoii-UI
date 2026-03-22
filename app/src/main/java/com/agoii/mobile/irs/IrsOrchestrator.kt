@@ -43,7 +43,8 @@ class IrsOrchestrator(
     private val realityValidator:     RealityValidator      = RealityValidator(),
     private val swarmValidator:       SwarmValidator        = SwarmValidator(),
     private val simulationEngine:     SimulationEngine      = SimulationEngine(),
-    private val pcCVValidator:        PCCVValidator         = PCCVValidator()
+    private val pcCVValidator:        PCCVValidator         = PCCVValidator(),
+    private val contractScopeLaw:     ContractScopeLaw      = ContractScopeLaw()
 ) {
     private val stateManager = IntentStateManager()
 
@@ -378,7 +379,29 @@ class IrsOrchestrator(
 
             // ── Step 9: Certification ─────────────────────────────────────────
             IrsStage.CERTIFICATION -> {
-                terminal(sessionId, stage, OrchestratorResult.Certified)
+                val input = stateManager.contractScopeInput(sessionId)
+                    ?: ContractScopeInput.default()
+
+                val result = contractScopeLaw.evaluate(input)
+
+                if (!result.safetyCondition) {
+                    terminal(
+                        sessionId,
+                        stage,
+                        OrchestratorResult.Rejected(
+                            reason = FailureType.CSL_SCOPE_EXCEEDED.name,
+                            details = listOf(
+                                "EL=${result.executionLoad} > VC=${result.validationCapacity}"
+                            )
+                        )
+                    )
+                } else {
+                    terminal(
+                        sessionId,
+                        stage,
+                        OrchestratorResult.Certified(result)
+                    )
+                }
             }
 
             // ── RECONSTRUCTION is handled at session creation; treat as GAP_DETECTION entry
