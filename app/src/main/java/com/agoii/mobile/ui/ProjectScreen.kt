@@ -142,6 +142,7 @@ fun ProjectScreen(projectId: String) {
                     Governor.GovernorResult.WAITING_FOR_APPROVAL -> "Waiting for approval."
                     Governor.GovernorResult.COMPLETED            -> "Execution complete."
                     Governor.GovernorResult.NO_EVENT             -> "No event to process."
+                    Governor.GovernorResult.DRIFT                -> "Governor drift detected."
                 }
                 reload()
             },
