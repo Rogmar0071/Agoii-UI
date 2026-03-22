@@ -7,6 +7,20 @@ import com.agoii.mobile.core.Governor
 import com.agoii.mobile.core.LedgerAudit
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayTest
+import com.agoii.mobile.irs.ConsensusRule
+import com.agoii.mobile.irs.EvidenceRef
+import com.agoii.mobile.irs.GapDetector
+import com.agoii.mobile.irs.IntentField
+import com.agoii.mobile.irs.IntentData
+import com.agoii.mobile.irs.IrsOrchestrator
+import com.agoii.mobile.irs.IrsStage
+import com.agoii.mobile.irs.OrchestratorResult
+import com.agoii.mobile.irs.PCCVValidator
+import com.agoii.mobile.irs.ReconstructionEngine
+import com.agoii.mobile.irs.ScoutOrchestrator
+import com.agoii.mobile.irs.SimulationEngine
+import com.agoii.mobile.irs.SwarmConfig
+import com.agoii.mobile.irs.SwarmValidator
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -606,6 +620,267 @@ class CoreTest {
 
     private fun store(initial: List<Event> = emptyList()): EventRepository =
         InMemoryEventRepository(initial)
+
+    // ── IRS — shared helpers ──────────────────────────────────────────────────
+
+    private val evidenceRef = EvidenceRef(id = "ev-001", source = "manual")
+
+    private fun fullEvidence() = mapOf(
+        "objective"   to listOf(evidenceRef),
+        "constraints" to listOf(evidenceRef),
+        "environment" to listOf(evidenceRef),
+        "resources"   to listOf(evidenceRef)
+    )
+
+    private fun fullFields() = mapOf(
+        "objective"   to "Build the system",
+        "constraints" to "must be reliable",
+        "environment" to "cloud",
+        "resources"   to "team available"
+    )
+
+    private fun majorityConfig() = SwarmConfig(agentCount = 2, consensusRule = ConsensusRule.MAJORITY)
+
+    // ── ReconstructionEngine tests ────────────────────────────────────────────
+
+    @Test
+    fun `ReconstructionEngine populates fields from raw input`() {
+        val engine = ReconstructionEngine()
+        val intent = engine.reconstruct(fullFields(), fullEvidence())
+        assertEquals("Build the system", intent.objective.value)
+        assertEquals(1, intent.objective.evidence.size)
+        assertEquals("cloud", intent.environment.value)
+    }
+
+    @Test
+    fun `ReconstructionEngine defaults missing fields to empty string`() {
+        val engine = ReconstructionEngine()
+        val intent = engine.reconstruct(emptyMap(), emptyMap())
+        assertEquals("", intent.objective.value)
+        assertTrue(intent.constraints.evidence.isEmpty())
+    }
+
+    // ── GapDetector tests ─────────────────────────────────────────────────────
+
+    @Test
+    fun `GapDetector finds no gaps when all fields have evidence`() {
+        val detector = GapDetector()
+        val intent   = ReconstructionEngine().reconstruct(fullFields(), fullEvidence())
+        val result   = detector.detect(intent)
+        assertFalse(result.hasGaps)
+        assertTrue(result.gaps.isEmpty())
+    }
+
+    @Test
+    fun `GapDetector reports gap for field with no evidence`() {
+        val detector = GapDetector()
+        val evidence = fullEvidence().toMutableMap().also { it.remove("objective") }
+        val intent   = ReconstructionEngine().reconstruct(fullFields(), evidence)
+        val result   = detector.detect(intent)
+        assertTrue(result.hasGaps)
+        assertTrue(result.gaps.contains("objective"))
+    }
+
+    @Test
+    fun `GapDetector reports all four gaps when evidence is empty`() {
+        val detector = GapDetector()
+        val intent   = ReconstructionEngine().reconstruct(emptyMap(), emptyMap())
+        val result   = detector.detect(intent)
+        assertTrue(result.hasGaps)
+        assertEquals(4, result.gaps.size)
+    }
+
+    // ── ScoutOrchestrator tests ───────────────────────────────────────────────
+
+    @Test
+    fun `ScoutOrchestrator fills gap when supplementary evidence is supplied`() {
+        val scout  = ScoutOrchestrator()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), emptyMap())
+        val result = scout.scout(intent, listOf("objective"), mapOf("objective" to listOf(evidenceRef)))
+        assertTrue(result.enriched)
+        assertTrue(result.updatedIntent.objective.evidence.isNotEmpty())
+        assertTrue(result.scoutedFields.contains("objective"))
+    }
+
+    @Test
+    fun `ScoutOrchestrator leaves intent unchanged when no supplementary evidence`() {
+        val scout  = ScoutOrchestrator()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), emptyMap())
+        val result = scout.scout(intent, listOf("objective"), emptyMap())
+        assertFalse(result.enriched)
+        assertTrue(result.updatedIntent.objective.evidence.isEmpty())
+    }
+
+    // ── SwarmValidator tests ──────────────────────────────────────────────────
+
+    @Test
+    fun `SwarmValidator is consistent when all fields are evidence-backed`() {
+        val validator = SwarmValidator()
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), fullEvidence())
+        val result    = validator.validate(intent, majorityConfig())
+        assertTrue(result.consistent)
+        assertTrue(result.conflicts.isEmpty())
+        assertEquals(2, result.agentOutputs.size)
+    }
+
+    @Test
+    fun `SwarmValidator reports inconsistency when evidence is missing`() {
+        val validator = SwarmValidator()
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), emptyMap())
+        val result    = validator.validate(intent, SwarmConfig(4, ConsensusRule.UNANIMOUS))
+        assertFalse(result.consistent)
+        assertTrue(result.conflicts.isNotEmpty())
+    }
+
+    @Test
+    fun `SwarmValidator enforces agentCount must be at least 2`() {
+        val validator = SwarmValidator()
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), fullEvidence())
+        try {
+            validator.validate(intent, SwarmConfig(1, ConsensusRule.UNANIMOUS))
+            fail("Expected IllegalArgumentException")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message?.contains("≥ 2") == true)
+        }
+    }
+
+    @Test
+    fun `SwarmValidator WEIGHTED consensus passes when conflicts are below threshold`() {
+        val validator = SwarmValidator()
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), fullEvidence())
+        val result    = validator.validate(intent, SwarmConfig(4, ConsensusRule.WEIGHTED))
+        assertTrue(result.consistent)
+    }
+
+    // ── SimulationEngine tests ────────────────────────────────────────────────
+
+    @Test
+    fun `SimulationEngine is feasible when all fields have evidence and objective is set`() {
+        val sim    = SimulationEngine()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), fullEvidence())
+        val result = sim.simulate(intent)
+        assertTrue(result.feasible)
+        assertTrue(result.failurePoints.isEmpty())
+    }
+
+    @Test
+    fun `SimulationEngine fails when any field has no evidence`() {
+        val sim    = SimulationEngine()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), emptyMap())
+        val result = sim.simulate(intent)
+        assertFalse(result.feasible)
+        assertEquals(4, result.failurePoints.size)
+    }
+
+    @Test
+    fun `SimulationEngine detects resource-constraint contradiction`() {
+        val sim = SimulationEngine()
+        val fields = mapOf(
+            "objective"   to "Build it",
+            "constraints" to "must have resources",
+            "environment" to "cloud",
+            "resources"   to "unavailable"
+        )
+        val intent = ReconstructionEngine().reconstruct(fields, fullEvidence())
+        val result = sim.simulate(intent)
+        assertFalse(result.feasible)
+        assertTrue(result.failurePoints.any { it.contains("unavailability") })
+    }
+
+    // ── PCCVValidator tests ───────────────────────────────────────────────────
+
+    @Test
+    fun `PCCVValidator passes when evidence coverage, swarm, and simulation are all OK`() {
+        val pccv      = PCCVValidator()
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), fullEvidence())
+        val swarm     = SwarmValidator().validate(intent, majorityConfig())
+        val sim       = SimulationEngine().simulate(intent)
+        val result    = pccv.validate(intent, swarm, sim)
+        assertTrue(result.passed)
+        assertTrue(result.evidenceCoverage)
+        assertTrue(result.errors.isEmpty())
+    }
+
+    @Test
+    fun `PCCVValidator fails when evidence coverage is missing`() {
+        val pccv   = PCCVValidator()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), emptyMap())
+        val swarm  = SwarmValidator().validate(intent, majorityConfig())
+        val sim    = SimulationEngine().simulate(intent)
+        val result = pccv.validate(intent, swarm, sim)
+        assertFalse(result.passed)
+        assertFalse(result.evidenceCoverage)
+    }
+
+    // ── IrsOrchestrator integration tests ─────────────────────────────────────
+
+    @Test
+    fun `IrsOrchestrator certifies a fully evidence-backed intent in deterministic steps`() {
+        val orchestrator = IrsOrchestrator()
+        orchestrator.createSession("s1", fullFields(), fullEvidence(), majorityConfig())
+
+        var result = orchestrator.step("s1")
+        assertFalse(result.terminal)
+        assertEquals(IrsStage.GAP_DETECTION, result.executedStage)
+
+        result = orchestrator.step("s1")
+        assertFalse(result.terminal)
+        assertEquals(IrsStage.SCOUTING, result.executedStage)
+
+        result = orchestrator.step("s1")
+        assertFalse(result.terminal)
+        assertEquals(IrsStage.SWARM_VALIDATION, result.executedStage)
+
+        result = orchestrator.step("s1")
+        assertFalse(result.terminal)
+        assertEquals(IrsStage.SIMULATION, result.executedStage)
+
+        result = orchestrator.step("s1")
+        assertFalse(result.terminal)
+        assertEquals(IrsStage.PCCV, result.executedStage)
+
+        result = orchestrator.step("s1")
+        assertTrue(result.terminal)
+        assertEquals(IrsStage.CERTIFICATION, result.executedStage)
+        assertTrue(result.orchestratorResult is OrchestratorResult.Certified)
+    }
+
+    @Test
+    fun `IrsOrchestrator halts with NeedsClarification when gaps exist and scouting cannot fill them`() {
+        val orchestrator = IrsOrchestrator()
+        orchestrator.createSession("s2", fullFields(), emptyMap(), majorityConfig())
+
+        val gapStep = orchestrator.step("s2")
+        assertTrue(gapStep.terminal)
+        assertEquals(IrsStage.GAP_DETECTION, gapStep.executedStage)
+        assertTrue(gapStep.orchestratorResult is OrchestratorResult.NeedsClarification)
+        val clarification = gapStep.orchestratorResult as OrchestratorResult.NeedsClarification
+        assertEquals(4, clarification.gaps.size)
+    }
+
+    @Test
+    fun `IrsOrchestrator history is append-only and replays correctly`() {
+        val orchestrator = IrsOrchestrator()
+        orchestrator.createSession("s3", fullFields(), fullEvidence(), majorityConfig())
+
+        repeat(6) { orchestrator.step("s3") }
+
+        val history = orchestrator.replayHistory("s3")
+        assertEquals(6, history.size)
+        assertEquals(IrsStage.GAP_DETECTION, history[0].stage)
+        assertEquals(IrsStage.CERTIFICATION, history[5].stage)
+    }
+
+    @Test
+    fun `IrsOrchestrator returns terminal state on repeated step calls after completion`() {
+        val orchestrator = IrsOrchestrator()
+        orchestrator.createSession("s4", fullFields(), fullEvidence(), majorityConfig())
+
+        repeat(6) { orchestrator.step("s4") }
+        val extraCall = orchestrator.step("s4")
+        assertTrue(extraCall.terminal)
+        assertTrue(extraCall.orchestratorResult is OrchestratorResult.Certified)
+    }
 }
 
 private class InMemoryEventRepository(initial: List<Event>) : EventRepository {

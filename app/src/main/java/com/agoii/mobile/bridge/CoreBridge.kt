@@ -12,6 +12,12 @@ import com.agoii.mobile.core.ReplayState
 import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.core.ReplayVerification
 import com.agoii.mobile.execution.BuildExecutor
+import com.agoii.mobile.irs.EvidenceRef
+import com.agoii.mobile.irs.IrsOrchestrator
+import com.agoii.mobile.irs.IrsSession
+import com.agoii.mobile.irs.IrsSnapshot
+import com.agoii.mobile.irs.StepResult
+import com.agoii.mobile.irs.SwarmConfig
 
 /**
  * CoreBridge — mobile runtime adapter.
@@ -32,6 +38,7 @@ class CoreBridge(context: Context) {
     private val replay        = Replay(eventStore)
     private val replayTest    = ReplayTest(eventStore)
     private val buildExecutor = BuildExecutor()
+    private val irsOrchestrator = IrsOrchestrator()
 
     /** Append an intent_submitted event. Called when the user sends an objective. */
     fun submitIntent(projectId: String, objective: String) {
@@ -102,4 +109,38 @@ class CoreBridge(context: Context) {
     /** Run full replay verification: audit + invariant checks (read-only). */
     fun verifyReplay(projectId: String): ReplayVerification =
         replayTest.verifyReplay(projectId)
+
+    // ─── IRS delegation (interface only; all logic lives in IrsOrchestrator) ──
+
+    /**
+     * Create a new IRS session.
+     *
+     * @param sessionId        Unique identifier for the session.
+     * @param rawFields        Raw intent field values (objective, constraints, environment, resources).
+     * @param evidence         Evidence refs keyed by field name.
+     * @param swarmConfig      Swarm parameters; agentCount must be ≥ 2.
+     * @param availableEvidence Supplementary evidence pool for the ScoutOrchestrator.
+     */
+    fun createIrsSession(
+        sessionId:         String,
+        rawFields:         Map<String, String>,
+        evidence:          Map<String, List<EvidenceRef>>,
+        swarmConfig:       SwarmConfig,
+        availableEvidence: Map<String, List<EvidenceRef>> = emptyMap()
+    ): IrsSession =
+        irsOrchestrator.createSession(sessionId, rawFields, evidence, swarmConfig, availableEvidence)
+
+    /**
+     * Advance the IRS session by exactly one stage.
+     * External driver must call this repeatedly until [StepResult.terminal] is true.
+     */
+    fun stepIrs(sessionId: String): StepResult =
+        irsOrchestrator.step(sessionId)
+
+    /**
+     * Replay the full ordered snapshot history for an IRS session (read-only).
+     * Supports audit and deterministic re-execution.
+     */
+    fun replayIrs(sessionId: String): List<IrsSnapshot> =
+        irsOrchestrator.replayHistory(sessionId)
 }
