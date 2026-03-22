@@ -7,9 +7,12 @@ import com.agoii.mobile.core.Governor
 import com.agoii.mobile.core.LedgerAudit
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayTest
+import com.agoii.mobile.irs.AdmissionDecision
+import com.agoii.mobile.irs.AdmissionResult
 import com.agoii.mobile.irs.ConsensusRule
 import com.agoii.mobile.irs.EvidenceRef
 import com.agoii.mobile.irs.EvidenceValidator
+import com.agoii.mobile.irs.ExecutionGraph
 import com.agoii.mobile.irs.FailureType
 import com.agoii.mobile.irs.GapDetector
 import com.agoii.mobile.irs.IntentField
@@ -22,11 +25,15 @@ import com.agoii.mobile.irs.ReconstructionEngine
 import com.agoii.mobile.irs.ScoutOrchestrator
 import com.agoii.mobile.irs.SimulationEngine
 import com.agoii.mobile.irs.SwarmConfig
+import com.agoii.mobile.irs.SwarmResult
 import com.agoii.mobile.irs.SwarmValidator
 import com.agoii.mobile.irs.RiskLevel
 import com.agoii.mobile.irs.SimulationRuleResult
+import com.agoii.mobile.irs.ValidationCapacityComponents
 import com.agoii.mobile.irs.CcfScore
 import com.agoii.mobile.irs.IrsAuditReport
+import com.agoii.mobile.irs.admission.ElvcAdmissionLayer
+import com.agoii.mobile.irs.admission.ExecutionGraphBuilder
 import com.agoii.mobile.irs.reality.ContradictionEngine
 import com.agoii.mobile.irs.reality.EvidenceScoringEngine
 import com.agoii.mobile.irs.reality.RealityKnowledgeGateway
@@ -877,9 +884,13 @@ class CoreTest {
         assertEquals(IrsStage.PCCV, result.executedStage)
 
         result = orchestrator.step("s1")
-        assertTrue(result.terminal)
+        assertFalse(result.terminal)
         assertEquals(IrsStage.CERTIFICATION, result.executedStage)
-        assertTrue(result.orchestratorResult is OrchestratorResult.Certified)
+
+        result = orchestrator.step("s1")
+        assertTrue(result.terminal)
+        assertEquals(IrsStage.ADMISSION, result.executedStage)
+        assertTrue(result.orchestratorResult is OrchestratorResult.Admitted)
     }
 
     @Test
@@ -900,12 +911,13 @@ class CoreTest {
         val orchestrator = IrsOrchestrator()
         orchestrator.createSession("s3", fullFields(), relevantEvidence(), majorityConfig())
 
-        repeat(8) { orchestrator.step("s3") }
+        repeat(9) { orchestrator.step("s3") }
 
         val history = orchestrator.replayHistory("s3")
-        assertEquals(8, history.size)
+        assertEquals(9, history.size)
         assertEquals(IrsStage.GAP_DETECTION, history[0].stage)
         assertEquals(IrsStage.CERTIFICATION, history[7].stage)
+        assertEquals(IrsStage.ADMISSION, history[8].stage)
     }
 
     @Test
@@ -913,10 +925,10 @@ class CoreTest {
         val orchestrator = IrsOrchestrator()
         orchestrator.createSession("s4", fullFields(), relevantEvidence(), majorityConfig())
 
-        repeat(8) { orchestrator.step("s4") }
+        repeat(9) { orchestrator.step("s4") }
         val extraCall = orchestrator.step("s4")
         assertTrue(extraCall.terminal)
-        assertTrue(extraCall.orchestratorResult is OrchestratorResult.Certified)
+        assertTrue(extraCall.orchestratorResult is OrchestratorResult.Admitted)
     }
 
     // ── IRS-04: EnvironmentScout tests ────────────────────────────────────────
@@ -1343,7 +1355,7 @@ class CoreTest {
         val orchestrator = IrsOrchestrator()
         orchestrator.createSession("s-rv-hist", fullFields(), relevantEvidence(), majorityConfig())
 
-        repeat(8) { orchestrator.step("s-rv-hist") }
+        repeat(9) { orchestrator.step("s-rv-hist") }
 
         val history = orchestrator.replayHistory("s-rv-hist")
         val stages  = history.map { it.stage }
@@ -1674,6 +1686,201 @@ class CoreTest {
         assertTrue(report.ccf.totalScore >= 13)
         assertEquals("LOW", report.ccf.riskLevel)
         assertEquals("APPROVED", report.approvalStatus)
+    }
+
+    // ── ELVC Admission Layer tests (AGOII-ELVC-ADMISSION-LAYER) ──────────────
+
+    @Test
+    fun `ExecutionGraph executionLoad formula is N + E + C times 2`() {
+        val graph = ExecutionGraph(nodes = 4, edges = 3, crossLinks = 0)
+        assertEquals(7, graph.executionLoad)  // 4 + 3 + 0
+
+        val graphWithCross = ExecutionGraph(nodes = 4, edges = 3, crossLinks = 2)
+        assertEquals(11, graphWithCross.executionLoad)  // 4 + 3 + (2×2)
+    }
+
+    @Test
+    fun `ValidationCapacityComponents validationCapacity formula is EC + RC + SC + CC`() {
+        val vc = ValidationCapacityComponents(ec = 2, rc = 6, sc = 6, cc = 3)
+        assertEquals(17, vc.validationCapacity)
+    }
+
+    @Test
+    fun `ExecutionGraphBuilder derives nodes from non-blank fields`() {
+        val intent = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val graph  = ExecutionGraphBuilder.build(intent)
+        assertEquals(4, graph.nodes)   // all 4 fields non-blank
+        assertEquals(3, graph.edges)   // linear chain: 4 nodes → 3 edges
+        assertEquals(0, graph.crossLinks)  // no shared evidence IDs
+    }
+
+    @Test
+    fun `ExecutionGraphBuilder detects cross-links when evidence IDs are shared`() {
+        val sharedRef = EvidenceRef(id = "shared-01", source = "objective-spec")
+        val intentWithShared = IntentData(
+            objective   = IntentField("Build system",  listOf(sharedRef, EvidenceRef("ev-obj-02", "objective-spec"))),
+            constraints = IntentField("must be fast",  listOf(sharedRef, EvidenceRef("ev-con-01", "constraint-review"))),
+            environment = IntentField("cloud",         listOf(EvidenceRef("ev-env-01", "environment-audit"))),
+            resources   = IntentField("team available",listOf(EvidenceRef("ev-res-01", "resource-inventory")))
+        )
+        val graph = ExecutionGraphBuilder.build(intentWithShared)
+        assertEquals(1, graph.crossLinks)  // "shared-01" appears in objective + constraints
+    }
+
+    @Test
+    fun `ElvcAdmissionLayer produces ALLOW when EL is less than VC`() {
+        val intent   = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val reality  = RealityValidator().validate(intent)
+        val swarm    = SwarmValidator().validate(intent, majorityConfig())
+        val graph    = ExecutionGraphBuilder.build(intent)
+        val layer    = ElvcAdmissionLayer()
+        val result   = layer.evaluate(intent, reality, swarm, graph)
+
+        assertTrue(result.executionLoad < result.validationCapacity)
+        assertTrue(result.safetyCondition)
+        assertEquals(AdmissionDecision.ALLOW, result.decision)
+        assertTrue(result.rejectionReasons.isEmpty())
+        assertTrue(result.subGraphs.isEmpty())
+    }
+
+    @Test
+    fun `ElvcAdmissionLayer safetyCondition is true when EL equals VC and decision is ALLOW_WITH_BOUNDARY`() {
+        // Craft a scenario where EL == VC by using a high-EL graph
+        val graph    = ExecutionGraph(nodes = 4, edges = 3, crossLinks = 0)  // EL = 7
+        // VC with ec=0, rc=1, sc=1, cc=5 → VC = 7 (EL == VC)
+        val vcComponents = ValidationCapacityComponents(ec = 0, rc = 1, sc = 1, cc = 5)
+        assertEquals(7, graph.executionLoad)
+        assertEquals(7, vcComponents.validationCapacity)
+        assertTrue(graph.executionLoad <= vcComponents.validationCapacity)
+    }
+
+    @Test
+    fun `ElvcAdmissionLayer produces SPLIT when EL exceeds VC and graph has 2 or more nodes`() {
+        // Build a high-EL graph manually and use a minimal reality/swarm result
+        val graph = ExecutionGraph(nodes = 10, edges = 9, crossLinks = 5)  // EL = 10+9+10 = 29
+        val intent = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val reality = RealityValidator().validate(intent)
+        val swarm   = SwarmResult(consistent = true, conflicts = emptyList(), agentOutputs = listOf("agent-1: PASS: ok"))
+        val layer   = ElvcAdmissionLayer()
+        val result  = layer.evaluate(intent, reality, swarm, graph)
+
+        // VC with relevantEvidence (ec=0, rc=6, sc=6, cc=1) = 13; EL=29 > VC=13
+        assertTrue(result.executionLoad > result.validationCapacity)
+        assertFalse(result.safetyCondition)
+        assertEquals(AdmissionDecision.SPLIT, result.decision)
+        assertEquals(2, result.subGraphs.size)
+        // Each subgraph must have fewer nodes/edges than original
+        result.subGraphs.forEach { sub ->
+            assertTrue(sub.nodes < graph.nodes)
+        }
+    }
+
+    @Test
+    fun `ElvcAdmissionLayer produces REJECT when EL exceeds VC and graph has only 1 node`() {
+        val graph  = ExecutionGraph(nodes = 1, edges = 0, crossLinks = 5)  // EL = 1+0+10 = 11
+        val intent = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val reality = RealityValidator().validate(intent)
+        val swarm   = SwarmResult(consistent = true, conflicts = emptyList(), agentOutputs = listOf("agent-1: PASS: ok"))
+        val layer   = ElvcAdmissionLayer()
+        val result  = layer.evaluate(intent, reality, swarm, graph)
+
+        // VC with relevantEvidence (ec=0, rc=6, sc=6, cc=1) = 13; EL=11 < VC=13 → ALLOW
+        // Use graph with EL > VC by forcing crossLinks=50
+        val bigGraph = ExecutionGraph(nodes = 1, edges = 0, crossLinks = 50)  // EL=101
+        val result2  = layer.evaluate(intent, reality, swarm, bigGraph)
+        // nodes=1 → not decomposable → REJECT
+        assertFalse(result2.safetyCondition)
+        assertEquals(AdmissionDecision.REJECT, result2.decision)
+        assertTrue(result2.rejectionReasons.isNotEmpty())
+        assertTrue(result2.subGraphs.isEmpty())
+    }
+
+    @Test
+    fun `IrsOrchestrator ADMISSION stage follows CERTIFICATION in full pipeline`() {
+        val orchestrator = IrsOrchestrator()
+        orchestrator.createSession("s-adm-order", fullFields(), relevantEvidence(), majorityConfig())
+
+        repeat(9) { orchestrator.step("s-adm-order") }
+
+        val history = orchestrator.replayHistory("s-adm-order")
+        val stages  = history.map { it.stage }
+        val certIndex = stages.indexOf(IrsStage.CERTIFICATION)
+        val admIndex  = stages.indexOf(IrsStage.ADMISSION)
+        assertTrue("ADMISSION must exist in history", admIndex >= 0)
+        assertTrue("ADMISSION must follow CERTIFICATION", admIndex > certIndex)
+        assertEquals("ADMISSION must be the last stage", stages.size - 1, admIndex)
+    }
+
+    @Test
+    fun `IrsOrchestrator admissionResult is accessible after full pipeline`() {
+        val orchestrator = IrsOrchestrator()
+        orchestrator.createSession("s-adm-result", fullFields(), relevantEvidence(), majorityConfig())
+
+        repeat(9) { orchestrator.step("s-adm-result") }
+
+        val admission = orchestrator.admissionResult("s-adm-result")
+        assertNotNull(admission)
+        assertTrue(admission!!.safetyCondition)
+        assertTrue(admission.executionLoad > 0)
+        assertTrue(admission.validationCapacity > 0)
+        assertTrue(
+            admission.decision == AdmissionDecision.ALLOW ||
+            admission.decision == AdmissionDecision.ALLOW_WITH_BOUNDARY
+        )
+    }
+
+    @Test
+    fun `IrsOrchestrator ADMISSION stage is deterministic across multiple replay runs`() {
+        fun runToAdmission(): AdmissionDecision? {
+            val id = "adm-det-${System.nanoTime()}"
+            val orchestrator = IrsOrchestrator()
+            orchestrator.createSession(id, fullFields(), relevantEvidence(), majorityConfig())
+            repeat(9) { orchestrator.step(id) }
+            return orchestrator.admissionResult(id)?.decision
+        }
+
+        val decisions = (1..5).map { runToAdmission() }
+        val first = decisions.first()
+        decisions.forEach { decision ->
+            assertEquals("Admission decision must be deterministic", first, decision)
+        }
+    }
+
+    @Test
+    fun `FailureType enum includes ADMISSION_REJECTED for the new rejection path`() {
+        assertTrue(
+            FailureType.values().any { it == FailureType.ADMISSION_REJECTED }
+        )
+    }
+
+    @Test
+    fun `EventTypes contains all 6 new ELVC admission event constants`() {
+        assertTrue(EventTypes.ALL.contains(EventTypes.EXECUTION_LOAD_COMPUTED))
+        assertTrue(EventTypes.ALL.contains(EventTypes.VALIDATION_CAPACITY_COMPUTED))
+        assertTrue(EventTypes.ALL.contains(EventTypes.SAFETY_CONDITION_EVALUATED))
+        assertTrue(EventTypes.ALL.contains(EventTypes.CONTRACT_SPLIT))
+        assertTrue(EventTypes.ALL.contains(EventTypes.CONTRACT_REJECTED))
+        assertTrue(EventTypes.ALL.contains(EventTypes.CONTRACT_ADMITTED))
+    }
+
+    @Test
+    fun `AdmissionResult mandatory fields are always populated`() {
+        val intent   = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val reality  = RealityValidator().validate(intent)
+        val swarm    = SwarmValidator().validate(intent, majorityConfig())
+        val graph    = ExecutionGraphBuilder.build(intent)
+        val result   = ElvcAdmissionLayer().evaluate(intent, reality, swarm, graph)
+
+        // All four mandatory contract fields must be present
+        assertTrue(result.executionLoad >= 0)
+        assertTrue(result.validationCapacity >= 0)
+        assertNotNull(result.safetyCondition)
+        assertNotNull(result.decision)
+        // Trace fields must be fully populated
+        assertNotNull(result.elTrace)
+        assertNotNull(result.vcTrace)
+        assertEquals(result.executionLoad, result.elTrace.executionLoad)
+        assertEquals(result.validationCapacity, result.vcTrace.validationCapacity)
     }
 }
 

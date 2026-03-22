@@ -1,5 +1,7 @@
 package com.agoii.mobile.irs
 
+import com.agoii.mobile.irs.admission.ElvcAdmissionLayer
+import com.agoii.mobile.irs.admission.ExecutionGraphBuilder
 import com.agoii.mobile.irs.reality.RealityValidator
 import com.agoii.mobile.irs.scout.ConstraintScout
 import com.agoii.mobile.irs.scout.DependencyScout
@@ -9,21 +11,25 @@ import com.agoii.mobile.irs.scout.EnvironmentScout
  * IrsOrchestrator — the sole coordinator of the IRS execution graph.
  *
  * Execution graph (one [step] call per arrow):
- *   step 1 → ReconstructionEngine
- *   step 2 → GapDetector
- *              → if gaps  → HALT (NeedsClarification)
- *   step 3 → ScoutOrchestrator + KnowledgeScouts (EnvironmentScout, DependencyScout, ConstraintScout)
- *   step 4 → EvidenceValidator
- *              → if invalid → HALT (Rejected / EVIDENCE_INVALID)
- *   step 5 → RealityValidator (RealityKnowledgeGateway + EvidenceScoringEngine + ContradictionEngine + RealitySimulationEngine)
- *              → if unverifiable → HALT (Rejected / REALITY_UNVERIFIABLE)
- *   step 6 → SwarmValidator
- *              → if inconsistent → HALT (Rejected / UNSTABLE)
- *   step 7 → SimulationEngine
- *              → if infeasible   → HALT (Rejected / INFEASIBLE)
- *   step 8 → PCCVValidator
- *              → if fail         → HALT (Rejected / PCCV_FAIL)
- *   step 9 → CertificationEmitter → terminal (Certified)
+ *   step 1  → ReconstructionEngine
+ *   step 2  → GapDetector
+ *               → if gaps  → HALT (NeedsClarification)
+ *   step 3  → ScoutOrchestrator + KnowledgeScouts (EnvironmentScout, DependencyScout, ConstraintScout)
+ *   step 4  → EvidenceValidator
+ *               → if invalid → HALT (Rejected / EVIDENCE_INVALID)
+ *   step 5  → RealityValidator (RealityKnowledgeGateway + EvidenceScoringEngine + ContradictionEngine + RealitySimulationEngine)
+ *               → if unverifiable → HALT (Rejected / REALITY_UNVERIFIABLE)
+ *   step 6  → SwarmValidator
+ *               → if inconsistent → HALT (Rejected / UNSTABLE)
+ *   step 7  → SimulationEngine
+ *               → if infeasible   → HALT (Rejected / INFEASIBLE)
+ *   step 8  → PCCVValidator
+ *               → if fail         → HALT (Rejected / PCCV_FAIL)
+ *   step 9  → CertificationEmitter (non-terminal; advances to Admission)
+ *   step 10 → ElvcAdmissionLayer → terminal
+ *               ALLOW / ALLOW_WITH_BOUNDARY → HALT (Admitted)
+ *               SPLIT                       → HALT (SplitRequired)
+ *               REJECT                      → HALT (Rejected / ADMISSION_REJECTED)
  *
  * Rules:
  *  - [step] executes EXACTLY one stage per call; no internal loops.
@@ -43,7 +49,8 @@ class IrsOrchestrator(
     private val realityValidator:     RealityValidator      = RealityValidator(),
     private val swarmValidator:       SwarmValidator        = SwarmValidator(),
     private val simulationEngine:     SimulationEngine      = SimulationEngine(),
-    private val pcCVValidator:        PCCVValidator         = PCCVValidator()
+    private val pcCVValidator:        PCCVValidator         = PCCVValidator(),
+    private val admissionLayer:       ElvcAdmissionLayer    = ElvcAdmissionLayer()
 ) {
     private val stateManager = IntentStateManager()
 
@@ -116,6 +123,15 @@ class IrsOrchestrator(
     fun realitySimulationResult(sessionId: String): RealitySimulationResult? =
         stateManager.realitySimulationResult(sessionId)
 
+    /**
+     * Return the [AdmissionResult] stored during the ADMISSION stage,
+     * or null when that stage has not yet executed (or the session does not exist).
+     *
+     * Provides direct traceability access to the EL/VC evaluation and the admission decision.
+     */
+    fun admissionResult(sessionId: String): AdmissionResult? =
+        stateManager.admissionResult(sessionId)
+
     // ─── Stage dispatch ───────────────────────────────────────────────────────
 
     private fun nextStage(session: IrsSession): IrsStage {
@@ -129,7 +145,8 @@ class IrsOrchestrator(
             IrsStage.SWARM_VALIDATION    -> IrsStage.SIMULATION
             IrsStage.SIMULATION          -> IrsStage.PCCV
             IrsStage.PCCV                -> IrsStage.CERTIFICATION
-            IrsStage.CERTIFICATION       -> IrsStage.CERTIFICATION  // already terminal
+            IrsStage.CERTIFICATION       -> IrsStage.ADMISSION
+            IrsStage.ADMISSION           -> IrsStage.ADMISSION  // already terminal
         }
     }
 
@@ -376,9 +393,54 @@ class IrsOrchestrator(
                 }
             }
 
-            // ── Step 9: Certification ─────────────────────────────────────────
+            // ── Step 9: Certification (non-terminal; advances to Admission) ──────
             IrsStage.CERTIFICATION -> {
-                terminal(sessionId, stage, OrchestratorResult.Certified)
+                advance(sessionId, stage)
+            }
+
+            // ── Step 10: EL/VC Admission Layer ────────────────────────────────────
+            IrsStage.ADMISSION -> {
+                val intent       = stateManager.currentIntent(sessionId)!!
+                val realityResult = stateManager.realityValidationResult(sessionId)
+                    ?: run {
+                        val rejection = OrchestratorResult.Rejected(
+                            reason  = FailureType.ADMISSION_REJECTED.name,
+                            details = listOf("admission: reality validation result unavailable")
+                        )
+                        return terminal(sessionId, stage, rejection)
+                    }
+                val swarmResult  = stateManager.swarmResult(sessionId)
+                    ?: SwarmResult(consistent = false, conflicts = emptyList(), agentOutputs = emptyList())
+
+                val graph          = ExecutionGraphBuilder.build(intent)
+                val admissionResult = admissionLayer.evaluate(intent, realityResult, swarmResult, graph)
+
+                val terminalResult: OrchestratorResult = when (admissionResult.decision) {
+                    AdmissionDecision.ALLOW,
+                    AdmissionDecision.ALLOW_WITH_BOUNDARY ->
+                        OrchestratorResult.Admitted(admissionResult)
+
+                    AdmissionDecision.SPLIT ->
+                        OrchestratorResult.SplitRequired(admissionResult)
+
+                    AdmissionDecision.REJECT ->
+                        OrchestratorResult.Rejected(
+                            reason  = FailureType.ADMISSION_REJECTED.name,
+                            details = admissionResult.rejectionReasons
+                        )
+                }
+
+                val updatedSession = stateManager.append(
+                    sessionId       = sessionId,
+                    snapshot        = IrsSnapshot(stage = stage, orchestratorResult = terminalResult),
+                    admissionResult = admissionResult
+                )
+                StepResult(
+                    executedStage      = stage,
+                    session            = updatedSession,
+                    terminal           = true,
+                    orchestratorResult = terminalResult
+                )
             }
 
             // ── RECONSTRUCTION is handled at session creation; treat as GAP_DETECTION entry

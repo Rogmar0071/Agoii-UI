@@ -26,7 +26,8 @@ class IntentStateManager {
         val availableEvidence:       Map<String, List<EvidenceRef>>,
         val scoutReport:             KnowledgeScoutReport?,
         val evidenceValidationResult: EvidenceValidationResult?,
-        val realityValidationResult:  RealityValidationResult?
+        val realityValidationResult:  RealityValidationResult?,
+        val admissionResult:          AdmissionResult?
     )
 
     private val records = mutableMapOf<String, SessionRecord>()
@@ -61,7 +62,8 @@ class IntentStateManager {
             availableEvidence       = availableEvidence,
             scoutReport             = null,
             evidenceValidationResult = null,
-            realityValidationResult  = null
+            realityValidationResult  = null,
+            admissionResult          = null
         )
         return session
     }
@@ -75,6 +77,7 @@ class IntentStateManager {
      * @param scoutReport             Supply when knowledge scouting has produced a report.
      * @param evidenceValidationResult Supply when evidence validation has run.
      * @param realityValidationResult  Supply when reality validation has run.
+     * @param admissionResult          Supply when the EL/VC admission layer has run.
      * @return The updated immutable [IrsSession] view.
      */
     fun append(
@@ -85,7 +88,8 @@ class IntentStateManager {
         simResult:                SimulationResult?         = null,
         scoutReport:              KnowledgeScoutReport?     = null,
         evidenceValidationResult: EvidenceValidationResult? = null,
-        realityValidationResult:  RealityValidationResult?  = null
+        realityValidationResult:  RealityValidationResult?  = null,
+        admissionResult:          AdmissionResult?          = null
     ): IrsSession {
         val record = records[sessionId]
             ?: error("Session '$sessionId' does not exist")
@@ -96,7 +100,8 @@ class IntentStateManager {
             simResult                = simResult                ?: record.simResult,
             scoutReport              = scoutReport              ?: record.scoutReport,
             evidenceValidationResult = evidenceValidationResult ?: record.evidenceValidationResult,
-            realityValidationResult  = realityValidationResult  ?: record.realityValidationResult
+            realityValidationResult  = realityValidationResult  ?: record.realityValidationResult,
+            admissionResult          = admissionResult          ?: record.admissionResult
         )
         records[sessionId] = newRecord
         return buildSession(newRecord)
@@ -143,6 +148,10 @@ class IntentStateManager {
      */
     fun realitySimulationResult(sessionId: String): RealitySimulationResult? =
         records[sessionId]?.realityValidationResult?.simulationResult
+
+    /** Return the admission result stored during the EL/VC admission stage, or null. */
+    fun admissionResult(sessionId: String): AdmissionResult? =
+        records[sessionId]?.admissionResult
 
     /**
      * Replay the full snapshot history for [sessionId].

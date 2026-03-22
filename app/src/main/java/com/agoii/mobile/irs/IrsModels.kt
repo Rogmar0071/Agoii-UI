@@ -367,13 +367,15 @@ data class PCCVResult(
  *  - [UNSTABLE]              — swarm validation failed; agents did not reach consensus (step 6)
  *  - [INFEASIBLE]            — simulation infeasible; real-world constraints cannot be met (step 7)
  *  - [PCCV_FAIL]             — precondition/certification-condition validation failed (step 8)
+ *  - [ADMISSION_REJECTED]    — EL/VC admission rejected; EL > VC and not decomposable (step 10)
  */
 enum class FailureType {
     EVIDENCE_INVALID,
     REALITY_UNVERIFIABLE,
     UNSTABLE,
     INFEASIBLE,
-    PCCV_FAIL
+    PCCV_FAIL,
+    ADMISSION_REJECTED
 }
 
 /**
@@ -395,6 +397,22 @@ sealed class OrchestratorResult {
      * @property details Human-readable explanations.
      */
     data class Rejected(val reason: String, val details: List<String> = emptyList()) : OrchestratorResult()
+
+    /**
+     * Contract admitted by the EL/VC admission layer (ALLOW or ALLOW_WITH_BOUNDARY).
+     * Execution may proceed.
+     *
+     * @property admissionResult Full admission evaluation including EL, VC, and decision trace.
+     */
+    data class Admitted(val admissionResult: AdmissionResult) : OrchestratorResult()
+
+    /**
+     * Contract requires structural decomposition (SPLIT decision).
+     * Execution MUST NOT start until each subgraph is independently re-admitted.
+     *
+     * @property admissionResult Full admission evaluation including subgraph partition plan.
+     */
+    data class SplitRequired(val admissionResult: AdmissionResult) : OrchestratorResult()
 }
 
 // ─── Session & State ─────────────────────────────────────────────────────────
@@ -409,8 +427,106 @@ enum class IrsStage {
     SWARM_VALIDATION,
     SIMULATION,
     PCCV,
-    CERTIFICATION
+    CERTIFICATION,
+    ADMISSION
 }
+
+// ─── ELVC Admission Layer ─────────────────────────────────────────────────────
+
+/**
+ * Execution graph derived from the intent structure.
+ *
+ * ELVC Contract:
+ *  - [nodes] = number of active atomic tasks (non-blank mandatory intent fields).
+ *  - [edges] = dependency links between tasks (sequential chain = nodes − 1).
+ *  - [crossLinks] = non-linear dependency count (evidence ref IDs shared across fields).
+ *
+ * @property nodes      N — number of active atomic task nodes.
+ * @property edges      E — number of sequential dependency edges.
+ * @property crossLinks C — number of cross-dependency (non-linear) links.
+ */
+data class ExecutionGraph(
+    val nodes:      Int,
+    val edges:      Int,
+    val crossLinks: Int
+) {
+    init {
+        require(nodes >= 0)      { "nodes must be ≥ 0, got $nodes" }
+        require(edges >= 0)      { "edges must be ≥ 0, got $edges" }
+        require(crossLinks >= 0) { "crossLinks must be ≥ 0, got $crossLinks" }
+    }
+
+    /** EL = N + E + (C × 2). Integer-only; no weighting or normalization. */
+    val executionLoad: Int get() = nodes + edges + (crossLinks * 2)
+}
+
+/**
+ * Components of Validation Capacity used by the EL/VC admission layer.
+ *
+ * ELVC Contract:
+ *  - [ec] = Evidence Coverage — fields with ≥ 2 distinct evidence sources.
+ *  - [rc] = Rule Coverage — SimulationRuleResult count (IRS-05C evaluations).
+ *  - [sc] = Simulation Coverage — same count as [rc]; tracked separately for domain isolation.
+ *  - [cc] = Consensus Coverage — number of swarm agent validations that passed.
+ *
+ * VC = EC + RC + SC + CC (integer-only; no weighting or normalization).
+ */
+data class ValidationCapacityComponents(
+    val ec: Int,
+    val rc: Int,
+    val sc: Int,
+    val cc: Int
+) {
+    init {
+        require(ec >= 0) { "ec must be ≥ 0, got $ec" }
+        require(rc >= 0) { "rc must be ≥ 0, got $rc" }
+        require(sc >= 0) { "sc must be ≥ 0, got $sc" }
+        require(cc >= 0) { "cc must be ≥ 0, got $cc" }
+    }
+
+    /** VC = EC + RC + SC + CC. */
+    val validationCapacity: Int get() = ec + rc + sc + cc
+}
+
+/**
+ * Admission decision produced by the EL/VC admission layer.
+ *
+ * ELVC Contract:
+ *  - ALLOW              — EL < VC; contract is admitted unconditionally.
+ *  - ALLOW_WITH_BOUNDARY — EL == VC; contract is admitted within a strict execution envelope.
+ *  - SPLIT              — EL > VC and the execution graph is decomposable into subgraphs.
+ *  - REJECT             — EL > VC and the graph cannot be decomposed into valid subgraphs.
+ */
+enum class AdmissionDecision { ALLOW, ALLOW_WITH_BOUNDARY, SPLIT, REJECT }
+
+/**
+ * Full output of the EL/VC admission layer.
+ *
+ * Every contract MUST expose these four mandatory fields:
+ *  - [executionLoad]      — EL (integer).
+ *  - [validationCapacity] — VC (integer).
+ *  - [safetyCondition]    — true when EL ≤ VC.
+ *  - [decision]           — admission outcome.
+ *
+ * @property executionLoad      Computed EL (from [elTrace]).
+ * @property validationCapacity Computed VC (from [vcTrace]).
+ * @property safetyCondition    true when EL ≤ VC; false otherwise.
+ * @property decision           Admission outcome; one of ALLOW / ALLOW_WITH_BOUNDARY / SPLIT / REJECT.
+ * @property elTrace            Source execution graph used to derive [executionLoad].
+ * @property vcTrace            Capacity component breakdown used to derive [validationCapacity].
+ * @property rejectionReasons   Non-empty only when [decision] is REJECT.
+ * @property subGraphs          Non-empty only when [decision] is SPLIT; each must satisfy EL ≤ VC.
+ */
+data class AdmissionResult(
+    val executionLoad:       Int,
+    val validationCapacity:  Int,
+    val safetyCondition:     Boolean,
+    val decision:            AdmissionDecision,
+    val elTrace:             ExecutionGraph,
+    val vcTrace:             ValidationCapacityComponents,
+    val rejectionReasons:    List<String>       = emptyList(),
+    val subGraphs:           List<ExecutionGraph> = emptyList()
+)
 
 /**
  * Immutable snapshot appended to the session history after each stage completes.
