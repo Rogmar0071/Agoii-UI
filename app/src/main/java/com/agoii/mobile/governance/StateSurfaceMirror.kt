@@ -1,14 +1,14 @@
 package com.agoii.mobile.governance
 
 /**
- * SurfaceStateManager (SSM) — tracks surface activation state.
+ * StateSurfaceMirror (SSM) — the single state surface authority in the system.
  *
  * Rules:
  *  - Must be explicitly initialized before surfaces can be activated.
  *  - Surfaces are registered via activateSurface(); absent surfaces are inactive.
  *  - Read access via isInitialized() and getActiveSurfaces() is always safe.
  */
-class SurfaceStateManager {
+class StateSurfaceMirror {
 
     private var initialized = false
     private val activeSurfaces = mutableSetOf<SurfaceType>()

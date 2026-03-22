@@ -3,7 +3,7 @@ package com.agoii.mobile.core
 import com.agoii.mobile.governance.ContractDescriptor
 import com.agoii.mobile.governance.ContractSurfaceLayer
 import com.agoii.mobile.governance.Outcome
-import com.agoii.mobile.governance.SurfaceStateManager
+import com.agoii.mobile.governance.StateSurfaceMirror
 import com.agoii.mobile.governance.SurfaceType
 
 /**
@@ -32,7 +32,7 @@ import com.agoii.mobile.governance.SurfaceType
  */
 class Governor(private val eventStore: EventRepository) {
 
-    private val ssm = SurfaceStateManager()
+    private val ssm = StateSurfaceMirror()
     private val csl = ContractSurfaceLayer()
 
     init {
