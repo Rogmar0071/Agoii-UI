@@ -18,12 +18,14 @@ class IntentStateManager {
      * The [currentIntent] tracks the latest (possibly scouting-enriched) intent.
      */
     private data class SessionRecord(
-        val meta:             IrsSession,
-        val snapshots:        MutableList<IrsSnapshot>,
-        val currentIntent:    IntentData,
-        val swarmResult:      SwarmResult?,
-        val simResult:        SimulationResult?,
-        val availableEvidence: Map<String, List<EvidenceRef>>
+        val meta:                    IrsSession,
+        val snapshots:               MutableList<IrsSnapshot>,
+        val currentIntent:           IntentData,
+        val swarmResult:             SwarmResult?,
+        val simResult:               SimulationResult?,
+        val availableEvidence:       Map<String, List<EvidenceRef>>,
+        val scoutReport:             KnowledgeScoutReport?,
+        val evidenceValidationResult: EvidenceValidationResult?
     )
 
     private val records = mutableMapOf<String, SessionRecord>()
@@ -50,12 +52,14 @@ class IntentStateManager {
             history     = emptyList()
         )
         records[sessionId] = SessionRecord(
-            meta              = session,
-            snapshots         = mutableListOf(),
-            currentIntent     = intentData,
-            swarmResult       = null,
-            simResult         = null,
-            availableEvidence = availableEvidence
+            meta                    = session,
+            snapshots               = mutableListOf(),
+            currentIntent           = intentData,
+            swarmResult             = null,
+            simResult               = null,
+            availableEvidence       = availableEvidence,
+            scoutReport             = null,
+            evidenceValidationResult = null
         )
         return session
     }
@@ -63,25 +67,31 @@ class IntentStateManager {
     /**
      * Append a snapshot after a stage completes.
      *
-     * @param updatedIntent  Supply when scouting has enriched the intent.
-     * @param swarmResult    Supply when swarm validation has produced a result.
-     * @param simResult      Supply when simulation has produced a result.
+     * @param updatedIntent           Supply when scouting has enriched the intent.
+     * @param swarmResult             Supply when swarm validation has produced a result.
+     * @param simResult               Supply when simulation has produced a result.
+     * @param scoutReport             Supply when knowledge scouting has produced a report.
+     * @param evidenceValidationResult Supply when evidence validation has run.
      * @return The updated immutable [IrsSession] view.
      */
     fun append(
-        sessionId:     String,
-        snapshot:      IrsSnapshot,
-        updatedIntent: IntentData?       = null,
-        swarmResult:   SwarmResult?      = null,
-        simResult:     SimulationResult? = null
+        sessionId:                String,
+        snapshot:                 IrsSnapshot,
+        updatedIntent:            IntentData?               = null,
+        swarmResult:              SwarmResult?              = null,
+        simResult:                SimulationResult?         = null,
+        scoutReport:              KnowledgeScoutReport?     = null,
+        evidenceValidationResult: EvidenceValidationResult? = null
     ): IrsSession {
         val record = records[sessionId]
             ?: error("Session '$sessionId' does not exist")
         record.snapshots.add(snapshot)
         val newRecord = record.copy(
-            currentIntent = updatedIntent ?: record.currentIntent,
-            swarmResult   = swarmResult   ?: record.swarmResult,
-            simResult     = simResult     ?: record.simResult
+            currentIntent            = updatedIntent            ?: record.currentIntent,
+            swarmResult              = swarmResult              ?: record.swarmResult,
+            simResult                = simResult                ?: record.simResult,
+            scoutReport              = scoutReport              ?: record.scoutReport,
+            evidenceValidationResult = evidenceValidationResult ?: record.evidenceValidationResult
         )
         records[sessionId] = newRecord
         return buildSession(newRecord)
@@ -108,6 +118,14 @@ class IntentStateManager {
     /** Return the supplementary evidence pool for scouting, or empty map. */
     fun availableEvidence(sessionId: String): Map<String, List<EvidenceRef>> =
         records[sessionId]?.availableEvidence ?: emptyMap()
+
+    /** Return the knowledge scout report stored during scouting, or null. */
+    fun scoutReport(sessionId: String): KnowledgeScoutReport? =
+        records[sessionId]?.scoutReport
+
+    /** Return the evidence validation result stored during evidence validation, or null. */
+    fun evidenceValidationResult(sessionId: String): EvidenceValidationResult? =
+        records[sessionId]?.evidenceValidationResult
 
     /**
      * Replay the full snapshot history for [sessionId].

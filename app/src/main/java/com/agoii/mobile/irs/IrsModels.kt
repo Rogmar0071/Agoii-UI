@@ -5,6 +5,78 @@ package com.agoii.mobile.irs
 /** A single traceable reference to an external evidence item. */
 data class EvidenceRef(val id: String, val source: String)
 
+// ─── Knowledge Scout models ───────────────────────────────────────────────────
+
+/** Classifies the domain covered by a scout run. */
+enum class ScoutType { ENVIRONMENT, DEPENDENCY, CONSTRAINT }
+
+/**
+ * A single finding produced by a knowledge scout.
+ *
+ * @property description Human-readable description of the finding.
+ * @property severity    One of: INFO, WARNING, ERROR.
+ */
+data class Finding(val description: String, val severity: String = "INFO")
+
+/**
+ * Structured output produced by each knowledge scout.
+ *
+ * Rules:
+ *  - [confidence] must be in [0.0, 1.0].
+ *  - When the scout cannot verify something it MUST set confidence ≤ 0.4 (LOW).
+ *  - [sourceTrace] lists every data point used to derive [findings].
+ *
+ * @property type        Which domain was scouted.
+ * @property findings    Ordered list of findings (may be empty when nothing was detected).
+ * @property confidence  Overall scout confidence; 0.0 = completely unknown, 1.0 = fully verified.
+ * @property sourceTrace Ordered list of source identifiers consulted during scouting.
+ */
+data class ScoutEvidence(
+    val type:        ScoutType,
+    val findings:    List<Finding>,
+    val confidence:  Double,
+    val sourceTrace: List<String>
+) {
+    init {
+        require(confidence in 0.0..1.0) { "confidence must be in [0.0, 1.0], got $confidence" }
+    }
+}
+
+/** Aggregate of all scout results for a session. */
+data class KnowledgeScoutReport(
+    val environment: ScoutEvidence,
+    val dependency:  ScoutEvidence,
+    val constraint:  ScoutEvidence
+) {
+    /** true when every scout returned at least MEDIUM confidence (> 0.4). */
+    val allReliable: Boolean get() =
+        environment.confidence > 0.4 && dependency.confidence > 0.4 && constraint.confidence > 0.4
+
+    /** Collect all findings rated ERROR across all scouts. */
+    val errors: List<Finding> get() =
+        (environment.findings + dependency.findings + constraint.findings)
+            .filter { it.severity == "ERROR" }
+}
+
+// ─── Evidence Validation ──────────────────────────────────────────────────────
+
+/**
+ * Output produced by [EvidenceValidator].
+ *
+ * Validation dimensions (all must pass for [valid] = true):
+ *  1. Presence   — ≥ 1 EvidenceRef per mandatory field (pre-checked by GapDetector).
+ *  2. Relevance  — each EvidenceRef source is recognisably related to the field it backs.
+ *  3. Coverage   — evidence collectively covers the non-trivial content of the field value.
+ *  4. Consistency — evidence refs across fields do not contradict each other.
+ *
+ * @property valid  true only when all four dimensions pass.
+ * @property issues Descriptions of every violation detected (empty when [valid] = true).
+ */
+data class EvidenceValidationResult(
+    val valid:  Boolean,
+    val issues: List<String>
+)
+
 // ─── Intent ──────────────────────────────────────────────────────────────────
 
 /**
@@ -111,6 +183,7 @@ enum class IrsStage {
     RECONSTRUCTION,
     GAP_DETECTION,
     SCOUTING,
+    EVIDENCE_VALIDATION,
     SWARM_VALIDATION,
     SIMULATION,
     PCCV,

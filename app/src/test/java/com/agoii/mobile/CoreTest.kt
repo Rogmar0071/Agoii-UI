@@ -9,6 +9,7 @@ import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.irs.ConsensusRule
 import com.agoii.mobile.irs.EvidenceRef
+import com.agoii.mobile.irs.EvidenceValidator
 import com.agoii.mobile.irs.GapDetector
 import com.agoii.mobile.irs.IntentField
 import com.agoii.mobile.irs.IntentData
@@ -21,6 +22,9 @@ import com.agoii.mobile.irs.ScoutOrchestrator
 import com.agoii.mobile.irs.SimulationEngine
 import com.agoii.mobile.irs.SwarmConfig
 import com.agoii.mobile.irs.SwarmValidator
+import com.agoii.mobile.irs.scout.ConstraintScout
+import com.agoii.mobile.irs.scout.DependencyScout
+import com.agoii.mobile.irs.scout.EnvironmentScout
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -625,11 +629,26 @@ class CoreTest {
 
     private val evidenceRef = EvidenceRef(id = "ev-001", source = "manual")
 
+    /**
+     * Generic evidence for tests that don't exercise EvidenceValidator.
+     * Uses a source name ("manual") that will not pass the relevance check.
+     */
     private fun fullEvidence() = mapOf(
         "objective"   to listOf(evidenceRef),
         "constraints" to listOf(evidenceRef),
         "environment" to listOf(evidenceRef),
         "resources"   to listOf(evidenceRef)
+    )
+
+    /**
+     * Domain-relevant evidence for orchestrator integration tests that go through
+     * EvidenceValidator. Each source name contains a keyword recognised by the validator.
+     */
+    private fun relevantEvidence() = mapOf(
+        "objective"   to listOf(EvidenceRef(id = "ev-obj-01",  source = "objective-spec")),
+        "constraints" to listOf(EvidenceRef(id = "ev-con-01",  source = "constraint-review")),
+        "environment" to listOf(EvidenceRef(id = "ev-env-01",  source = "environment-audit")),
+        "resources"   to listOf(EvidenceRef(id = "ev-res-01",  source = "resource-inventory"))
     )
 
     private fun fullFields() = mapOf(
@@ -817,7 +836,7 @@ class CoreTest {
     @Test
     fun `IrsOrchestrator certifies a fully evidence-backed intent in deterministic steps`() {
         val orchestrator = IrsOrchestrator()
-        orchestrator.createSession("s1", fullFields(), fullEvidence(), majorityConfig())
+        orchestrator.createSession("s1", fullFields(), relevantEvidence(), majorityConfig())
 
         var result = orchestrator.step("s1")
         assertFalse(result.terminal)
@@ -826,6 +845,10 @@ class CoreTest {
         result = orchestrator.step("s1")
         assertFalse(result.terminal)
         assertEquals(IrsStage.SCOUTING, result.executedStage)
+
+        result = orchestrator.step("s1")
+        assertFalse(result.terminal)
+        assertEquals(IrsStage.EVIDENCE_VALIDATION, result.executedStage)
 
         result = orchestrator.step("s1")
         assertFalse(result.terminal)
@@ -861,25 +884,216 @@ class CoreTest {
     @Test
     fun `IrsOrchestrator history is append-only and replays correctly`() {
         val orchestrator = IrsOrchestrator()
-        orchestrator.createSession("s3", fullFields(), fullEvidence(), majorityConfig())
+        orchestrator.createSession("s3", fullFields(), relevantEvidence(), majorityConfig())
 
-        repeat(6) { orchestrator.step("s3") }
+        repeat(7) { orchestrator.step("s3") }
 
         val history = orchestrator.replayHistory("s3")
-        assertEquals(6, history.size)
+        assertEquals(7, history.size)
         assertEquals(IrsStage.GAP_DETECTION, history[0].stage)
-        assertEquals(IrsStage.CERTIFICATION, history[5].stage)
+        assertEquals(IrsStage.CERTIFICATION, history[6].stage)
     }
 
     @Test
     fun `IrsOrchestrator returns terminal state on repeated step calls after completion`() {
         val orchestrator = IrsOrchestrator()
-        orchestrator.createSession("s4", fullFields(), fullEvidence(), majorityConfig())
+        orchestrator.createSession("s4", fullFields(), relevantEvidence(), majorityConfig())
 
-        repeat(6) { orchestrator.step("s4") }
+        repeat(7) { orchestrator.step("s4") }
         val extraCall = orchestrator.step("s4")
         assertTrue(extraCall.terminal)
         assertTrue(extraCall.orchestratorResult is OrchestratorResult.Certified)
+    }
+
+    // ── IRS-04: EnvironmentScout tests ────────────────────────────────────────
+
+    @Test
+    fun `EnvironmentScout returns HIGH confidence for known platform with evidence`() {
+        val scout  = EnvironmentScout()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), fullEvidence())
+        val result = scout.scout(intent)
+        assertTrue(result.confidence > 0.7)
+        assertTrue(result.findings.any { it.severity == "INFO" })
+        assertTrue(result.sourceTrace.any { it.contains("cloud") })
+    }
+
+    @Test
+    fun `EnvironmentScout returns LOW confidence for blank environment`() {
+        val scout  = EnvironmentScout()
+        val intent = ReconstructionEngine().reconstruct(
+            mapOf("objective" to "x", "constraints" to "y", "environment" to "", "resources" to "z"),
+            fullEvidence()
+        )
+        val result = scout.scout(intent)
+        assertTrue(result.confidence <= 0.4)
+        assertTrue(result.findings.any { it.severity == "ERROR" })
+    }
+
+    @Test
+    fun `EnvironmentScout marks unknown platform as MEDIUM confidence when evidence present`() {
+        val scout  = EnvironmentScout()
+        val intent = ReconstructionEngine().reconstruct(
+            mapOf("objective" to "x", "constraints" to "y", "environment" to "mainframe", "resources" to "z"),
+            fullEvidence()
+        )
+        val result = scout.scout(intent)
+        assertTrue(result.confidence in 0.4..0.7)
+    }
+
+    // ── IRS-04: DependencyScout tests ─────────────────────────────────────────
+
+    @Test
+    fun `DependencyScout returns HIGH confidence for known tool with evidence`() {
+        val scout  = DependencyScout()
+        val intent = ReconstructionEngine().reconstruct(
+            mapOf("objective" to "Build", "constraints" to "use gradle", "environment" to "cloud", "resources" to "team"),
+            fullEvidence()
+        )
+        val result = scout.scout(intent)
+        assertTrue(result.confidence > 0.7)
+        assertTrue(result.findings.any { it.description.contains("gradle") })
+    }
+
+    @Test
+    fun `DependencyScout returns LOW confidence when no tools or evidence present`() {
+        val scout  = DependencyScout()
+        val intent = ReconstructionEngine().reconstruct(
+            mapOf("objective" to "Build", "constraints" to "it must work", "environment" to "cloud", "resources" to "team"),
+            emptyMap()
+        )
+        val result = scout.scout(intent)
+        assertTrue(result.confidence <= 0.4)
+    }
+
+    // ── IRS-04: ConstraintScout tests ─────────────────────────────────────────
+
+    @Test
+    fun `ConstraintScout returns HIGH confidence when constraints are realistic and evidence-backed`() {
+        val scout  = ConstraintScout()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), fullEvidence())
+        val result = scout.scout(intent)
+        assertTrue(result.confidence > 0.7)
+        assertTrue(result.findings.none { it.severity == "ERROR" })
+    }
+
+    @Test
+    fun `ConstraintScout detects real-time vs serverless contradiction`() {
+        val scout  = ConstraintScout()
+        val intent = ReconstructionEngine().reconstruct(
+            mapOf("objective" to "Build", "constraints" to "real-time processing", "environment" to "serverless", "resources" to "team"),
+            fullEvidence()
+        )
+        val result = scout.scout(intent)
+        assertTrue(result.confidence <= 0.4)
+        assertTrue(result.findings.any { it.severity == "ERROR" && it.description.contains("real-time") })
+    }
+
+    @Test
+    fun `ConstraintScout detects offline vs cloud contradiction`() {
+        val scout  = ConstraintScout()
+        val intent = ReconstructionEngine().reconstruct(
+            mapOf("objective" to "Build", "constraints" to "must work offline", "environment" to "cloud", "resources" to "team"),
+            fullEvidence()
+        )
+        val result = scout.scout(intent)
+        assertTrue(result.confidence <= 0.4)
+        assertTrue(result.findings.any { it.severity == "ERROR" && it.description.contains("offline") })
+    }
+
+    @Test
+    fun `ConstraintScout returns LOW confidence for blank constraints`() {
+        val scout  = ConstraintScout()
+        val intent = ReconstructionEngine().reconstruct(
+            mapOf("objective" to "Build", "constraints" to "", "environment" to "cloud", "resources" to "team"),
+            fullEvidence()
+        )
+        val result = scout.scout(intent)
+        assertTrue(result.confidence <= 0.4)
+        assertTrue(result.findings.any { it.severity == "ERROR" })
+    }
+
+    // ── IRS-04: EvidenceValidator tests ───────────────────────────────────────
+
+    @Test
+    fun `EvidenceValidator passes when all four dimensions are satisfied`() {
+        val validator = EvidenceValidator()
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val result    = validator.validate(intent)
+        assertTrue(result.valid)
+        assertTrue(result.issues.isEmpty())
+    }
+
+    @Test
+    fun `EvidenceValidator fails presence check when a field has no evidence`() {
+        val validator = EvidenceValidator()
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), emptyMap())
+        val result    = validator.validate(intent)
+        assertFalse(result.valid)
+        assertTrue(result.issues.any { it.contains("presence") })
+    }
+
+    @Test
+    fun `EvidenceValidator fails relevance check when source does not match field domain`() {
+        val validator = EvidenceValidator()
+        // "manual" source doesn't match any domain keyword for any field
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), fullEvidence())
+        val result    = validator.validate(intent)
+        assertFalse(result.valid)
+        assertTrue(result.issues.any { it.contains("relevance") })
+    }
+
+    @Test
+    fun `EvidenceValidator fails consistency check when duplicate evidence ids exist`() {
+        val validator = EvidenceValidator()
+        val dupEvidence = mapOf(
+            "objective"   to listOf(
+                EvidenceRef("dup-id", "objective-spec"),
+                EvidenceRef("dup-id", "objective-review")
+            ),
+            "constraints" to listOf(EvidenceRef("ev-con", "constraint-review")),
+            "environment" to listOf(EvidenceRef("ev-env", "environment-audit")),
+            "resources"   to listOf(EvidenceRef("ev-res", "resource-inventory"))
+        )
+        val intent = ReconstructionEngine().reconstruct(fullFields(), dupEvidence)
+        val result = validator.validate(intent)
+        assertFalse(result.valid)
+        assertTrue(result.issues.any { it.contains("consistency") })
+    }
+
+    @Test
+    fun `EvidenceValidator fails coverage check when substantial field has only one source`() {
+        val validator = EvidenceValidator()
+        // "Build an enterprise-grade monitoring system" = 6 words → triggers coverage check
+        val fields = fullFields().toMutableMap().also {
+            it["objective"] = "Build an enterprise-grade monitoring system"
+        }
+        val evidence = mapOf(
+            "objective"   to listOf(EvidenceRef("ev-obj", "objective-spec")), // only 1 source
+            "constraints" to listOf(EvidenceRef("ev-con", "constraint-review")),
+            "environment" to listOf(EvidenceRef("ev-env", "environment-audit")),
+            "resources"   to listOf(EvidenceRef("ev-res", "resource-inventory"))
+        )
+        val intent = ReconstructionEngine().reconstruct(fields, evidence)
+        val result = validator.validate(intent)
+        assertFalse(result.valid)
+        assertTrue(result.issues.any { it.contains("coverage") })
+    }
+
+    @Test
+    fun `IrsOrchestrator halts at EVIDENCE_VALIDATION with EVIDENCE_INVALID for irrelevant evidence`() {
+        val orchestrator = IrsOrchestrator()
+        // fullEvidence() uses "manual" sources — will fail relevance check
+        orchestrator.createSession("s-ev-fail", fullFields(), fullEvidence(), majorityConfig())
+
+        orchestrator.step("s-ev-fail")  // GAP_DETECTION
+        orchestrator.step("s-ev-fail")  // SCOUTING
+
+        val evStep = orchestrator.step("s-ev-fail")  // EVIDENCE_VALIDATION
+        assertTrue(evStep.terminal)
+        assertEquals(IrsStage.EVIDENCE_VALIDATION, evStep.executedStage)
+        val rejected = evStep.orchestratorResult as? OrchestratorResult.Rejected
+        assertNotNull(rejected)
+        assertEquals("EVIDENCE_INVALID", rejected!!.reason)
     }
 }
 
