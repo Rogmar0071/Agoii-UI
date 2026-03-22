@@ -23,6 +23,7 @@ import com.agoii.mobile.irs.SimulationEngine
 import com.agoii.mobile.irs.SwarmConfig
 import com.agoii.mobile.irs.SwarmValidator
 import com.agoii.mobile.irs.RiskLevel
+import com.agoii.mobile.irs.SimulationRuleResult
 import com.agoii.mobile.irs.reality.ContradictionEngine
 import com.agoii.mobile.irs.reality.EvidenceScoringEngine
 import com.agoii.mobile.irs.reality.RealityKnowledgeGateway
@@ -1216,7 +1217,7 @@ class CoreTest {
         assertTrue(report.contradictions.any { it.description.contains("real-time") })
     }
 
-    // ── IRS-05B: RealityValidator tests (graded model) ───────────────────────
+    // ── IRS-05C: RealityValidator tests (pure rule-table, no implicit logic) ──
 
     @Test
     fun `RealityValidator passes with LOW risk for well-formed intent`() {
@@ -1226,10 +1227,29 @@ class CoreTest {
         assertTrue(result.valid)
         assertTrue(result.reasons.isEmpty())
         assertEquals(RiskLevel.LOW, result.riskLevel)
-        assertTrue(result.confidence >= 0.7)
+        assertTrue(result.confidence in 0.0..1.0)
         assertTrue(result.credibilityReport.isAcceptable)
         assertFalse(result.contradictionReport.hasContradictions)
         assertTrue(result.simulationResult.feasible)
+    }
+
+    @Test
+    fun `RealityValidator confidence equals credibilityReport overallScore directly`() {
+        val validator = RealityValidator()
+        // Clean intent
+        val clean = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val cleanResult = validator.validate(clean)
+        assertEquals(cleanResult.credibilityReport.overallScore, cleanResult.confidence, 0.0)
+        // Contradictory intent — confidence must still equal overallScore (no multiplier)
+        val badFields = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "must work offline",
+            "environment" to "cloud",
+            "resources"   to "team available"
+        )
+        val bad = ReconstructionEngine().reconstruct(badFields, relevantEvidence())
+        val badResult = validator.validate(bad)
+        assertEquals(badResult.credibilityReport.overallScore, badResult.confidence, 0.0)
     }
 
     @Test
@@ -1245,28 +1265,21 @@ class CoreTest {
         val result = validator.validate(intent)
         assertFalse(result.valid)
         assertEquals(RiskLevel.HIGH, result.riskLevel)
-        assertTrue(result.confidence < 1.0)
         assertTrue(result.reasons.any { it.contains("contradiction") || it.contains("sim:") })
         assertTrue(result.contradictionReport.hasContradictions)
     }
 
     @Test
-    fun `RealityValidator confidence is between 0 and 1 for all cases`() {
+    fun `RealityValidator risk mapping uses only boolean outcomes — no score thresholds`() {
         val validator = RealityValidator()
-        // Clean intent
-        val clean = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
-        val cleanResult = validator.validate(clean)
-        assertTrue(cleanResult.confidence in 0.0..1.0)
-        // Contradictory intent
-        val badFields = mapOf(
-            "objective"   to "Build app",
-            "constraints" to "must work offline",
-            "environment" to "cloud",
-            "resources"   to "team available"
-        )
-        val bad = ReconstructionEngine().reconstruct(badFields, relevantEvidence())
-        val badResult = validator.validate(bad)
-        assertTrue(badResult.confidence in 0.0..1.0)
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val result    = validator.validate(intent)
+        // LOW must not require score >= 0.7 — any acceptable credibility + no contradictions + feasible = LOW
+        if (result.credibilityReport.isAcceptable &&
+            !result.contradictionReport.hasContradictions &&
+            result.simulationResult.feasible) {
+            assertEquals(RiskLevel.LOW, result.riskLevel)
+        }
     }
 
     @Test
@@ -1280,9 +1293,7 @@ class CoreTest {
         )
         val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
         val result = validator.validate(intent)
-        // reasons must include contradiction reasons (from ContradictionReport.reasons)
         assertTrue(result.reasons.any { it.startsWith("contradiction:") || it.startsWith("sim:") })
-        // reasons must equal the union of credibility + contradiction + simulation
         val expected = result.credibilityReport.reasons +
                        result.contradictionReport.reasons +
                        result.simulationResult.failurePoints
@@ -1290,13 +1301,14 @@ class CoreTest {
     }
 
     @Test
-    fun `RealityValidator simulationResult is included in result for full traceability`() {
+    fun `RealityValidator simulationResult evaluations included for full traceability`() {
         val validator = RealityValidator()
         val intent    = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
         val result    = validator.validate(intent)
         assertTrue(result.simulationResult.constraintsChecked > 0)
-        assertTrue(result.simulationResult.ruleTrace.isNotEmpty())
-        assertTrue(result.simulationResult.ruleTrace.all { it.contains(": PASS") || it.contains(": FAIL") })
+        assertTrue(result.simulationResult.evaluations.isNotEmpty())
+        assertEquals(result.simulationResult.constraintsChecked, result.simulationResult.evaluations.size)
+        assertTrue(result.simulationResult.evaluations.all { it.ruleId.isNotEmpty() })
     }
 
     @Test
@@ -1336,12 +1348,11 @@ class CoreTest {
         val rvIndex = stages.indexOf(IrsStage.REALITY_VALIDATION)
         val evIndex = stages.indexOf(IrsStage.EVIDENCE_VALIDATION)
         val swIndex = stages.indexOf(IrsStage.SWARM_VALIDATION)
-        // REALITY_VALIDATION must come after EVIDENCE_VALIDATION and before SWARM_VALIDATION
         assertTrue(rvIndex > evIndex)
         assertTrue(rvIndex < swIndex)
     }
 
-    // ── IRS-05B: RealitySimulationEngine tests (with ruleTrace) ──────────────
+    // ── IRS-05C: RealitySimulationEngine tests (typed evaluations) ────────────
 
     @Test
     fun `RealitySimulationEngine returns feasible for clean intent`() {
@@ -1354,18 +1365,21 @@ class CoreTest {
     }
 
     @Test
-    fun `RealitySimulationEngine populates ruleTrace for all evaluated constraints`() {
+    fun `RealitySimulationEngine evaluations cover all rules with typed SimulationRuleResult`() {
         val engine = RealitySimulationEngine()
         val intent = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
         val result = engine.simulate(intent)
-        assertEquals(result.constraintsChecked, result.ruleTrace.size)
-        assertTrue(result.ruleTrace.all { it.contains(": PASS") || it.contains(": FAIL") })
-        // Clean intent — all rules must PASS
-        assertTrue(result.ruleTrace.all { it.contains(": PASS") })
+        assertEquals(result.constraintsChecked, result.evaluations.size)
+        // Each evaluation is a typed record with ruleId and description
+        assertTrue(result.evaluations.all { it.ruleId.isNotEmpty() })
+        assertTrue(result.evaluations.all { it.description.isNotEmpty() })
+        // Clean intent — all rules must NOT be triggered
+        assertTrue(result.evaluations.all { !it.triggered })
+        assertTrue(result.evaluations.all { it.message == null })
     }
 
     @Test
-    fun `RealitySimulationEngine ruleTrace marks failed rules as FAIL`() {
+    fun `RealitySimulationEngine evaluations mark triggered rules with non-null message`() {
         val engine = RealitySimulationEngine()
         val fields = mapOf(
             "objective"   to "Build app",
@@ -1376,9 +1390,22 @@ class CoreTest {
         val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
         val result = engine.simulate(intent)
         assertFalse(result.feasible)
-        val failEntries = result.ruleTrace.filter { it.contains(": FAIL") }
-        assertTrue(failEntries.isNotEmpty())
-        assertEquals(result.failurePoints.size, failEntries.size)
+        val triggered = result.evaluations.filter { it.triggered }
+        assertTrue(triggered.isNotEmpty())
+        assertTrue(triggered.all { it.message != null })
+        // Non-triggered evaluations must have null message
+        val passing = result.evaluations.filter { !it.triggered }
+        assertTrue(passing.all { it.message == null })
+        // failurePoints must match triggered messages exactly
+        assertEquals(triggered.mapNotNull { it.message }, result.failurePoints)
+    }
+
+    @Test
+    fun `RealitySimulationEngine evaluations count equals constraintsChecked`() {
+        val engine = RealitySimulationEngine()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val result = engine.simulate(intent)
+        assertEquals(result.constraintsChecked, result.evaluations.size)
     }
 
     @Test
@@ -1389,6 +1416,7 @@ class CoreTest {
         val result = engine.simulate(intent)
         assertFalse(result.feasible)
         assertTrue(result.failurePoints.any { it.contains("resources") })
+        assertTrue(result.evaluations.any { it.ruleId == "RES-01" && it.triggered })
     }
 
     @Test
@@ -1404,6 +1432,7 @@ class CoreTest {
         val result = engine.simulate(intent)
         assertFalse(result.feasible)
         assertTrue(result.failurePoints.any { it.contains("offline") || it.contains("cloud") })
+        assertTrue(result.evaluations.any { it.ruleId == "ENV-01" && it.triggered })
     }
 
     @Test
@@ -1419,6 +1448,7 @@ class CoreTest {
         val result = engine.simulate(intent)
         assertFalse(result.feasible)
         assertTrue(result.failurePoints.any { it.contains("real-time") || it.contains("serverless") })
+        assertTrue(result.evaluations.any { it.ruleId == "ENV-02" && it.triggered })
     }
 
     @Test

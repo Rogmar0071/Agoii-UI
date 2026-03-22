@@ -82,9 +82,9 @@ data class EvidenceValidationResult(
 /**
  * Graded risk level produced by the REALITY_VALIDATION stage.
  *
- * LOW    — all reality checks pass; credibility score ≥ 0.7.
- * MEDIUM — credibility concern; score in [0.5, 0.7) or borderline acceptable.
- * HIGH   — contradiction detected OR simulation infeasible; intent cannot be certified.
+ * LOW    — all reality checks pass: credibility acceptable, no contradictions, simulation feasible.
+ * MEDIUM — credibility concern: at least one field below acceptance threshold.
+ * HIGH   — hard failure: contradiction detected OR simulation infeasible; intent cannot be certified.
  */
 enum class RiskLevel { LOW, MEDIUM, HIGH }
 
@@ -216,20 +216,58 @@ data class RealityValidationResult(
 }
 
 /**
+ * A single typed record of a constraint-rule evaluation produced during simulation.
+ *
+ * IRS-05C: replaces the string-based ruleTrace with a strict, machine-parseable schema.
+ * Every rule evaluation MUST produce exactly one [SimulationRuleResult], whether it
+ * fires (triggered = true) or not (triggered = false).
+ *
+ * @property ruleId      Unique identifier of the constraint rule (e.g. "RES-01").
+ * @property description Human-readable description of what the rule checks.
+ * @property triggered   true when the rule detected a violation; false when the rule passed.
+ * @property message     Non-null failure description when [triggered] is true; null when PASS.
+ */
+data class SimulationRuleResult(
+    val ruleId:      String,
+    val description: String,
+    val triggered:   Boolean,
+    val message:     String?
+) {
+    init {
+        require((triggered && message != null) || (!triggered && message == null)) {
+            "triggered and message must be consistent for rule $ruleId: triggered=$triggered but message=${if (message == null) "null" else "non-null"}"
+        }
+    }
+}
+
+/**
  * Output produced by [com.agoii.mobile.irs.reality.RealitySimulationEngine].
  *
- * @property feasible            true when the intent is feasible under real-world constraints.
- * @property failurePoints       Human-readable descriptions of detected real-world failure points.
- * @property constraintsChecked  The number of constraint rules evaluated during simulation.
- * @property ruleTrace           Ordered trace of each rule evaluation result (e.g. "RES-01: PASS").
- *                               Enables full replay of the simulation reasoning chain.
+ * IRS-05C: strict schema — all simulation state is fully typed and machine-parseable.
+ *
+ * @property feasible            true when no constraint rule was triggered.
+ * @property failurePoints       Human-readable descriptions of triggered rule violations.
+ *                               Derived from [evaluations]; no additional state.
+ * @property constraintsChecked  Total number of rules evaluated (= [evaluations].size).
+ * @property evaluations         Ordered typed record for every rule evaluation, PASS or FAIL.
+ *                               This is the authoritative traceability artifact; every rule
+ *                               evaluation is present and machine-parseable.
  */
 data class RealitySimulationResult(
     val feasible:            Boolean,
     val failurePoints:       List<String>,
     val constraintsChecked:  Int,
-    val ruleTrace:           List<String>
-)
+    val evaluations:         List<SimulationRuleResult>
+) {
+    init {
+        require(constraintsChecked == evaluations.size) {
+            "constraintsChecked ($constraintsChecked) must equal evaluations.size (${evaluations.size})"
+        }
+        require(feasible == evaluations.none { it.triggered }) {
+            "feasible must equal evaluations.none { triggered }"
+        }
+    }
+}
 
 // ─── Intent ──────────────────────────────────────────────────────────────────
 

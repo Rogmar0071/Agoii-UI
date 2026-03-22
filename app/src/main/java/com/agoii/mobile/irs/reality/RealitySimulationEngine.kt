@@ -2,16 +2,19 @@ package com.agoii.mobile.irs.reality
 
 import com.agoii.mobile.irs.IntentData
 import com.agoii.mobile.irs.RealitySimulationResult
+import com.agoii.mobile.irs.SimulationRuleResult
 
 /**
  * RealitySimulationEngine — independent real-world feasibility simulation layer.
  *
- * IRS-05 Contract Rules:
+ * IRS-05C Contract Rules:
  *  - Operates independently; does NOT call any other IRS module.
  *  - Simulation is fully deterministic — same input always yields the same output.
  *  - All failure points are traceable to a specific constraint rule and field pair.
  *  - NO guessing: only reports failures when a named rule matches known conflict patterns.
- *  - The gateway is used read-only for fact-backed constraint evaluation.
+ *  - Every rule evaluation produces exactly one [SimulationRuleResult] (PASS or FAIL).
+ *  - [RealitySimulationResult.evaluations] is the authoritative traceability artifact;
+ *    [failurePoints] and [constraintsChecked] are derived from it — no hidden state.
  *
  * Simulation scope:
  *  1. Resource-availability constraints — ensures required resources are present.
@@ -26,7 +29,7 @@ class RealitySimulationEngine(
 ) {
 
     companion object {
-        // Constraint rules: each rule produces a failure point when it fires.
+        // Constraint rules: each rule produces a failure message when it fires, null when passing.
         private data class SimConstraint(
             val id:          String,
             val description: String,
@@ -95,23 +98,31 @@ class RealitySimulationEngine(
     /**
      * Simulate the intent against all real-world constraint rules.
      *
-     * @param intent The intent to simulate (post reality-validation, pre swarm-validation).
-     * @return [RealitySimulationResult] with feasibility decision, all detected failure points,
-     *         and a full [RealitySimulationResult.ruleTrace] for replay.
+     * Every rule produces exactly one [SimulationRuleResult] regardless of outcome.
+     * [RealitySimulationResult.failurePoints] and [RealitySimulationResult.constraintsChecked]
+     * are derived from [RealitySimulationResult.evaluations] — no hidden state.
+     *
+     * @param intent The intent to simulate (post evidence-validation, pre swarm-validation).
+     * @return [RealitySimulationResult] with typed evaluations and derived feasibility state.
      */
     fun simulate(intent: IntentData): RealitySimulationResult {
-        val ruleResults    = CONSTRAINTS.map { c -> Pair(c, c.check(intent)) }
-        val failurePoints  = ruleResults.mapNotNull { (_, msg) -> msg }
-        val ruleTrace      = ruleResults.map { (c, msg) ->
-            if (msg == null) "${c.id}[${c.description}]: PASS"
-            else             "${c.id}[${c.description}]: FAIL"
+        val evaluations = CONSTRAINTS.map { c ->
+            val message = c.check(intent)
+            SimulationRuleResult(
+                ruleId      = c.id,
+                description = c.description,
+                triggered   = message != null,
+                message     = message
+            )
         }
+        val failurePoints = evaluations.mapNotNull { it.message }
 
         return RealitySimulationResult(
             feasible           = failurePoints.isEmpty(),
             failurePoints      = failurePoints,
-            constraintsChecked = CONSTRAINTS.size,
-            ruleTrace          = ruleTrace
+            constraintsChecked = evaluations.size,
+            evaluations        = evaluations
         )
     }
 }
+
