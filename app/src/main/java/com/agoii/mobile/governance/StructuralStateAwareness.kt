@@ -1,7 +1,5 @@
 package com.agoii.mobile.governance
 
-import com.agoii.mobile.core.Governor
-
 /**
  * StructuralStateAwareness (SSA) — deterministic, static map of all system states.
  *
@@ -9,16 +7,17 @@ import com.agoii.mobile.core.Governor
  *  - All state sets are declared explicitly at compile time.
  *  - No reflection, runtime discovery, or file scanning.
  *  - SSA is read-only; it never modifies any state.
+ *  - SSA is independent: no imports from outside the governance package.
  */
 class StructuralStateAwareness {
 
     /** Complete explicit set of all possible Governor result states. */
-    fun governorStates(): Set<Governor.GovernorResult> = setOf(
-        Governor.GovernorResult.ADVANCED,
-        Governor.GovernorResult.WAITING_FOR_APPROVAL,
-        Governor.GovernorResult.COMPLETED,
-        Governor.GovernorResult.NO_EVENT,
-        Governor.GovernorResult.DRIFT
+    fun governorStates(): Set<GovernorState> = setOf(
+        GovernorState.ADVANCED,
+        GovernorState.WAITING_FOR_APPROVAL,
+        GovernorState.COMPLETED,
+        GovernorState.NO_EVENT,
+        GovernorState.DRIFT
     )
 
     /** Complete explicit set of all active surface types in the governance model. */
