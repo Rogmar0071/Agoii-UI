@@ -176,20 +176,19 @@ data class ContradictionReport(
 /**
  * Terminal output of the REALITY_VALIDATION stage.
  *
- * Graded (non-binary) output conforming to the IRS-05B system law:
- *  - [valid]     replaces the former `passed` flag.
- *  - [riskLevel] grades the severity: LOW / MEDIUM / HIGH.
- *  - [confidence] is derived from evidence credibility (0.0 → 1.0) and
- *    adjusted downward when contradictions or simulation failures are present.
+ * Graded (non-binary) output conforming to the IRS-05C system law:
+ *  - [valid]     is the authoritative pass/fail flag.
+ *  - [riskLevel] grades the severity: LOW / MEDIUM / HIGH (boolean rule table; no thresholds).
+ *  - [confidence] equals [CredibilityReport.overallScore] directly; no adjustment.
  *  - [reasons]   is a flat, traceable list of all failure descriptions, collected
  *    from sub-module outputs — no logic is duplicated here.
  *
- * Backward-compatible computed properties [passed] and [issues] are retained
- * for IrsOrchestrator compatibility until that layer is updated.
+ * IRS-05C-AUDIT: Legacy aliases [passed] and [issues] are formally deprecated.
+ * All callers MUST migrate to [valid] and [reasons] respectively.
  *
  * @property valid               true only when all reality checks pass (reasons is empty).
  * @property riskLevel           Graded risk level.
- * @property confidence          Adjusted credibility confidence (0.0–1.0).
+ * @property confidence          Credibility confidence (0.0–1.0); equals credibilityReport.overallScore.
  * @property reasons             All traceable failure/concern descriptions.
  * @property credibilityReport   Detailed per-field credibility scores.
  * @property contradictionReport Detected cross-field contradictions.
@@ -208,10 +207,18 @@ data class RealityValidationResult(
         require(confidence in 0.0..1.0) { "confidence must be in [0.0, 1.0], got $confidence" }
     }
 
-    /** Backward-compatible alias for [valid]. Retained for IrsOrchestrator compatibility. */
+    /**
+     * Deprecated alias for [valid].
+     * IRS-05C-AUDIT: migrate all callers to [valid].
+     */
+    @Deprecated("IRS-05C-AUDIT: use valid", ReplaceWith("valid"))
     val passed: Boolean get() = valid
 
-    /** Backward-compatible alias for [reasons]. Retained for IrsOrchestrator compatibility. */
+    /**
+     * Deprecated alias for [reasons].
+     * IRS-05C-AUDIT: migrate all callers to [reasons].
+     */
+    @Deprecated("IRS-05C-AUDIT: use reasons", ReplaceWith("reasons"))
     val issues: List<String> get() = reasons
 }
 
@@ -349,6 +356,27 @@ data class PCCVResult(
 // ─── Orchestrator output ──────────────────────────────────────────────────────
 
 /**
+ * Standardized failure classification for all IRS rejection paths.
+ *
+ * IRS-05C-AUDIT: Every [OrchestratorResult.Rejected.reason] MUST map to exactly one
+ * value of this enum. No raw string failure codes are permitted.
+ *
+ * All rejection paths:
+ *  - [EVIDENCE_INVALID]      — evidence validation failed (step 4)
+ *  - [REALITY_UNVERIFIABLE]  — reality validation failed (step 5)
+ *  - [UNSTABLE]              — swarm validation failed; agents did not reach consensus (step 6)
+ *  - [INFEASIBLE]            — simulation infeasible; real-world constraints cannot be met (step 7)
+ *  - [PCCV_FAIL]             — precondition/certification-condition validation failed (step 8)
+ */
+enum class FailureType {
+    EVIDENCE_INVALID,
+    REALITY_UNVERIFIABLE,
+    UNSTABLE,
+    INFEASIBLE,
+    PCCV_FAIL
+}
+
+/**
  * Terminal output of the IRS.  The UI interprets this result independently
  * and must not depend on any IRS-internal state.
  */
@@ -362,7 +390,8 @@ sealed class OrchestratorResult {
     /**
      * Certification rejected.
      *
-     * @property reason  Machine-readable rejection code (e.g. "UNSTABLE", "INFEASIBLE", "PCCV_FAIL").
+     * @property reason  Machine-readable rejection code; always equals [FailureType.name]
+     *                   for one of the standardized failure types.
      * @property details Human-readable explanations.
      */
     data class Rejected(val reason: String, val details: List<String> = emptyList()) : OrchestratorResult()

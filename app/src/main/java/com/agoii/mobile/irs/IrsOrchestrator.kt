@@ -183,7 +183,7 @@ class IrsOrchestrator(
                         snapshot                 = IrsSnapshot(
                             stage = stage,
                             orchestratorResult = OrchestratorResult.Rejected(
-                                reason  = "EVIDENCE_INVALID",
+                                reason  = FailureType.EVIDENCE_INVALID.name,
                                 details = evResult.issues
                             )
                         ),
@@ -194,7 +194,7 @@ class IrsOrchestrator(
                         session            = updatedSession,
                         terminal           = true,
                         orchestratorResult = OrchestratorResult.Rejected(
-                            reason  = "EVIDENCE_INVALID",
+                            reason  = FailureType.EVIDENCE_INVALID.name,
                             details = evResult.issues
                         )
                     )
@@ -217,14 +217,14 @@ class IrsOrchestrator(
             IrsStage.REALITY_VALIDATION -> {
                 val intent    = stateManager.currentIntent(sessionId)!!
                 val rvResult  = realityValidator.validate(intent)
-                if (!rvResult.passed) {
+                if (!rvResult.valid) {
                     val updatedSession = stateManager.append(
                         sessionId               = sessionId,
                         snapshot                = IrsSnapshot(
                             stage = stage,
                             orchestratorResult = OrchestratorResult.Rejected(
-                                reason  = "REALITY_UNVERIFIABLE",
-                                details = rvResult.issues
+                                reason  = FailureType.REALITY_UNVERIFIABLE.name,
+                                details = rvResult.reasons
                             )
                         ),
                         realityValidationResult = rvResult
@@ -234,8 +234,8 @@ class IrsOrchestrator(
                         session            = updatedSession,
                         terminal           = true,
                         orchestratorResult = OrchestratorResult.Rejected(
-                            reason  = "REALITY_UNVERIFIABLE",
-                            details = rvResult.issues
+                            reason  = FailureType.REALITY_UNVERIFIABLE.name,
+                            details = rvResult.reasons
                         )
                     )
                 } else {
@@ -263,7 +263,7 @@ class IrsOrchestrator(
                         snapshot    = IrsSnapshot(
                             stage = stage,
                             orchestratorResult = OrchestratorResult.Rejected(
-                                reason  = "UNSTABLE",
+                                reason  = FailureType.UNSTABLE.name,
                                 details = swarmResult.conflicts
                             )
                         ),
@@ -274,7 +274,7 @@ class IrsOrchestrator(
                         session            = updatedSession,
                         terminal           = true,
                         orchestratorResult = OrchestratorResult.Rejected(
-                            reason  = "UNSTABLE",
+                            reason  = FailureType.UNSTABLE.name,
                             details = swarmResult.conflicts
                         )
                     )
@@ -303,7 +303,7 @@ class IrsOrchestrator(
                         snapshot  = IrsSnapshot(
                             stage = stage,
                             orchestratorResult = OrchestratorResult.Rejected(
-                                reason  = "INFEASIBLE",
+                                reason  = FailureType.INFEASIBLE.name,
                                 details = simResult.failurePoints
                             )
                         ),
@@ -314,7 +314,7 @@ class IrsOrchestrator(
                         session            = updatedSession,
                         terminal           = true,
                         orchestratorResult = OrchestratorResult.Rejected(
-                            reason  = "INFEASIBLE",
+                            reason  = FailureType.INFEASIBLE.name,
                             details = simResult.failurePoints
                         )
                     )
@@ -347,7 +347,7 @@ class IrsOrchestrator(
                         snapshot  = IrsSnapshot(
                             stage = stage,
                             orchestratorResult = OrchestratorResult.Rejected(
-                                reason  = "PCCV_FAIL",
+                                reason  = FailureType.PCCV_FAIL.name,
                                 details = pcCVResult.errors
                             )
                         )
@@ -357,7 +357,7 @@ class IrsOrchestrator(
                         session            = updatedSession,
                         terminal           = true,
                         orchestratorResult = OrchestratorResult.Rejected(
-                            reason  = "PCCV_FAIL",
+                            reason  = FailureType.PCCV_FAIL.name,
                             details = pcCVResult.errors
                         )
                     )

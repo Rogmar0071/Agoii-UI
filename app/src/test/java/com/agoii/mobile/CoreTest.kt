@@ -10,6 +10,7 @@ import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.irs.ConsensusRule
 import com.agoii.mobile.irs.EvidenceRef
 import com.agoii.mobile.irs.EvidenceValidator
+import com.agoii.mobile.irs.FailureType
 import com.agoii.mobile.irs.GapDetector
 import com.agoii.mobile.irs.IntentField
 import com.agoii.mobile.irs.IntentData
@@ -1104,7 +1105,7 @@ class CoreTest {
         assertEquals(IrsStage.EVIDENCE_VALIDATION, evStep.executedStage)
         val rejected = evStep.orchestratorResult as? OrchestratorResult.Rejected
         assertNotNull(rejected)
-        assertEquals("EVIDENCE_INVALID", rejected!!.reason)
+        assertEquals(FailureType.EVIDENCE_INVALID.name, rejected!!.reason)
     }
 
     // ── IRS-05: RealityKnowledgeGateway tests ─────────────────────────────────
@@ -1331,7 +1332,7 @@ class CoreTest {
         assertEquals(IrsStage.REALITY_VALIDATION, rvStep.executedStage)
         val rejected = rvStep.orchestratorResult as? OrchestratorResult.Rejected
         assertNotNull(rejected)
-        assertEquals("REALITY_UNVERIFIABLE", rejected!!.reason)
+        assertEquals(FailureType.REALITY_UNVERIFIABLE.name, rejected!!.reason)
         assertTrue(rejected.details.isNotEmpty())
     }
 
@@ -1457,6 +1458,79 @@ class CoreTest {
         val intent = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
         val result = engine.simulate(intent)
         assertTrue(result.constraintsChecked >= 4)
+    }
+
+    // ── IRS-05C-AUDIT-CLOSURE: FailureType taxonomy tests ────────────────────
+
+    @Test
+    fun `FailureType enum covers all five IRS rejection paths`() {
+        val names = FailureType.values().map { it.name }.toSet()
+        assertTrue(names.contains("EVIDENCE_INVALID"))
+        assertTrue(names.contains("REALITY_UNVERIFIABLE"))
+        assertTrue(names.contains("UNSTABLE"))
+        assertTrue(names.contains("INFEASIBLE"))
+        assertTrue(names.contains("PCCV_FAIL"))
+        assertEquals(5, FailureType.values().size)
+    }
+
+    @Test
+    fun `FailureType EVIDENCE_INVALID name matches orchestrator rejection reason`() {
+        val orchestrator = IrsOrchestrator()
+        orchestrator.createSession("s-ft-ev", fullFields(), fullEvidence(), majorityConfig())
+        orchestrator.step("s-ft-ev")  // GAP_DETECTION
+        orchestrator.step("s-ft-ev")  // SCOUTING
+        val evStep = orchestrator.step("s-ft-ev")  // EVIDENCE_VALIDATION
+        val rejected = evStep.orchestratorResult as? OrchestratorResult.Rejected
+        assertNotNull(rejected)
+        assertEquals(FailureType.EVIDENCE_INVALID.name, rejected!!.reason)
+    }
+
+    @Test
+    fun `FailureType REALITY_UNVERIFIABLE name matches orchestrator rejection reason`() {
+        val orchestrator = IrsOrchestrator()
+        val fields = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "must work offline",
+            "environment" to "cloud",
+            "resources"   to "team available"
+        )
+        orchestrator.createSession("s-ft-rv", fields, relevantEvidence(), majorityConfig())
+        orchestrator.step("s-ft-rv")  // GAP_DETECTION
+        orchestrator.step("s-ft-rv")  // SCOUTING
+        orchestrator.step("s-ft-rv")  // EVIDENCE_VALIDATION
+        val rvStep = orchestrator.step("s-ft-rv")  // REALITY_VALIDATION
+        val rejected = rvStep.orchestratorResult as? OrchestratorResult.Rejected
+        assertNotNull(rejected)
+        assertEquals(FailureType.REALITY_UNVERIFIABLE.name, rejected!!.reason)
+    }
+
+    @Test
+    fun `RealityValidationResult valid is authoritative and passed is deprecated alias`() {
+        val validator = RealityValidator()
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val result    = validator.validate(intent)
+        // valid is the authoritative field
+        assertTrue(result.valid)
+        // passed is a deprecated alias — must equal valid
+        @Suppress("DEPRECATION")
+        assertEquals(result.valid, result.passed)
+    }
+
+    @Test
+    fun `RealityValidationResult reasons is authoritative and issues is deprecated alias`() {
+        val validator = RealityValidator()
+        val fields    = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "must work offline",
+            "environment" to "cloud",
+            "resources"   to "team available"
+        )
+        val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
+        val result = validator.validate(intent)
+        assertTrue(result.reasons.isNotEmpty())
+        // issues is a deprecated alias — must equal reasons exactly
+        @Suppress("DEPRECATION")
+        assertEquals(result.reasons, result.issues)
     }
 }
 
