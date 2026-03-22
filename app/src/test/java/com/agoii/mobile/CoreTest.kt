@@ -485,6 +485,68 @@ class CoreTest {
     // ── Governor Lock Certification tests ────────────────────────────────────
 
     /**
+     * GOVERNOR TIGHTEN — G1: VC is fixed at 5 (deterministic baseline).
+     */
+    @Test
+    fun `governor VC is fixed at 5`() {
+        assertEquals("Governor.VC must be deterministic constant 5", 5, Governor.VC)
+    }
+
+    /**
+     * GOVERNOR TIGHTEN — G3/G5: CSL blocks issuance at position 4 (EL=6 > VC=5).
+     * Verifies the natural enforcement boundary: positions 1-3 allowed, position 4 blocked.
+     */
+    @Test
+    fun `governor returns DRIFT when CSL blocks contract at position 4`() {
+        // Build ledger up to the point where position 4 would be issued
+        // 3 contracts complete → execution_completed is issued (not DRIFT, since position 4 is never started)
+        // To trigger the position-4 gate we need total > 3 and position=3 completed
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 4.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 4.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 4)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 4)),
+            Event("contract_started",    mapOf("contract_id" to "contract_2", "position" to 2, "total" to 4)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_2", "position" to 2, "total" to 4)),
+            Event("contract_started",    mapOf("contract_id" to "contract_3", "position" to 3, "total" to 4)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_3", "position" to 3, "total" to 4))
+        )
+        val s = store(events)
+        // EL (Execution Load) = surface.weight + executionCount + 2*conditionCount
+        // Position 4: EL = 2 (LG weight) + 4 (position) + 0 (conditionCount=0) = 6 > VC=5 → CSL rejects → DRIFT
+        assertEquals(Governor.GovernorResult.DRIFT, Governor(s).runGovernor("proj"))
+        // Ledger must NOT be extended
+        assertEquals(11, s.loadEvents("proj").size)
+    }
+
+    /**
+     * GOVERNOR TIGHTEN — G2: SSM gates execution at execution_started for position 1 (allowed).
+     * Ensures positions 1-3 pass CSL (EL ≤ VC=5).
+     */
+    @Test
+    fun `governor allows contracts at positions 1 through 3 within VC`() {
+        // Position 1: EL=3, Position 2: EL=4, Position 3: EL=5 — all ≤ VC=5
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 3.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 3.0))
+        )
+        val s   = store(events)
+        val gov = Governor(s)
+
+        // 3 contracts × 2 steps + execution_completed + assembly pipeline (3) = 10 ADVANCED total
+        repeat(10) { step ->
+            assertEquals("Expected ADVANCED at step $step", Governor.GovernorResult.ADVANCED, gov.runGovernor("proj"))
+        }
+        assertEquals(Governor.GovernorResult.COMPLETED, gov.runGovernor("proj"))
+    }
+
+    /**
      * LOCK STEP 1 — EVENT MODEL LOCK
      * Verifies EventTypes.ALL is frozen: exactly the 11 defined event types, no more, no less.
      */
