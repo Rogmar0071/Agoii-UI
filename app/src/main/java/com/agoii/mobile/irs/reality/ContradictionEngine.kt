@@ -6,7 +6,7 @@ import com.agoii.mobile.irs.IntentData
 import com.agoii.mobile.irs.KnowledgeFact
 
 /**
- * ContradictionDetector — cross-source, cross-field contradiction detection.
+ * ContradictionEngine — cross-source, cross-field contradiction detection.
  *
  * IRS-05 Contract Rules:
  *  - Operates independently; does NOT call any other IRS module.
@@ -23,7 +23,7 @@ import com.agoii.mobile.irs.KnowledgeFact
  *  3. Resource-constraint conflict: resources signal unavailability while constraints
  *     declare requirements that depend on those resources.
  */
-class ContradictionDetector(
+class ContradictionEngine(
     private val gateway: RealityKnowledgeGateway = RealityKnowledgeGateway()
 ) {
 
@@ -49,11 +49,11 @@ class ContradictionDetector(
 
         // ── Cross-field semantic conflict pairs ──────────────────────────────
         private data class SemanticConflictRule(
-            val fieldA:       String,
-            val keywordA:     String,
-            val fieldB:       String,
-            val keywordB:     String,
-            val description:  String
+            val fieldA:      String,
+            val keywordA:    String,
+            val fieldB:      String,
+            val keywordB:    String,
+            val description: String
         )
 
         private val SEMANTIC_CONFLICT_RULES = listOf(

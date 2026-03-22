@@ -15,7 +15,7 @@ import com.agoii.mobile.irs.scout.EnvironmentScout
  *   step 3 → ScoutOrchestrator + KnowledgeScouts (EnvironmentScout, DependencyScout, ConstraintScout)
  *   step 4 → EvidenceValidator
  *              → if invalid → HALT (Rejected / EVIDENCE_INVALID)
- *   step 5 → RealityValidator (RealityKnowledgeGateway + CredibilityScorer + ContradictionDetector)
+ *   step 5 → RealityValidator (RealityKnowledgeGateway + EvidenceScoringEngine + ContradictionEngine + RealitySimulationEngine)
  *              → if unverifiable → HALT (Rejected / REALITY_UNVERIFIABLE)
  *   step 6 → SwarmValidator
  *              → if inconsistent → HALT (Rejected / UNSTABLE)

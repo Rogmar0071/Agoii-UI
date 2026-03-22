@@ -6,7 +6,7 @@ import com.agoii.mobile.irs.IntentData
 import com.agoii.mobile.irs.KnowledgeFact
 
 /**
- * CredibilityScorer — scores the credibility of each mandatory intent field's evidence
+ * EvidenceScoringEngine — scores the credibility of each mandatory intent field's evidence
  * against knowledge facts retrieved from the [RealityKnowledgeGateway].
  *
  * IRS-05 Contract Rules:
@@ -25,7 +25,7 @@ import com.agoii.mobile.irs.KnowledgeFact
  *  3. Unavailability penalty: −0.3 when the field value signals unavailability.
  *  4. Final score is clamped to [0.0, 1.0].
  */
-class CredibilityScorer(
+class EvidenceScoringEngine(
     private val gateway: RealityKnowledgeGateway = RealityKnowledgeGateway()
 ) {
 
@@ -37,10 +37,10 @@ class CredibilityScorer(
             "environment" to "environment",
             "resources"   to "resources"
         )
-        private const val NEUTRAL_BASE          = 0.5
-        private const val MAX_EVIDENCE_BONUS    = 0.2
-        private const val EVIDENCE_BONUS_STEP   = 0.1
-        private const val UNAVAILABILITY_PENALTY= 0.3
+        private const val NEUTRAL_BASE           = 0.5
+        private const val MAX_EVIDENCE_BONUS     = 0.2
+        private const val EVIDENCE_BONUS_STEP    = 0.1
+        private const val UNAVAILABILITY_PENALTY = 0.3
     }
 
     /**
@@ -60,8 +60,8 @@ class CredibilityScorer(
         )
 
         val fieldScores = fields.map { (name, field) ->
-            val domain     = DOMAIN_FIELD_MAP[name] ?: name
-            val domainFacts= facts[domain] ?: emptyList()
+            val domain      = DOMAIN_FIELD_MAP[name] ?: name
+            val domainFacts = facts[domain] ?: emptyList()
             name to scoreField(name, field.value, field.evidence, domainFacts)
         }.toMap()
 
@@ -82,10 +82,10 @@ class CredibilityScorer(
     // ─── Private helpers ──────────────────────────────────────────────────────
 
     private fun scoreField(
-        fieldName:   String,
-        value:       String,
-        evidence:    List<EvidenceRef>,
-        facts:       List<KnowledgeFact>
+        fieldName: String,
+        value:     String,
+        evidence:  List<EvidenceRef>,
+        facts:     List<KnowledgeFact>
     ): Double {
         // Step 1: base score from knowledge facts (or neutral when none available)
         val base = if (facts.isEmpty()) NEUTRAL_BASE

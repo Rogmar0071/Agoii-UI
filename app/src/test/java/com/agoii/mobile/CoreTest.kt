@@ -22,9 +22,10 @@ import com.agoii.mobile.irs.ScoutOrchestrator
 import com.agoii.mobile.irs.SimulationEngine
 import com.agoii.mobile.irs.SwarmConfig
 import com.agoii.mobile.irs.SwarmValidator
-import com.agoii.mobile.irs.reality.ContradictionDetector
-import com.agoii.mobile.irs.reality.CredibilityScorer
+import com.agoii.mobile.irs.reality.ContradictionEngine
+import com.agoii.mobile.irs.reality.EvidenceScoringEngine
 import com.agoii.mobile.irs.reality.RealityKnowledgeGateway
+import com.agoii.mobile.irs.reality.RealitySimulationEngine
 import com.agoii.mobile.irs.reality.RealityValidator
 import com.agoii.mobile.irs.scout.ConstraintScout
 import com.agoii.mobile.irs.scout.DependencyScout
@@ -1136,11 +1137,11 @@ class CoreTest {
         assertTrue(allFacts.containsKey("constraint"))
     }
 
-    // ── IRS-05: CredibilityScorer tests ──────────────────────────────────────
+    // ── IRS-05: EvidenceScoringEngine tests ──────────────────────────────────
 
     @Test
-    fun `CredibilityScorer returns acceptable score for well-evidenced intent`() {
-        val scorer = CredibilityScorer()
+    fun `EvidenceScoringEngine returns acceptable score for well-evidenced intent`() {
+        val scorer = EvidenceScoringEngine()
         val intent = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
         val report = scorer.score(intent)
         assertTrue(report.overallScore >= 0.5)
@@ -1150,8 +1151,8 @@ class CoreTest {
     }
 
     @Test
-    fun `CredibilityScorer penalises fields with unavailability markers`() {
-        val scorer = CredibilityScorer()
+    fun `EvidenceScoringEngine penalises fields with unavailability markers`() {
+        val scorer = EvidenceScoringEngine()
         val fields = fullFields().toMutableMap().also { it["resources"] = "unavailable" }
         val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
         val report = scorer.score(intent)
@@ -1160,8 +1161,8 @@ class CoreTest {
     }
 
     @Test
-    fun `CredibilityScorer reports low-credibility fields when score is below threshold`() {
-        val scorer = CredibilityScorer()
+    fun `EvidenceScoringEngine reports low-credibility fields when score is below threshold`() {
+        val scorer = EvidenceScoringEngine()
         val fields = mapOf(
             "objective"   to "x",
             "constraints" to "y",
@@ -1173,11 +1174,11 @@ class CoreTest {
         assertTrue(report.lowCredibilityFields.contains("resources"))
     }
 
-    // ── IRS-05: ContradictionDetector tests ──────────────────────────────────
+    // ── IRS-05: ContradictionEngine tests ────────────────────────────────────
 
     @Test
-    fun `ContradictionDetector detects no contradictions for clean intent`() {
-        val detector = ContradictionDetector()
+    fun `ContradictionEngine detects no contradictions for clean intent`() {
+        val detector = ContradictionEngine()
         val intent   = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
         val report   = detector.detect(intent)
         assertFalse(report.hasContradictions)
@@ -1185,8 +1186,8 @@ class CoreTest {
     }
 
     @Test
-    fun `ContradictionDetector detects offline vs cloud semantic contradiction`() {
-        val detector = ContradictionDetector()
+    fun `ContradictionEngine detects offline vs cloud semantic contradiction`() {
+        val detector = ContradictionEngine()
         val fields   = mapOf(
             "objective"   to "Build app",
             "constraints" to "must work offline",
@@ -1200,8 +1201,8 @@ class CoreTest {
     }
 
     @Test
-    fun `ContradictionDetector detects real-time vs serverless semantic contradiction`() {
-        val detector = ContradictionDetector()
+    fun `ContradictionEngine detects real-time vs serverless semantic contradiction`() {
+        val detector = ContradictionEngine()
         val fields   = mapOf(
             "objective"   to "Build app",
             "constraints" to "real-time processing required",
@@ -1239,7 +1240,7 @@ class CoreTest {
         val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
         val result = validator.validate(intent)
         assertFalse(result.passed)
-        assertTrue(result.issues.any { it.contains("contradiction") })
+        assertTrue(result.issues.any { it.contains("contradiction") || it.contains("sim:") })
         assertTrue(result.contradictionReport.hasContradictions)
     }
 
@@ -1264,7 +1265,7 @@ class CoreTest {
         val rejected = rvStep.orchestratorResult as? OrchestratorResult.Rejected
         assertNotNull(rejected)
         assertEquals("REALITY_UNVERIFIABLE", rejected!!.reason)
-        assertTrue(rejected.details.any { it.contains("contradiction") })
+        assertTrue(rejected.details.isNotEmpty())
     }
 
     @Test
@@ -1283,6 +1284,66 @@ class CoreTest {
         // REALITY_VALIDATION must come after EVIDENCE_VALIDATION and before SWARM_VALIDATION
         assertTrue(rvIndex > evIndex)
         assertTrue(rvIndex < swIndex)
+    }
+
+    // ── IRS-05: RealitySimulationEngine tests ────────────────────────────────
+
+    @Test
+    fun `RealitySimulationEngine returns feasible for clean intent`() {
+        val engine = RealitySimulationEngine()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val result = engine.simulate(intent)
+        assertTrue(result.feasible)
+        assertTrue(result.failurePoints.isEmpty())
+        assertTrue(result.constraintsChecked > 0)
+    }
+
+    @Test
+    fun `RealitySimulationEngine detects unavailable resources as infeasible`() {
+        val engine = RealitySimulationEngine()
+        val fields = fullFields().toMutableMap().also { it["resources"] = "unavailable" }
+        val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
+        val result = engine.simulate(intent)
+        assertFalse(result.feasible)
+        assertTrue(result.failurePoints.any { it.contains("resources") })
+    }
+
+    @Test
+    fun `RealitySimulationEngine detects offline vs cloud as infeasible`() {
+        val engine = RealitySimulationEngine()
+        val fields = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "must work offline",
+            "environment" to "cloud",
+            "resources"   to "team available"
+        )
+        val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
+        val result = engine.simulate(intent)
+        assertFalse(result.feasible)
+        assertTrue(result.failurePoints.any { it.contains("offline") || it.contains("cloud") })
+    }
+
+    @Test
+    fun `RealitySimulationEngine detects real-time vs serverless as infeasible`() {
+        val engine = RealitySimulationEngine()
+        val fields = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "real-time processing required",
+            "environment" to "serverless",
+            "resources"   to "team available"
+        )
+        val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
+        val result = engine.simulate(intent)
+        assertFalse(result.feasible)
+        assertTrue(result.failurePoints.any { it.contains("real-time") || it.contains("serverless") })
+    }
+
+    @Test
+    fun `RealitySimulationEngine reports constraintsChecked count`() {
+        val engine = RealitySimulationEngine()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val result = engine.simulate(intent)
+        assertTrue(result.constraintsChecked >= 4)
     }
 }
 

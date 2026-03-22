@@ -156,6 +156,19 @@ data class RealityValidationResult(
     val issues:              List<String>
 )
 
+/**
+ * Output produced by [com.agoii.mobile.irs.reality.RealitySimulationEngine].
+ *
+ * @property feasible      true when the intent is feasible under real-world constraints.
+ * @property failurePoints Human-readable descriptions of detected real-world failure points.
+ * @property constraintsChecked The number of constraint rules evaluated during simulation.
+ */
+data class RealitySimulationResult(
+    val feasible:            Boolean,
+    val failurePoints:       List<String>,
+    val constraintsChecked:  Int
+)
+
 // ─── Intent ──────────────────────────────────────────────────────────────────
 
 /**
