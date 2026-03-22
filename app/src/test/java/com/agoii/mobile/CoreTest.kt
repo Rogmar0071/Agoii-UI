@@ -7,6 +7,7 @@ import com.agoii.mobile.core.Governor
 import com.agoii.mobile.core.LedgerAudit
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayTest
+import com.agoii.mobile.core.SystemVerificationContract
 import com.agoii.mobile.irs.ConsensusRule
 import com.agoii.mobile.irs.EvidenceRef
 import com.agoii.mobile.irs.EvidenceValidator
@@ -1736,6 +1737,149 @@ class CoreTest {
         assertTrue(report.ccf.totalScore >= 13)
         assertEquals("LOW", report.ccf.riskLevel)
         assertEquals("APPROVED", report.approvalStatus)
+    }
+
+    // ── SSA-SYSTEM-VERIFICATION-01 ────────────────────────────────────────────
+
+    @Test
+    fun `SystemVerificationContract passes all six checks at intent_submitted boundary`() {
+        val store = store(listOf(Event(EventTypes.INTENT_SUBMITTED, mapOf("objective" to "build"))))
+        val report = SystemVerificationContract(store).verify("p")
+        assertTrue("overall report must be valid", report.valid)
+    }
+
+    @Test
+    fun `Check 1 ledger integrity passes for single intent_submitted event`() {
+        val store = store(listOf(Event(EventTypes.INTENT_SUBMITTED, mapOf("objective" to "test"))))
+        val report = SystemVerificationContract(store).verify("p")
+        assertTrue(report.ledgerIntegrity.passed)
+        assertEquals(1, report.ledgerIntegrity.eventCount)
+        assertEquals(EventTypes.INTENT_SUBMITTED, report.ledgerIntegrity.firstEventType)
+    }
+
+    @Test
+    fun `Check 1 ledger integrity fails for empty ledger`() {
+        val store = store(emptyList())
+        val report = SystemVerificationContract(store).verify("p")
+        assertFalse(report.ledgerIntegrity.passed)
+        assertEquals(0, report.ledgerIntegrity.eventCount)
+        assertNull(report.ledgerIntegrity.firstEventType)
+        assertFalse(report.valid)
+    }
+
+    @Test
+    fun `Check 1 ledger integrity fails when ledger has more than one event`() {
+        val store = store(listOf(
+            Event(EventTypes.INTENT_SUBMITTED, mapOf("objective" to "a")),
+            Event(EventTypes.CONTRACTS_GENERATED, mapOf("total" to 3.0))
+        ))
+        val report = SystemVerificationContract(store).verify("p")
+        assertFalse(report.ledgerIntegrity.passed)
+        assertEquals(2, report.ledgerIntegrity.eventCount)
+    }
+
+    @Test
+    fun `Check 2 replay consistency returns correct snapshot at intent_submitted`() {
+        val store = store(listOf(Event(EventTypes.INTENT_SUBMITTED, mapOf("objective" to "o"))))
+        val report = SystemVerificationContract(store).verify("p")
+        assertTrue(report.replayConsistency.passed)
+        assertEquals(EventTypes.INTENT_SUBMITTED, report.replayConsistency.phase)
+        assertEquals("0/0", report.replayConsistency.contracts)
+        assertFalse(report.replayConsistency.execStarted)
+    }
+
+    @Test
+    fun `Check 2 replay consistency fails when execution has started`() {
+        val store = store(listOf(
+            Event(EventTypes.INTENT_SUBMITTED,    mapOf("objective" to "o")),
+            Event(EventTypes.CONTRACTS_GENERATED, mapOf("total" to 3.0)),
+            Event(EventTypes.CONTRACTS_READY,     emptyMap()),
+            Event(EventTypes.CONTRACTS_APPROVED,  emptyMap()),
+            Event(EventTypes.EXECUTION_STARTED,   mapOf("total_contracts" to 3.0))
+        ))
+        val report = SystemVerificationContract(store).verify("p")
+        assertFalse(report.replayConsistency.passed)
+        assertTrue(report.replayConsistency.execStarted)
+    }
+
+    @Test
+    fun `Check 3 governor inactivity passes when no contract or execution events exist`() {
+        val store = store(listOf(Event(EventTypes.INTENT_SUBMITTED, mapOf("objective" to "x"))))
+        val report = SystemVerificationContract(store).verify("p")
+        assertTrue(report.governorInactivity.passed)
+        assertFalse(report.governorInactivity.hasContractStarted)
+        assertFalse(report.governorInactivity.hasExecutionStarted)
+    }
+
+    @Test
+    fun `Check 3 governor inactivity fails when execution_started is present`() {
+        val store = store(listOf(
+            Event(EventTypes.INTENT_SUBMITTED,    mapOf("objective" to "o")),
+            Event(EventTypes.CONTRACTS_GENERATED, mapOf("total" to 3.0)),
+            Event(EventTypes.CONTRACTS_READY,     emptyMap()),
+            Event(EventTypes.CONTRACTS_APPROVED,  emptyMap()),
+            Event(EventTypes.EXECUTION_STARTED,   mapOf("total_contracts" to 3.0))
+        ))
+        val report = SystemVerificationContract(store).verify("p")
+        assertFalse(report.governorInactivity.passed)
+        assertTrue(report.governorInactivity.hasExecutionStarted)
+    }
+
+    @Test
+    fun `Check 3 governor inactivity fails when contract_started is present`() {
+        val store = store(listOf(
+            Event(EventTypes.INTENT_SUBMITTED,    mapOf("objective" to "o")),
+            Event(EventTypes.CONTRACTS_GENERATED, mapOf("total" to 3.0)),
+            Event(EventTypes.CONTRACTS_READY,     emptyMap()),
+            Event(EventTypes.CONTRACTS_APPROVED,  emptyMap()),
+            Event(EventTypes.EXECUTION_STARTED,   mapOf("total_contracts" to 3.0)),
+            Event(EventTypes.CONTRACT_STARTED,    mapOf("position" to 1.0, "total" to 3.0))
+        ))
+        val report = SystemVerificationContract(store).verify("p")
+        assertFalse(report.governorInactivity.passed)
+        assertTrue(report.governorInactivity.hasContractStarted)
+    }
+
+    @Test
+    fun `Check 4 SSM integrity confirms StateSurfaceMirror is the sole state authority`() {
+        val store = store(listOf(Event(EventTypes.INTENT_SUBMITTED, mapOf("objective" to "s"))))
+        val report = SystemVerificationContract(store).verify("p")
+        assertTrue(report.ssmIntegrity.passed)
+        assertEquals("StateSurfaceMirror", report.ssmIntegrity.ssmClassName)
+    }
+
+    @Test
+    fun `Check 5 CSL dormancy passes at intent_submitted — no contract events in ledger`() {
+        val store = store(listOf(Event(EventTypes.INTENT_SUBMITTED, mapOf("objective" to "d"))))
+        val report = SystemVerificationContract(store).verify("p")
+        assertTrue(report.cslDormancy.passed)
+        assertFalse(report.cslDormancy.cslEvaluated)
+        assertFalse(report.cslDormancy.driftTriggered)
+    }
+
+    @Test
+    fun `Check 5 CSL dormancy fails when contract_started event implies CSL was called`() {
+        val store = store(listOf(
+            Event(EventTypes.INTENT_SUBMITTED,    mapOf("objective" to "o")),
+            Event(EventTypes.CONTRACTS_GENERATED, mapOf("total" to 3.0)),
+            Event(EventTypes.CONTRACTS_READY,     emptyMap()),
+            Event(EventTypes.CONTRACTS_APPROVED,  emptyMap()),
+            Event(EventTypes.EXECUTION_STARTED,   mapOf("total_contracts" to 3.0)),
+            Event(EventTypes.CONTRACT_STARTED,    mapOf("position" to 1.0, "total" to 3.0))
+        ))
+        val report = SystemVerificationContract(store).verify("p")
+        assertFalse(report.cslDormancy.passed)
+        assertTrue(report.cslDormancy.cslEvaluated)
+    }
+
+    @Test
+    fun `Check 6 SSA isolation confirms StructuralStateAwareness is in governance package`() {
+        val store = store(listOf(Event(EventTypes.INTENT_SUBMITTED, mapOf("objective" to "i"))))
+        val report = SystemVerificationContract(store).verify("p")
+        assertTrue(report.ssaIsolation.passed)
+        assertTrue(report.ssaIsolation.isolatedFromCore)
+        assertTrue(report.ssaIsolation.ssaPackage.contains("governance"))
+        assertTrue(report.ssaIsolation.notInExecutionPath)
     }
 }
 
