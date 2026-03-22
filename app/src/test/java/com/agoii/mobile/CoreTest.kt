@@ -35,6 +35,10 @@ import com.agoii.mobile.irs.reality.RealityValidator
 import com.agoii.mobile.irs.scout.ConstraintScout
 import com.agoii.mobile.irs.scout.DependencyScout
 import com.agoii.mobile.irs.scout.EnvironmentScout
+import com.agoii.mobile.governance.ContractDescriptor
+import com.agoii.mobile.governance.ContractSurface
+import com.agoii.mobile.governance.ContractSurfaceLayer
+import com.agoii.mobile.governance.StateSurfaceMirror
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -489,7 +493,7 @@ class CoreTest {
      * Verifies EventTypes.ALL is frozen: exactly the 11 defined event types, no more, no less.
      */
     @Test
-    fun `lock - EventTypes ALL is frozen with exactly the 11 locked event types`() {
+    fun `lock - EventTypes ALL is frozen with exactly the 12 locked event types`() {
         val locked = setOf(
             "intent_submitted",
             "contracts_generated",
@@ -498,12 +502,13 @@ class CoreTest {
             "execution_started",
             "contract_started",
             "contract_completed",
+            "contract_rejected",
             "execution_completed",
             "assembly_started",
             "assembly_validated",
             "assembly_completed"
         )
-        assertEquals("EventTypes.ALL must contain exactly 11 locked event types", 11, EventTypes.ALL.size)
+        assertEquals("EventTypes.ALL must contain exactly 12 locked event types", 12, EventTypes.ALL.size)
         assertEquals("EventTypes.ALL must match the locked set exactly", locked, EventTypes.ALL)
     }
 
@@ -1674,6 +1679,326 @@ class CoreTest {
         assertTrue(report.ccf.totalScore >= 13)
         assertEquals("LOW", report.ccf.riskLevel)
         assertEquals("APPROVED", report.approvalStatus)
+    }
+
+    // ── AGOII-CONSTITUTION-01: SSM (State Surface Mirror) tests ───────────────
+
+    @Test
+    fun `SSM starts in UNINITIALIZED state`() {
+        val ssm = StateSurfaceMirror()
+        assertEquals(StateSurfaceMirror.SsmState.UNINITIALIZED, ssm.currentState())
+        assertFalse(ssm.isInitialized())
+        assertTrue(ssm.getActiveSurfaces().isEmpty())
+    }
+
+    @Test
+    fun `SSM transitions to INITIALIZED after initialize()`() {
+        val ssm = StateSurfaceMirror()
+        ssm.initialize()
+        assertEquals(StateSurfaceMirror.SsmState.INITIALIZED, ssm.currentState())
+        assertTrue(ssm.isInitialized())
+    }
+
+    @Test
+    fun `SSM initialize is idempotent`() {
+        val ssm = StateSurfaceMirror()
+        ssm.initialize()
+        ssm.initialize()
+        assertEquals(StateSurfaceMirror.SsmState.INITIALIZED, ssm.currentState())
+        assertTrue(ssm.isInitialized())
+    }
+
+    @Test
+    fun `SSM transitions to ACTIVE after activateSurface()`() {
+        val ssm = StateSurfaceMirror()
+        ssm.initialize()
+        ssm.activateSurface(ContractSurface.GOVERNANCE)
+        assertEquals(StateSurfaceMirror.SsmState.ACTIVE, ssm.currentState())
+        assertEquals(setOf(ContractSurface.GOVERNANCE), ssm.getActiveSurfaces())
+    }
+
+    @Test
+    fun `SSM activateSurface is ignored when not initialized`() {
+        val ssm = StateSurfaceMirror()
+        ssm.activateSurface(ContractSurface.GOVERNANCE)
+        assertEquals(StateSurfaceMirror.SsmState.UNINITIALIZED, ssm.currentState())
+        assertTrue(ssm.getActiveSurfaces().isEmpty())
+    }
+
+    @Test
+    fun `SSM getActiveSurfaces returns defensive copy`() {
+        val ssm = StateSurfaceMirror()
+        ssm.initialize()
+        ssm.activateSurface(ContractSurface.GOVERNANCE)
+        val snapshot = ssm.getActiveSurfaces()
+        assertEquals(1, snapshot.size)
+        assertTrue(snapshot.contains(ContractSurface.GOVERNANCE))
+    }
+
+    // ── AGOII-CONSTITUTION-01: CSL (Contract Surface Layer) tests ─────────────
+
+    @Test
+    fun `CSL blocks contract when SSM is not initialized`() {
+        val ssm = StateSurfaceMirror()                        // not initialized
+        val csl = ContractSurfaceLayer(ssm)
+        val descriptor = ContractDescriptor(
+            contractId         = "contract_1",
+            surfaces           = listOf(ContractSurface.GOVERNANCE),
+            executionLoad      = 1,
+            validationCapacity = 3
+        )
+        val result = csl.evaluateContract(descriptor)
+        assertFalse(result.allowed)
+        assertTrue(result.rejectionReason!!.startsWith("SSM_NOT_INITIALIZED"))
+    }
+
+    @Test
+    fun `CSL allows single-surface governance contract when EL le VC`() {
+        val ssm = StateSurfaceMirror()
+        ssm.initialize()
+        val csl = ContractSurfaceLayer(ssm)
+        val descriptor = ContractDescriptor(
+            contractId         = "contract_1",
+            surfaces           = listOf(ContractSurface.GOVERNANCE),
+            executionLoad      = 1,
+            validationCapacity = 3
+        )
+        val result = csl.evaluateContract(descriptor)
+        assertTrue(result.allowed)
+        assertNull(result.rejectionReason)
+    }
+
+    @Test
+    fun `CSL allows contract when EL equals VC (boundary condition)`() {
+        val ssm = StateSurfaceMirror()
+        ssm.initialize()
+        val csl = ContractSurfaceLayer(ssm)
+        val descriptor = ContractDescriptor(
+            contractId         = "contract_3",
+            surfaces           = listOf(ContractSurface.GOVERNANCE),
+            executionLoad      = 3,
+            validationCapacity = 3
+        )
+        val result = csl.evaluateContract(descriptor)
+        assertTrue(result.allowed)
+    }
+
+    @Test
+    fun `CSL blocks contract when EL exceeds VC`() {
+        val ssm = StateSurfaceMirror()
+        ssm.initialize()
+        val csl = ContractSurfaceLayer(ssm)
+        val descriptor = ContractDescriptor(
+            contractId         = "contract_x",
+            surfaces           = listOf(ContractSurface.GOVERNANCE),
+            executionLoad      = 5,
+            validationCapacity = 3
+        )
+        val result = csl.evaluateContract(descriptor)
+        assertFalse(result.allowed)
+        assertTrue(result.rejectionReason!!.startsWith("EL_EXCEEDS_VC"))
+    }
+
+    @Test
+    fun `CSL blocks multi-surface contract`() {
+        val ssm = StateSurfaceMirror()
+        ssm.initialize()
+        val csl = ContractSurfaceLayer(ssm)
+        val descriptor = ContractDescriptor(
+            contractId         = "contract_multi",
+            surfaces           = listOf(ContractSurface.GOVERNANCE, ContractSurface.BUSINESS),
+            executionLoad      = 1,
+            validationCapacity = 5
+        )
+        val result = csl.evaluateContract(descriptor)
+        assertFalse(result.allowed)
+        assertTrue(result.rejectionReason!!.startsWith("MULTI_SURFACE_BLOCKED"))
+    }
+
+    @Test
+    fun `CSL blocks multi-surface contract spanning 3 surfaces`() {
+        val ssm = StateSurfaceMirror()
+        ssm.initialize()
+        val csl = ContractSurfaceLayer(ssm)
+        val descriptor = ContractDescriptor(
+            contractId         = "contract_triple",
+            surfaces           = listOf(
+                ContractSurface.GOVERNANCE,
+                ContractSurface.BUSINESS,
+                ContractSurface.FINANCIAL
+            ),
+            executionLoad      = 1,
+            validationCapacity = 10
+        )
+        val result = csl.evaluateContract(descriptor)
+        assertFalse(result.allowed)
+        assertTrue(result.rejectionReason!!.startsWith("MULTI_SURFACE_BLOCKED"))
+    }
+
+    @Test
+    fun `CSL rule priority - SSM check precedes EL-VC check`() {
+        // SSM not initialized; EL also exceeds VC — SSM rule wins.
+        val ssm = StateSurfaceMirror()
+        val csl = ContractSurfaceLayer(ssm)
+        val descriptor = ContractDescriptor(
+            contractId         = "contract_priority",
+            surfaces           = listOf(ContractSurface.GOVERNANCE),
+            executionLoad      = 99,
+            validationCapacity = 1
+        )
+        val result = csl.evaluateContract(descriptor)
+        assertFalse(result.allowed)
+        assertTrue(result.rejectionReason!!.startsWith("SSM_NOT_INITIALIZED"))
+    }
+
+    // ── AGOII-CONSTITUTION-01: Governor CSL integration tests ─────────────────
+
+    @Test
+    fun `governor returns DRIFT when last event is contract_rejected`() {
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "build")),
+            Event("contracts_generated", mapOf("total" to 3.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 3.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+            Event("contract_rejected",   mapOf(
+                "contract_id"      to "contract_1",
+                "position"         to 1,
+                "total"            to 3,
+                "rejection_reason" to "CSL_BLOCKED"
+            ))
+        )
+        val result = Governor(store(events)).runGovernor("proj")
+        assertEquals(Governor.GovernorResult.DRIFT, result)
+    }
+
+    @Test
+    fun `governor emits contract_rejected when EL exceeds VC at execution start`() {
+        // With total=0, position=1 → EL=1 > VC=0 → CSL rejects → CONTRACT_REJECTED emitted.
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "build")),
+            Event("contracts_generated", mapOf("total" to 0.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 0.0))
+        )
+        val s = store(events)
+        val result = Governor(s).runGovernor("proj")
+        assertEquals(Governor.GovernorResult.DRIFT, result)
+        val last = s.loadEvents("proj").last()
+        assertEquals(EventTypes.CONTRACT_REJECTED, last.type)
+        assertTrue((last.payload["rejection_reason"] as String).startsWith("EL_EXCEEDS_VC"))
+    }
+
+    @Test
+    fun `governor emits contract_rejected when injected CSL blocks multi-surface contract`() {
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "build")),
+            Event("contracts_generated", mapOf("total" to 3.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 3.0))
+        )
+        val s = store(events)
+        val ssm = StateSurfaceMirror()
+        // Provide a CSL that always rejects as MULTI_SURFACE_BLOCKED
+        val rejectingCsl = object : ContractSurfaceLayer(ssm) {
+            override fun evaluateContract(contract: ContractDescriptor) =
+                com.agoii.mobile.governance.CslResult(
+                    allowed         = false,
+                    rejectionReason = "MULTI_SURFACE_BLOCKED: test injection"
+                )
+        }
+        val result = Governor(s, ssm, rejectingCsl).runGovernor("proj")
+        assertEquals(Governor.GovernorResult.DRIFT, result)
+        val last = s.loadEvents("proj").last()
+        assertEquals(EventTypes.CONTRACT_REJECTED, last.type)
+        assertTrue((last.payload["rejection_reason"] as String).startsWith("MULTI_SURFACE_BLOCKED"))
+    }
+
+    @Test
+    fun `audit accepts contract_started to contract_rejected as legal transition`() {
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "build")),
+            Event("contracts_generated", mapOf("total" to 3.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 3.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+            Event("contract_rejected",   mapOf(
+                "contract_id"      to "contract_1",
+                "position"         to 1,
+                "total"            to 3,
+                "rejection_reason" to "EL_EXCEEDS_VC: executionLoad=5 exceeds validationCapacity=3"
+            ))
+        )
+        val audit = LedgerAudit(store(events)).auditLedger("proj")
+        assertTrue("Expected valid audit for contract_rejected ledger", audit.valid)
+        assertEquals(0, audit.errors.size)
+    }
+
+    @Test
+    fun `replay sets phase to contract_rejected on contract_rejected event`() {
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "build")),
+            Event("contracts_generated", mapOf("total" to 3.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 3.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
+            Event("contract_rejected",   mapOf(
+                "contract_id"      to "contract_1",
+                "rejection_reason" to "CSL_BLOCKED"
+            ))
+        )
+        val state = Replay(store()).deriveState(events)
+        assertEquals(EventTypes.CONTRACT_REJECTED, state.phase)
+        assertTrue(state.executionStarted)
+        assertFalse(state.executionCompleted)
+    }
+
+    @Test
+    fun `governor default contracts pass CSL gate - EL le VC for all positions`() {
+        // Runs the Governor through a full 3-contract execution to verify
+        // all default contracts pass the CSL gate (EL=position ≤ VC=total=3).
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "build")),
+            Event("contracts_generated", mapOf("total" to 3.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 3.0))
+        )
+        val s   = store(events)
+        val gov = Governor(s)
+
+        // Step 1: execution_started → contract_started (pos=1, EL=1 ≤ VC=3)
+        assertEquals(Governor.GovernorResult.ADVANCED, gov.runGovernor("proj"))
+        assertEquals(EventTypes.CONTRACT_STARTED,  s.loadEvents("proj").last().type)
+
+        // Step 2: contract_started → contract_completed (pos=1)
+        assertEquals(Governor.GovernorResult.ADVANCED, gov.runGovernor("proj"))
+        assertEquals(EventTypes.CONTRACT_COMPLETED, s.loadEvents("proj").last().type)
+
+        // Step 3: contract_completed → contract_started (pos=2, EL=2 ≤ VC=3) — CSL check
+        assertEquals(Governor.GovernorResult.ADVANCED, gov.runGovernor("proj"))
+        val afterStep3 = s.loadEvents("proj").last()
+        assertEquals(EventTypes.CONTRACT_STARTED, afterStep3.type)
+
+        // Step 4: contract_started → contract_completed (pos=2)
+        assertEquals(Governor.GovernorResult.ADVANCED, gov.runGovernor("proj"))
+
+        // Step 5: contract_completed → contract_started (pos=3, EL=3=VC=3) — CSL boundary check
+        assertEquals(Governor.GovernorResult.ADVANCED, gov.runGovernor("proj"))
+        val afterStep5 = s.loadEvents("proj").last()
+        assertEquals(EventTypes.CONTRACT_STARTED, afterStep5.type)
+
+        // Step 6: contract_started → contract_completed (pos=3)
+        assertEquals(Governor.GovernorResult.ADVANCED, gov.runGovernor("proj"))
+
+        // Step 7: contract_completed (last) → execution_completed
+        assertEquals(Governor.GovernorResult.ADVANCED, gov.runGovernor("proj"))
+        assertEquals(EventTypes.EXECUTION_COMPLETED, s.loadEvents("proj").last().type)
     }
 }
 

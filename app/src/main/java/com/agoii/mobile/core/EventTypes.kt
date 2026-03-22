@@ -18,6 +18,9 @@ object EventTypes {
     const val ASSEMBLY_VALIDATED  = "assembly_validated"
     const val ASSEMBLY_COMPLETED  = "assembly_completed"
 
+    /** Emitted by the Governor when the CSL gate rejects a contract before issuance. */
+    const val CONTRACT_REJECTED = "contract_rejected"
+
     val ALL: Set<String> = setOf(
         INTENT_SUBMITTED,
         CONTRACTS_GENERATED,
@@ -26,6 +29,7 @@ object EventTypes {
         EXECUTION_STARTED,
         CONTRACT_STARTED,
         CONTRACT_COMPLETED,
+        CONTRACT_REJECTED,
         EXECUTION_COMPLETED,
         ASSEMBLY_STARTED,
         ASSEMBLY_VALIDATED,

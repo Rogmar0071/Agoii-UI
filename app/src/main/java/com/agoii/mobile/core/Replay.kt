@@ -81,6 +81,10 @@ class Replay(private val eventStore: EventRepository) {
                     phase = EventTypes.CONTRACT_COMPLETED
                     contractsCompleted++
                 }
+                EventTypes.CONTRACT_REJECTED -> {
+                    // CSL gate blocked issuance; ledger enters DRIFT / invalid state.
+                    phase = EventTypes.CONTRACT_REJECTED
+                }
                 EventTypes.EXECUTION_COMPLETED -> {
                     // All contracts done; contract-execution phase is closed.
                     phase = EventTypes.EXECUTION_COMPLETED

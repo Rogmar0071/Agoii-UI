@@ -66,10 +66,16 @@ class LedgerAudit(private val eventStore: EventRepository) {
         if (from == EventTypes.CONTRACTS_READY && to == EventTypes.CONTRACTS_APPROVED) return true
         // Governor: execution begins — start the first contract
         if (from == EventTypes.EXECUTION_STARTED && to == EventTypes.CONTRACT_STARTED) return true
+        // CSL gate: first contract rejected at execution start
+        if (from == EventTypes.EXECUTION_STARTED && to == EventTypes.CONTRACT_REJECTED) return true
         // Governor: open contract is completed
         if (from == EventTypes.CONTRACT_STARTED && to == EventTypes.CONTRACT_COMPLETED) return true
+        // CSL gate: open contract is rejected before issuance completes
+        if (from == EventTypes.CONTRACT_STARTED && to == EventTypes.CONTRACT_REJECTED) return true
         // Governor: completed contract leads to the next one
         if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.CONTRACT_STARTED) return true
+        // CSL gate: next contract rejected after previous completed
+        if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.CONTRACT_REJECTED) return true
         // Governor: all contracts completed — close the execution phase
         if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.EXECUTION_COMPLETED) return true
         return false
