@@ -80,6 +80,15 @@ data class EvidenceValidationResult(
 // ─── Reality Validation ───────────────────────────────────────────────────────
 
 /**
+ * Graded risk level produced by the REALITY_VALIDATION stage.
+ *
+ * LOW    — all reality checks pass; credibility score ≥ 0.7.
+ * MEDIUM — credibility concern; score in [0.5, 0.7) or borderline acceptable.
+ * HIGH   — contradiction detected OR simulation infeasible; intent cannot be certified.
+ */
+enum class RiskLevel { LOW, MEDIUM, HIGH }
+
+/**
  * A single traceable fact retrieved from the reality knowledge gateway.
  *
  * @property domain          The knowledge domain this fact belongs to (e.g. "environment", "dependency").
@@ -115,6 +124,21 @@ data class CredibilityReport(
     /** true when [overallScore] is ≥ 0.5 and no individual field is below the threshold. */
     val isAcceptable: Boolean get() =
         overallScore >= 0.5 && lowCredibilityFields.isEmpty()
+
+    /**
+     * Traceable reasons describing any credibility failure.
+     * Empty when [isAcceptable] is true.
+     */
+    val reasons: List<String> get() = buildList {
+        if (!isAcceptable) {
+            add(
+                "credibility: overall score %.2f".format(overallScore) +
+                if (lowCredibilityFields.isNotEmpty())
+                    "; low-credibility fields: ${lowCredibilityFields.joinToString(", ")}"
+                else ""
+            )
+        }
+    }
 }
 
 /**
@@ -139,34 +163,72 @@ data class Contradiction(
 data class ContradictionReport(
     val hasContradictions: Boolean,
     val contradictions:    List<Contradiction>
-)
+) {
+    /**
+     * Traceable reasons for each detected contradiction.
+     * Empty when [hasContradictions] is false.
+     */
+    val reasons: List<String> get() = contradictions.map { c ->
+        "contradiction: [${c.fieldA}] × [${c.fieldB}] — ${c.description}"
+    }
+}
 
 /**
  * Terminal output of the REALITY_VALIDATION stage.
  *
- * @property passed               true only when credibility is acceptable AND no contradictions exist.
- * @property credibilityReport    Detailed per-field credibility scores.
- * @property contradictionReport  Detected cross-field contradictions.
- * @property issues               All failure descriptions collected during validation.
+ * Graded (non-binary) output conforming to the IRS-05B system law:
+ *  - [valid]     replaces the former `passed` flag.
+ *  - [riskLevel] grades the severity: LOW / MEDIUM / HIGH.
+ *  - [confidence] is derived from evidence credibility (0.0 → 1.0) and
+ *    adjusted downward when contradictions or simulation failures are present.
+ *  - [reasons]   is a flat, traceable list of all failure descriptions, collected
+ *    from sub-module outputs — no logic is duplicated here.
+ *
+ * Backward-compatible computed properties [passed] and [issues] are retained
+ * for IrsOrchestrator compatibility until that layer is updated.
+ *
+ * @property valid               true only when all reality checks pass (reasons is empty).
+ * @property riskLevel           Graded risk level.
+ * @property confidence          Adjusted credibility confidence (0.0–1.0).
+ * @property reasons             All traceable failure/concern descriptions.
+ * @property credibilityReport   Detailed per-field credibility scores.
+ * @property contradictionReport Detected cross-field contradictions.
+ * @property simulationResult    Real-world feasibility simulation output.
  */
 data class RealityValidationResult(
-    val passed:              Boolean,
+    val valid:               Boolean,
+    val riskLevel:           RiskLevel,
+    val confidence:          Double,
+    val reasons:             List<String>,
     val credibilityReport:   CredibilityReport,
     val contradictionReport: ContradictionReport,
-    val issues:              List<String>
-)
+    val simulationResult:    RealitySimulationResult
+) {
+    init {
+        require(confidence in 0.0..1.0) { "confidence must be in [0.0, 1.0], got $confidence" }
+    }
+
+    /** Backward-compatible alias for [valid]. Retained for IrsOrchestrator compatibility. */
+    val passed: Boolean get() = valid
+
+    /** Backward-compatible alias for [reasons]. Retained for IrsOrchestrator compatibility. */
+    val issues: List<String> get() = reasons
+}
 
 /**
  * Output produced by [com.agoii.mobile.irs.reality.RealitySimulationEngine].
  *
- * @property feasible      true when the intent is feasible under real-world constraints.
- * @property failurePoints Human-readable descriptions of detected real-world failure points.
- * @property constraintsChecked The number of constraint rules evaluated during simulation.
+ * @property feasible            true when the intent is feasible under real-world constraints.
+ * @property failurePoints       Human-readable descriptions of detected real-world failure points.
+ * @property constraintsChecked  The number of constraint rules evaluated during simulation.
+ * @property ruleTrace           Ordered trace of each rule evaluation result (e.g. "RES-01: PASS").
+ *                               Enables full replay of the simulation reasoning chain.
  */
 data class RealitySimulationResult(
     val feasible:            Boolean,
     val failurePoints:       List<String>,
-    val constraintsChecked:  Int
+    val constraintsChecked:  Int,
+    val ruleTrace:           List<String>
 )
 
 // ─── Intent ──────────────────────────────────────────────────────────────────

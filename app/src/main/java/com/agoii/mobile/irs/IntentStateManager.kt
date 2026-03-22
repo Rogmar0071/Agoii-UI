@@ -137,6 +137,14 @@ class IntentStateManager {
         records[sessionId]?.realityValidationResult
 
     /**
+     * Return the reality simulation result stored during reality validation, or null.
+     * Provides direct traceability access to the simulation sub-result without navigating
+     * through the full [RealityValidationResult].
+     */
+    fun realitySimulationResult(sessionId: String): RealitySimulationResult? =
+        records[sessionId]?.realityValidationResult?.simulationResult
+
+    /**
      * Replay the full snapshot history for [sessionId].
      * Returns the complete ordered list; never null, never truncated.
      */

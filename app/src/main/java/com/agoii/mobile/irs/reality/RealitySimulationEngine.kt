@@ -96,15 +96,22 @@ class RealitySimulationEngine(
      * Simulate the intent against all real-world constraint rules.
      *
      * @param intent The intent to simulate (post reality-validation, pre swarm-validation).
-     * @return [RealitySimulationResult] with feasibility decision and all detected failure points.
+     * @return [RealitySimulationResult] with feasibility decision, all detected failure points,
+     *         and a full [RealitySimulationResult.ruleTrace] for replay.
      */
     fun simulate(intent: IntentData): RealitySimulationResult {
-        val failurePoints = CONSTRAINTS.mapNotNull { constraint -> constraint.check(intent) }
+        val ruleResults    = CONSTRAINTS.map { c -> Pair(c, c.check(intent)) }
+        val failurePoints  = ruleResults.mapNotNull { (_, msg) -> msg }
+        val ruleTrace      = ruleResults.map { (c, msg) ->
+            if (msg == null) "${c.id}[${c.description}]: PASS"
+            else             "${c.id}[${c.description}]: FAIL"
+        }
 
         return RealitySimulationResult(
             feasible           = failurePoints.isEmpty(),
             failurePoints      = failurePoints,
-            constraintsChecked = CONSTRAINTS.size
+            constraintsChecked = CONSTRAINTS.size,
+            ruleTrace          = ruleTrace
         )
     }
 }

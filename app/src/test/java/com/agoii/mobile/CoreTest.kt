@@ -22,6 +22,7 @@ import com.agoii.mobile.irs.ScoutOrchestrator
 import com.agoii.mobile.irs.SimulationEngine
 import com.agoii.mobile.irs.SwarmConfig
 import com.agoii.mobile.irs.SwarmValidator
+import com.agoii.mobile.irs.RiskLevel
 import com.agoii.mobile.irs.reality.ContradictionEngine
 import com.agoii.mobile.irs.reality.EvidenceScoringEngine
 import com.agoii.mobile.irs.reality.RealityKnowledgeGateway
@@ -1215,21 +1216,24 @@ class CoreTest {
         assertTrue(report.contradictions.any { it.description.contains("real-time") })
     }
 
-    // ── IRS-05: RealityValidator tests ────────────────────────────────────────
+    // ── IRS-05B: RealityValidator tests (graded model) ───────────────────────
 
     @Test
-    fun `RealityValidator passes for well-formed intent with no contradictions`() {
+    fun `RealityValidator passes with LOW risk for well-formed intent`() {
         val validator = RealityValidator()
         val intent    = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
         val result    = validator.validate(intent)
-        assertTrue(result.passed)
-        assertTrue(result.issues.isEmpty())
+        assertTrue(result.valid)
+        assertTrue(result.reasons.isEmpty())
+        assertEquals(RiskLevel.LOW, result.riskLevel)
+        assertTrue(result.confidence >= 0.7)
         assertTrue(result.credibilityReport.isAcceptable)
         assertFalse(result.contradictionReport.hasContradictions)
+        assertTrue(result.simulationResult.feasible)
     }
 
     @Test
-    fun `RealityValidator fails when contradictions are detected`() {
+    fun `RealityValidator fails with HIGH risk when contradictions are detected`() {
         val validator = RealityValidator()
         val fields    = mapOf(
             "objective"   to "Build app",
@@ -1239,9 +1243,60 @@ class CoreTest {
         )
         val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
         val result = validator.validate(intent)
-        assertFalse(result.passed)
-        assertTrue(result.issues.any { it.contains("contradiction") || it.contains("sim:") })
+        assertFalse(result.valid)
+        assertEquals(RiskLevel.HIGH, result.riskLevel)
+        assertTrue(result.confidence < 1.0)
+        assertTrue(result.reasons.any { it.contains("contradiction") || it.contains("sim:") })
         assertTrue(result.contradictionReport.hasContradictions)
+    }
+
+    @Test
+    fun `RealityValidator confidence is between 0 and 1 for all cases`() {
+        val validator = RealityValidator()
+        // Clean intent
+        val clean = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val cleanResult = validator.validate(clean)
+        assertTrue(cleanResult.confidence in 0.0..1.0)
+        // Contradictory intent
+        val badFields = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "must work offline",
+            "environment" to "cloud",
+            "resources"   to "team available"
+        )
+        val bad = ReconstructionEngine().reconstruct(badFields, relevantEvidence())
+        val badResult = validator.validate(bad)
+        assertTrue(badResult.confidence in 0.0..1.0)
+    }
+
+    @Test
+    fun `RealityValidator reasons come directly from sub-module outputs`() {
+        val validator = RealityValidator()
+        val fields    = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "must work offline",
+            "environment" to "cloud",
+            "resources"   to "team available"
+        )
+        val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
+        val result = validator.validate(intent)
+        // reasons must include contradiction reasons (from ContradictionReport.reasons)
+        assertTrue(result.reasons.any { it.startsWith("contradiction:") || it.startsWith("sim:") })
+        // reasons must equal the union of credibility + contradiction + simulation
+        val expected = result.credibilityReport.reasons +
+                       result.contradictionReport.reasons +
+                       result.simulationResult.failurePoints
+        assertEquals(expected, result.reasons)
+    }
+
+    @Test
+    fun `RealityValidator simulationResult is included in result for full traceability`() {
+        val validator = RealityValidator()
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val result    = validator.validate(intent)
+        assertTrue(result.simulationResult.constraintsChecked > 0)
+        assertTrue(result.simulationResult.ruleTrace.isNotEmpty())
+        assertTrue(result.simulationResult.ruleTrace.all { it.contains(": PASS") || it.contains(": FAIL") })
     }
 
     @Test
@@ -1286,7 +1341,7 @@ class CoreTest {
         assertTrue(rvIndex < swIndex)
     }
 
-    // ── IRS-05: RealitySimulationEngine tests ────────────────────────────────
+    // ── IRS-05B: RealitySimulationEngine tests (with ruleTrace) ──────────────
 
     @Test
     fun `RealitySimulationEngine returns feasible for clean intent`() {
@@ -1296,6 +1351,34 @@ class CoreTest {
         assertTrue(result.feasible)
         assertTrue(result.failurePoints.isEmpty())
         assertTrue(result.constraintsChecked > 0)
+    }
+
+    @Test
+    fun `RealitySimulationEngine populates ruleTrace for all evaluated constraints`() {
+        val engine = RealitySimulationEngine()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val result = engine.simulate(intent)
+        assertEquals(result.constraintsChecked, result.ruleTrace.size)
+        assertTrue(result.ruleTrace.all { it.contains(": PASS") || it.contains(": FAIL") })
+        // Clean intent — all rules must PASS
+        assertTrue(result.ruleTrace.all { it.contains(": PASS") })
+    }
+
+    @Test
+    fun `RealitySimulationEngine ruleTrace marks failed rules as FAIL`() {
+        val engine = RealitySimulationEngine()
+        val fields = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "must work offline",
+            "environment" to "cloud",
+            "resources"   to "team available"
+        )
+        val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
+        val result = engine.simulate(intent)
+        assertFalse(result.feasible)
+        val failEntries = result.ruleTrace.filter { it.contains(": FAIL") }
+        assertTrue(failEntries.isNotEmpty())
+        assertEquals(result.failurePoints.size, failEntries.size)
     }
 
     @Test
