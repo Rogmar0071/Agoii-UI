@@ -69,12 +69,12 @@ data class KnowledgeScoutReport(
  *  3. Coverage   — evidence collectively covers the non-trivial content of the field value.
  *  4. Consistency — evidence refs across fields do not contradict each other.
  *
- * @property valid  true only when all four dimensions pass.
- * @property issues Descriptions of every violation detected (empty when [valid] = true).
+ * @property valid    true only when all four dimensions pass.
+ * @property reasons  Descriptions of every violation detected (empty when [valid] = true).
  */
 data class EvidenceValidationResult(
-    val valid:  Boolean,
-    val issues: List<String>
+    val valid:   Boolean,
+    val reasons: List<String>
 )
 
 // ─── Reality Validation ───────────────────────────────────────────────────────
@@ -453,4 +453,66 @@ data class StepResult(
     val session:            IrsSession,
     val terminal:           Boolean,
     val orchestratorResult: OrchestratorResult?
+)
+
+// ─── Governance Audit ─────────────────────────────────────────────────────────
+
+/**
+ * Contract Confidence Score for IRS-05C-AUDIT-CLOSURE.
+ *
+ * Five vectors, each scored 0–3. Threshold for APPROVED status: ≥ 13/15.
+ *
+ * @property mutationControl     No behavioral changes to engines, no scoring changes.
+ * @property scopeDrift          All changes strictly within allowed mutation surface.
+ * @property lifecycleCompliance Deprecated fields marked, FailureType wired, orchestrator aligned.
+ * @property hiddenLogic         RealityValidator is pure aggregator; no inline decision logic.
+ * @property outputIntegrity     Typed trace, FailureType enum, reasons/valid enforced everywhere.
+ */
+data class CcfScore(
+    val mutationControl:     Int,
+    val scopeDrift:          Int,
+    val lifecycleCompliance: Int,
+    val hiddenLogic:         Int,
+    val outputIntegrity:     Int
+) {
+    init {
+        listOf(mutationControl, scopeDrift, lifecycleCompliance, hiddenLogic, outputIntegrity)
+            .forEach { require(it in 0..3) { "CCF vector score must be in [0, 3]" } }
+    }
+
+    val totalScore:  Int    get() = mutationControl + scopeDrift + lifecycleCompliance + hiddenLogic + outputIntegrity
+    val percentage:  Double get() = totalScore / 15.0 * 100.0
+    val riskLevel:   String get() = when {
+        totalScore >= 13 -> "LOW"
+        totalScore >= 9  -> "MEDIUM"
+        else             -> "HIGH"
+    }
+}
+
+/**
+ * Structured governance audit artifact for IRS-05C-AUDIT-CLOSURE.
+ *
+ * Produced at governance closure. Every field maps to a contract execution step.
+ * [approvalStatus] is "APPROVED" only when all invariants hold and [ccf].totalScore ≥ 13.
+ */
+data class IrsAuditReport(
+    val contractId:           String,
+    val deterministic:        Boolean,
+    val traceComplete:        Boolean,
+    val violations:           List<String>,
+    val pureAggregation:      Boolean,
+    val hiddenLogicDetected:  Boolean,
+    val confidenceMappingCorrect: Boolean,
+    val legacyFieldsPresent:  Boolean,
+    val markedDeprecated:     Boolean,
+    val removalRequired:      Boolean,
+    val orchestratorCompliant: Boolean,
+    val driftPoints:          List<String>,
+    val taxonomyStandardized: Boolean,
+    val unmappedFailures:     List<String>,
+    val replayDeterministic:  Boolean,
+    val replayRunsCompared:   Int,
+    val divergenceDetected:   Boolean,
+    val ccf:                  CcfScore,
+    val approvalStatus:       String
 )

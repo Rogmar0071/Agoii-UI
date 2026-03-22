@@ -1032,7 +1032,7 @@ class CoreTest {
         val intent    = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
         val result    = validator.validate(intent)
         assertTrue(result.valid)
-        assertTrue(result.issues.isEmpty())
+        assertTrue(result.reasons.isEmpty())
     }
 
     @Test
@@ -1041,7 +1041,7 @@ class CoreTest {
         val intent    = ReconstructionEngine().reconstruct(fullFields(), emptyMap())
         val result    = validator.validate(intent)
         assertFalse(result.valid)
-        assertTrue(result.issues.any { it.contains("presence") })
+        assertTrue(result.reasons.any { it.contains("presence") })
     }
 
     @Test
@@ -1051,7 +1051,7 @@ class CoreTest {
         val intent    = ReconstructionEngine().reconstruct(fullFields(), fullEvidence())
         val result    = validator.validate(intent)
         assertFalse(result.valid)
-        assertTrue(result.issues.any { it.contains("relevance") })
+        assertTrue(result.reasons.any { it.contains("relevance") })
     }
 
     @Test
@@ -1069,7 +1069,7 @@ class CoreTest {
         val intent = ReconstructionEngine().reconstruct(fullFields(), dupEvidence)
         val result = validator.validate(intent)
         assertFalse(result.valid)
-        assertTrue(result.issues.any { it.contains("consistency") })
+        assertTrue(result.reasons.any { it.contains("consistency") })
     }
 
     @Test

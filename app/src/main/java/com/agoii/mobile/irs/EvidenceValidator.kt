@@ -16,7 +16,7 @@ package com.agoii.mobile.irs
  * Rules:
  *  - Single responsibility: only validates; never mutates intent or evidence.
  *  - Does NOT call any other IRS module.
- *  - Every detected issue is reported in [EvidenceValidationResult.issues].
+ *  - Every detected issue is reported in [EvidenceValidationResult.reasons].
  */
 class EvidenceValidator {
 
@@ -54,7 +54,7 @@ class EvidenceValidator {
             checkConsistency(name, field, issues)
         }
 
-        return EvidenceValidationResult(valid = issues.isEmpty(), issues = issues)
+        return EvidenceValidationResult(valid = issues.isEmpty(), reasons = issues)
     }
 
     // ─── Dimension checks ─────────────────────────────────────────────────────

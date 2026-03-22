@@ -184,7 +184,7 @@ class IrsOrchestrator(
                             stage = stage,
                             orchestratorResult = OrchestratorResult.Rejected(
                                 reason  = FailureType.EVIDENCE_INVALID.name,
-                                details = evResult.issues
+                                details = evResult.reasons
                             )
                         ),
                         evidenceValidationResult = evResult
@@ -195,7 +195,7 @@ class IrsOrchestrator(
                         terminal           = true,
                         orchestratorResult = OrchestratorResult.Rejected(
                             reason  = FailureType.EVIDENCE_INVALID.name,
-                            details = evResult.issues
+                            details = evResult.reasons
                         )
                     )
                 } else {
