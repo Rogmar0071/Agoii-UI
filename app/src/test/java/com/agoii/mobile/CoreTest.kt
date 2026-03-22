@@ -8,6 +8,9 @@ import com.agoii.mobile.core.LedgerAudit
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.irs.ConsensusRule
+import com.agoii.mobile.irs.ContractScopeInput
+import com.agoii.mobile.irs.ContractScopeLaw
+import com.agoii.mobile.irs.ContractScopeResult
 import com.agoii.mobile.irs.EvidenceRef
 import com.agoii.mobile.irs.EvidenceValidator
 import com.agoii.mobile.irs.FailureType
@@ -16,11 +19,14 @@ import com.agoii.mobile.irs.IntentField
 import com.agoii.mobile.irs.IntentData
 import com.agoii.mobile.irs.IrsOrchestrator
 import com.agoii.mobile.irs.IrsStage
+import com.agoii.mobile.irs.MutationSurface
 import com.agoii.mobile.irs.OrchestratorResult
 import com.agoii.mobile.irs.PCCVValidator
 import com.agoii.mobile.irs.ReconstructionEngine
 import com.agoii.mobile.irs.ScoutOrchestrator
 import com.agoii.mobile.irs.SimulationEngine
+import com.agoii.mobile.irs.SurfaceType
+import com.agoii.mobile.irs.weight
 import com.agoii.mobile.irs.SwarmConfig
 import com.agoii.mobile.irs.SwarmValidator
 import com.agoii.mobile.irs.RiskLevel
@@ -1465,14 +1471,15 @@ class CoreTest {
     // ── IRS-05C-AUDIT-CLOSURE: FailureType taxonomy tests ────────────────────
 
     @Test
-    fun `FailureType enum covers all five IRS rejection paths`() {
+    fun `FailureType enum covers all six IRS rejection paths`() {
         val names = FailureType.values().map { it.name }.toSet()
         assertTrue(names.contains("EVIDENCE_INVALID"))
         assertTrue(names.contains("REALITY_UNVERIFIABLE"))
         assertTrue(names.contains("UNSTABLE"))
         assertTrue(names.contains("INFEASIBLE"))
         assertTrue(names.contains("PCCV_FAIL"))
-        assertEquals(5, FailureType.values().size)
+        assertTrue(names.contains("CSL_SCOPE_EXCEEDED"))
+        assertEquals(6, FailureType.values().size)
     }
 
     @Test
@@ -1674,6 +1681,171 @@ class CoreTest {
         assertTrue(report.ccf.totalScore >= 13)
         assertEquals("LOW", report.ccf.riskLevel)
         assertEquals("APPROVED", report.approvalStatus)
+    }
+
+    // ── CSL-1 (Contract Scope Law) tests ──────────────────────────────────────
+
+    @Test
+    fun `ContractScopeLaw evaluates EL and VC correctly for simple surface set`() {
+        val input = ContractScopeInput(
+            surfaces            = listOf(MutationSurface(SurfaceType.LG, "Engine")),
+            edges               = 2,
+            crossCouplingFactor = 1,
+            ec                  = 1, rc = 3, sc = 6, cc = 3, dc = 5
+        )
+        val law    = ContractScopeLaw()
+        val result = law.evaluate(input)
+        // EL = 2 + 2 + (2*1) = 6
+        assertEquals(6, result.executionLoad)
+        // VC = 1 + 3 + 6 + 3 + 5 = 18
+        assertEquals(18, result.validationCapacity)
+        assertEquals("EL <= VC", result.safetyCondition)
+        assertEquals("VALID", result.status)
+        assertEquals("EXECUTE", result.requiredAction)
+    }
+
+    @Test
+    fun `ContractScopeLaw returns INVALID when EL exceeds VC`() {
+        val input = ContractScopeInput(
+            surfaces            = listOf(
+                MutationSurface(SurfaceType.SP, "Orchestrator"),
+                MutationSurface(SurfaceType.SP, "StateManager"),
+                MutationSurface(SurfaceType.ST, "Models"),
+                MutationSurface(SurfaceType.GL, "EventTypes"),
+                MutationSurface(SurfaceType.LG, "Engine1"),
+                MutationSurface(SurfaceType.LG, "Engine2"),
+                MutationSurface(SurfaceType.TS, "Tests")
+            ),
+            edges               = 12,
+            crossCouplingFactor = 5,
+            ec                  = 5, rc = 3, sc = 6, cc = 3, dc = 5
+        )
+        val result = ContractScopeLaw().evaluate(input)
+        // EL = (5+5+3+4+2+2+1) + 12 + (2*5) = 22 + 12 + 10 = 44
+        assertEquals(44, result.executionLoad)
+        // VC = 5 + 3 + 6 + 3 + 5 = 22
+        assertEquals(22, result.validationCapacity)
+        assertEquals("INVALID", result.status)
+        assertEquals("SPLIT", result.requiredAction)
+    }
+
+    @Test
+    fun `ContractScopeLaw EL equals VC is VALID`() {
+        val input = ContractScopeInput(
+            surfaces            = listOf(MutationSurface(SurfaceType.LG, "Engine")),
+            edges               = 0,
+            crossCouplingFactor = 0,
+            ec                  = 0, rc = 0, sc = 2, cc = 0, dc = 0
+        )
+        val result = ContractScopeLaw().evaluate(input)
+        // EL = 2; VC = 2
+        assertEquals(2, result.executionLoad)
+        assertEquals(2, result.validationCapacity)
+        assertEquals("VALID", result.status)
+        assertEquals("EXECUTE", result.requiredAction)
+    }
+
+    @Test
+    fun `SurfaceType weights are deterministic`() {
+        assertEquals(5, SurfaceType.SP.weight)
+        assertEquals(4, SurfaceType.GL.weight)
+        assertEquals(3, SurfaceType.ST.weight)
+        assertEquals(2, SurfaceType.LG.weight)
+        assertEquals(1, SurfaceType.TS.weight)
+    }
+
+    @Test
+    fun `ContractScopeInput default produces always-VALID result`() {
+        val result = ContractScopeLaw().evaluate(ContractScopeInput.default())
+        // EL = 0 (no surfaces, no edges, no coupling)
+        assertEquals(0, result.executionLoad)
+        assertTrue(result.validationCapacity > 0)
+        assertEquals("VALID", result.status)
+        assertEquals("EXECUTE", result.requiredAction)
+    }
+
+    @Test
+    fun `IrsOrchestrator certifies with ContractScopeResult embedded in Certified`() {
+        val orchestrator = IrsOrchestrator()
+        orchestrator.createSession("s-csl-ok", fullFields(), relevantEvidence(), majorityConfig())
+        repeat(8) { orchestrator.step("s-csl-ok") }
+        val history = orchestrator.replayHistory("s-csl-ok")
+        val finalResult = history.last().orchestratorResult
+        assertTrue(finalResult is OrchestratorResult.Certified)
+        val certified = finalResult as OrchestratorResult.Certified
+        assertEquals("VALID",   certified.contractScopeResult.status)
+        assertEquals("EXECUTE", certified.contractScopeResult.requiredAction)
+        assertEquals("EL <= VC", certified.contractScopeResult.safetyCondition)
+    }
+
+    @Test
+    fun `IrsOrchestrator blocks certification when CSL scope is exceeded`() {
+        val oversizedScope = ContractScopeInput(
+            surfaces            = listOf(
+                MutationSurface(SurfaceType.SP, "Orchestrator"),
+                MutationSurface(SurfaceType.SP, "StateManager"),
+                MutationSurface(SurfaceType.GL, "EventTypes"),
+                MutationSurface(SurfaceType.ST, "Models"),
+                MutationSurface(SurfaceType.LG, "Engine1"),
+                MutationSurface(SurfaceType.LG, "Engine2"),
+                MutationSurface(SurfaceType.TS, "Tests")
+            ),
+            edges               = 12,
+            crossCouplingFactor = 5,
+            ec                  = 5, rc = 3, sc = 6, cc = 3, dc = 5
+        )
+        val orchestrator = IrsOrchestrator()
+        orchestrator.createSession(
+            "s-csl-fail", fullFields(), relevantEvidence(), majorityConfig(),
+            contractScopeInput = oversizedScope
+        )
+        repeat(8) { orchestrator.step("s-csl-fail") }
+        val history     = orchestrator.replayHistory("s-csl-fail")
+        val finalResult = history.last().orchestratorResult
+        assertTrue(finalResult is OrchestratorResult.Rejected)
+        val rejected = finalResult as OrchestratorResult.Rejected
+        assertEquals(FailureType.CSL_SCOPE_EXCEEDED.name, rejected.reason)
+        assertTrue(rejected.details.any { "EL=" in it && "VC=" in it })
+    }
+
+    @Test
+    fun `FailureType CSL_SCOPE_EXCEEDED name matches orchestrator rejection reason`() {
+        val oversizedScope = ContractScopeInput(
+            surfaces            = listOf(
+                MutationSurface(SurfaceType.SP, "Orchestrator"),
+                MutationSurface(SurfaceType.SP, "StateManager")
+            ),
+            edges               = 20,
+            crossCouplingFactor = 5,
+            ec                  = 0, rc = 0, sc = 0, cc = 0, dc = 0
+        )
+        val orchestrator = IrsOrchestrator()
+        orchestrator.createSession(
+            "s-csl-type", fullFields(), relevantEvidence(), majorityConfig(),
+            contractScopeInput = oversizedScope
+        )
+        repeat(7) { orchestrator.step("s-csl-type") }
+        val certStep = orchestrator.step("s-csl-type")
+        val rejected = certStep.orchestratorResult as? OrchestratorResult.Rejected
+        assertNotNull(rejected)
+        assertEquals(FailureType.CSL_SCOPE_EXCEEDED.name, rejected!!.reason)
+    }
+
+    @Test
+    fun `ContractScopeResult validates status and requiredAction consistency`() {
+        // Valid: VALID + EXECUTE
+        val valid = ContractScopeResult(
+            executionLoad = 5, validationCapacity = 10, status = "VALID", requiredAction = "EXECUTE"
+        )
+        assertEquals("VALID",   valid.status)
+        assertEquals("EXECUTE", valid.requiredAction)
+
+        // Valid: INVALID + SPLIT
+        val invalid = ContractScopeResult(
+            executionLoad = 10, validationCapacity = 5, status = "INVALID", requiredAction = "SPLIT"
+        )
+        assertEquals("INVALID", invalid.status)
+        assertEquals("SPLIT",   invalid.requiredAction)
     }
 }
 

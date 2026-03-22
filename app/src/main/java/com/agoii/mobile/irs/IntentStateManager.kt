@@ -26,7 +26,8 @@ class IntentStateManager {
         val availableEvidence:       Map<String, List<EvidenceRef>>,
         val scoutReport:             KnowledgeScoutReport?,
         val evidenceValidationResult: EvidenceValidationResult?,
-        val realityValidationResult:  RealityValidationResult?
+        val realityValidationResult:  RealityValidationResult?,
+        val contractScopeInput:      ContractScopeInput
     )
 
     private val records = mutableMapOf<String, SessionRecord>()
@@ -38,10 +39,11 @@ class IntentStateManager {
      * is a programming error and will throw [IllegalArgumentException].
      */
     fun init(
-        sessionId:         String,
-        intentData:        IntentData,
-        swarmConfig:       SwarmConfig,
-        availableEvidence: Map<String, List<EvidenceRef>> = emptyMap()
+        sessionId:          String,
+        intentData:         IntentData,
+        swarmConfig:        SwarmConfig,
+        availableEvidence:  Map<String, List<EvidenceRef>> = emptyMap(),
+        contractScopeInput: ContractScopeInput = ContractScopeInput.default()
     ): IrsSession {
         require(!records.containsKey(sessionId)) {
             "Session '$sessionId' already exists — use step() to advance it"
@@ -61,7 +63,8 @@ class IntentStateManager {
             availableEvidence       = availableEvidence,
             scoutReport             = null,
             evidenceValidationResult = null,
-            realityValidationResult  = null
+            realityValidationResult  = null,
+            contractScopeInput      = contractScopeInput
         )
         return session
     }
@@ -143,6 +146,10 @@ class IntentStateManager {
      */
     fun realitySimulationResult(sessionId: String): RealitySimulationResult? =
         records[sessionId]?.realityValidationResult?.simulationResult
+
+    /** Return the contract scope input registered at session creation. */
+    fun contractScopeInput(sessionId: String): ContractScopeInput? =
+        records[sessionId]?.contractScopeInput
 
     /**
      * Replay the full snapshot history for [sessionId].

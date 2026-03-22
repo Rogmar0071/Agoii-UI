@@ -43,7 +43,8 @@ class IrsOrchestrator(
     private val realityValidator:     RealityValidator      = RealityValidator(),
     private val swarmValidator:       SwarmValidator        = SwarmValidator(),
     private val simulationEngine:     SimulationEngine      = SimulationEngine(),
-    private val pcCVValidator:        PCCVValidator         = PCCVValidator()
+    private val pcCVValidator:        PCCVValidator         = PCCVValidator(),
+    private val contractScopeLaw:     ContractScopeLaw      = ContractScopeLaw()
 ) {
     private val stateManager = IntentStateManager()
 
@@ -52,22 +53,24 @@ class IrsOrchestrator(
     /**
      * Create a new IRS session from raw intent fields, evidence, and swarm config.
      *
-     * @param sessionId        Unique session identifier.
-     * @param rawFields        Raw field values keyed by field name.
-     * @param evidence         Evidence refs keyed by field name (pre-scouting).
-     * @param swarmConfig      Swarm parameters; [SwarmConfig.agentCount] must be ≥ 2.
+     * @param sessionId         Unique session identifier.
+     * @param rawFields         Raw field values keyed by field name.
+     * @param evidence          Evidence refs keyed by field name (pre-scouting).
+     * @param swarmConfig       Swarm parameters; [SwarmConfig.agentCount] must be ≥ 2.
      * @param availableEvidence Supplementary evidence pool passed to the ScoutOrchestrator.
+     * @param contractScopeInput CSL-1 scope definition; defaults to minimal-scope (always VALID).
      */
     fun createSession(
-        sessionId:         String,
-        rawFields:         Map<String, String>,
-        evidence:          Map<String, List<EvidenceRef>>,
-        swarmConfig:       SwarmConfig,
-        availableEvidence: Map<String, List<EvidenceRef>> = emptyMap()
+        sessionId:          String,
+        rawFields:          Map<String, String>,
+        evidence:           Map<String, List<EvidenceRef>>,
+        swarmConfig:        SwarmConfig,
+        availableEvidence:  Map<String, List<EvidenceRef>> = emptyMap(),
+        contractScopeInput: ContractScopeInput = ContractScopeInput.default()
     ): IrsSession {
         // Reconstruct the intent immediately so the session starts with a valid IntentData.
         val intentData = reconstructionEngine.reconstruct(rawFields, evidence)
-        return stateManager.init(sessionId, intentData, swarmConfig, availableEvidence)
+        return stateManager.init(sessionId, intentData, swarmConfig, availableEvidence, contractScopeInput)
     }
 
     /**
@@ -378,7 +381,23 @@ class IrsOrchestrator(
 
             // ── Step 9: Certification ─────────────────────────────────────────
             IrsStage.CERTIFICATION -> {
-                terminal(sessionId, stage, OrchestratorResult.Certified)
+                val cslInput  = stateManager.contractScopeInput(sessionId) ?: ContractScopeInput.default()
+                val cslResult = contractScopeLaw.evaluate(cslInput)
+                if (cslResult.status == "INVALID") {
+                    // CSL-1 §7: block issuance when EL > VC; require decomposition.
+                    terminal(
+                        sessionId, stage,
+                        OrchestratorResult.Rejected(
+                            reason  = FailureType.CSL_SCOPE_EXCEEDED.name,
+                            details = listOf(
+                                "EL=${cslResult.executionLoad} > VC=${cslResult.validationCapacity}:" +
+                                " contract must be decomposed before issuance"
+                            )
+                        )
+                    )
+                } else {
+                    terminal(sessionId, stage, OrchestratorResult.Certified(cslResult))
+                }
             }
 
             // ── RECONSTRUCTION is handled at session creation; treat as GAP_DETECTION entry

@@ -367,13 +367,15 @@ data class PCCVResult(
  *  - [UNSTABLE]              — swarm validation failed; agents did not reach consensus (step 6)
  *  - [INFEASIBLE]            — simulation infeasible; real-world constraints cannot be met (step 7)
  *  - [PCCV_FAIL]             — precondition/certification-condition validation failed (step 8)
+ *  - [CSL_SCOPE_EXCEEDED]    — CSL-1: EL > VC; contract must be decomposed before issuance (step 9)
  */
 enum class FailureType {
     EVIDENCE_INVALID,
     REALITY_UNVERIFIABLE,
     UNSTABLE,
     INFEASIBLE,
-    PCCV_FAIL
+    PCCV_FAIL,
+    CSL_SCOPE_EXCEEDED
 }
 
 /**
@@ -381,8 +383,15 @@ enum class FailureType {
  * and must not depend on any IRS-internal state.
  */
 sealed class OrchestratorResult {
-    /** Intent is fully certified; no assumptions remain. */
-    object Certified : OrchestratorResult()
+    /**
+     * Intent is fully certified; no assumptions remain.
+     *
+     * CSL-1 §8: every certified contract carries the [contractScopeResult] schema
+     * proving that EL ≤ VC at the time of issuance.
+     *
+     * @property contractScopeResult Computed EL/VC values, status, and required action.
+     */
+    data class Certified(val contractScopeResult: ContractScopeResult) : OrchestratorResult()
 
     /** One or more mandatory fields lack sufficient evidence. */
     data class NeedsClarification(val gaps: List<String>) : OrchestratorResult()
@@ -454,6 +463,123 @@ data class StepResult(
     val terminal:           Boolean,
     val orchestratorResult: OrchestratorResult?
 )
+
+// ─── Contract Scope Law (CSL-1) ──────────────────────────────────────────────
+
+/**
+ * Surface type classification for the Contract Scope Law (CSL-1).
+ *
+ * Each type carries a deterministic weight used in the Execution Load formula.
+ * Per CSL-1 §2.2: w(SP)=5, w(GL)=4, w(ST)=3, w(LG)=2, w(TS)=1.
+ *
+ * SP — Spine       (Orchestrator, StateManager)
+ * GL — Global      (EventTypes)
+ * ST — Structural  (Models)
+ * LG — Logic       (Engines)
+ * TS — Test        (Test files)
+ */
+enum class SurfaceType { SP, GL, ST, LG, TS }
+
+/** Deterministic weight for each surface type per CSL-1 §2.2. */
+val SurfaceType.weight: Int get() = when (this) {
+    SurfaceType.SP -> 5
+    SurfaceType.GL -> 4
+    SurfaceType.ST -> 3
+    SurfaceType.LG -> 2
+    SurfaceType.TS -> 1
+}
+
+/**
+ * A single mutated surface in a contract's mutation graph.
+ *
+ * @property type The surface classification (SP/GL/ST/LG/TS).
+ * @property name Human-readable name of the surface (e.g. "Orchestrator").
+ */
+data class MutationSurface(val type: SurfaceType, val name: String)
+
+/**
+ * All inputs required to compute Execution Load and Validation Capacity per CSL-1.
+ *
+ * EL = Σ w(s)  +  E  +  (2 × C)
+ * VC = EC + RC + SC + CC + DC
+ *
+ * @property surfaces             The set of mutated surfaces in this contract.
+ * @property edges                Number of dependency edges between surfaces (E ≥ 0).
+ * @property crossCouplingFactor  Surfaces that are both input-dependent and output-mutated (C ≥ 0).
+ * @property ec                   Evidence Coverage: independently validated mutation surfaces.
+ * @property rc                   Replay Coverage: validated replay dimensions (0–3).
+ * @property sc                   Simulation Coverage: simulation rules applied (≥ 0).
+ * @property cc                   Consensus Coverage: independent validators agreeing (≥ 0).
+ * @property dc                   Determinism Coverage: runs with zero divergence (0–5).
+ */
+data class ContractScopeInput(
+    val surfaces:            List<MutationSurface>,
+    val edges:               Int,
+    val crossCouplingFactor: Int,
+    val ec:                  Int,
+    val rc:                  Int,
+    val sc:                  Int,
+    val cc:                  Int,
+    val dc:                  Int
+) {
+    init {
+        require(edges >= 0)              { "edges must be ≥ 0, got $edges" }
+        require(crossCouplingFactor >= 0) { "crossCouplingFactor must be ≥ 0, got $crossCouplingFactor" }
+        require(ec >= 0)                 { "ec must be ≥ 0, got $ec" }
+        require(rc in 0..3)              { "rc must be in [0, 3], got $rc" }
+        require(sc >= 0)                 { "sc must be ≥ 0, got $sc" }
+        require(cc >= 0)                 { "cc must be ≥ 0, got $cc" }
+        require(dc in 0..5)              { "dc must be in [0, 5], got $dc" }
+    }
+
+    companion object {
+        /**
+         * Minimal-scope default for backward compatibility.
+         * Produces EL = 0, VC = 17 → always VALID.
+         */
+        fun default(): ContractScopeInput = ContractScopeInput(
+            surfaces            = emptyList(),
+            edges               = 0,
+            crossCouplingFactor = 0,
+            ec                  = 0,
+            rc                  = 3,
+            sc                  = 6,
+            cc                  = 3,
+            dc                  = 5
+        )
+    }
+}
+
+/**
+ * Output of the Contract Scope Law evaluation.
+ *
+ * Schema extension required by CSL-1 §8. Every issued contract must carry this result.
+ *
+ * @property executionLoad      EL = Σ w(s) + E + (2 × C).
+ * @property validationCapacity VC = EC + RC + SC + CC + DC.
+ * @property safetyCondition    Always "EL <= VC" (static label per CSL-1 §1).
+ * @property status             "VALID" when EL ≤ VC; "INVALID" otherwise.
+ * @property requiredAction     "EXECUTE" when VALID; "SPLIT" when INVALID.
+ */
+data class ContractScopeResult(
+    val executionLoad:      Int,
+    val validationCapacity: Int,
+    val safetyCondition:    String = "EL <= VC",
+    val status:             String,
+    val requiredAction:     String
+) {
+    init {
+        require(status in setOf("VALID", "INVALID")) {
+            "status must be VALID or INVALID, got $status"
+        }
+        require(requiredAction in setOf("EXECUTE", "SPLIT")) {
+            "requiredAction must be EXECUTE or SPLIT, got $requiredAction"
+        }
+        require((status == "VALID") == (requiredAction == "EXECUTE")) {
+            "status and requiredAction must be consistent: VALID→EXECUTE, INVALID→SPLIT"
+        }
+    }
+}
 
 // ─── Governance Audit ─────────────────────────────────────────────────────────
 
