@@ -31,25 +31,6 @@ data class ContractDescriptor(
 enum class Outcome { ALLOWED, REJECTED }
 
 /**
- * Independent structural vocabulary for Governor execution results.
- *
- * Defined here (governance package) so that StructuralStateAwareness
- * requires no import from the core package — SSA is a self-contained authority.
- */
-enum class GovernorState {
-    /** Governor appended one event and advanced the ledger. */
-    ADVANCED,
-    /** Governor is paused; waiting for explicit user approval. */
-    WAITING_FOR_APPROVAL,
-    /** Execution is fully complete. */
-    COMPLETED,
-    /** Ledger is empty; no events exist to process. */
-    NO_EVENT,
-    /** Contract issuance was blocked by an SSM or CSL gate failure (drift condition). */
-    DRIFT
-}
-
-/**
  * Result produced by the Contract Surface Layer after evaluating a contract.
  *
  * @property outcome ALLOWED or REJECTED.

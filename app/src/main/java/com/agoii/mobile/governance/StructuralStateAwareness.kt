@@ -11,13 +11,19 @@ package com.agoii.mobile.governance
  */
 class StructuralStateAwareness {
 
-    /** Complete explicit set of all possible Governor result states. */
-    fun governorStates(): Set<GovernorState> = setOf(
-        GovernorState.ADVANCED,
-        GovernorState.WAITING_FOR_APPROVAL,
-        GovernorState.COMPLETED,
-        GovernorState.NO_EVENT,
-        GovernorState.DRIFT
+    /**
+     * Complete explicit set of all possible Governor result states.
+     *
+     * These string values are the authoritative SSA declarations (deterministic).
+     * They must match the names of Governor.GovernorResult enum constants.
+     * SSA does not import that enum; it owns its structural map independently.
+     */
+    fun governorStates(): Set<String> = setOf(
+        "ADVANCED",
+        "WAITING_FOR_APPROVAL",
+        "COMPLETED",
+        "NO_EVENT",
+        "DRIFT"
     )
 
     /** Complete explicit set of all active surface types in the governance model. */
