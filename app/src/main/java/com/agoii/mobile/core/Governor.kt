@@ -1,5 +1,10 @@
 package com.agoii.mobile.core
 
+import com.agoii.mobile.governance.ContractDescriptor
+import com.agoii.mobile.governance.ContractSurfaceLayer
+import com.agoii.mobile.governance.Outcome
+import com.agoii.mobile.governance.SurfaceType
+
 /**
  * Governor — the ONLY execution authority in the system.
  *
@@ -25,6 +30,8 @@ package com.agoii.mobile.core
  */
 class Governor(private val eventStore: EventRepository) {
 
+    private val csl = ContractSurfaceLayer()
+
     companion object {
         /**
          * Defines every legal automatic single-step transition driven by the governor.
@@ -48,6 +55,8 @@ class Governor(private val eventStore: EventRepository) {
     enum class GovernorResult {
         /** Governor appended one event and advanced the ledger. */
         ADVANCED,
+        /** CSL evaluation rejected the contract; issuance was blocked. */
+        CSL_REJECTED,
         /** Governor is paused; waiting for explicit user approval. */
         WAITING_FOR_APPROVAL,
         /** Execution is fully complete (assembly_completed reached). */
@@ -74,6 +83,7 @@ class Governor(private val eventStore: EventRepository) {
             // Reads total from replay so the value is ledger-derived, not inferred.
             lastType == EventTypes.EXECUTION_STARTED -> {
                 val total = Replay(eventStore).replay(projectId).totalContracts
+                if (cslRejected(position = 1, total = total)) return GovernorResult.CSL_REJECTED
                 eventStore.appendEvent(
                     projectId, EventTypes.CONTRACT_STARTED,
                     mapOf(
@@ -108,6 +118,7 @@ class Governor(private val eventStore: EventRepository) {
                 val total    = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
                 if (position < total) {
                     val nextPosition = position + 1
+                    if (cslRejected(position = nextPosition, total = total)) return GovernorResult.CSL_REJECTED
                     eventStore.appendEvent(
                         projectId, EventTypes.CONTRACT_STARTED,
                         mapOf(
@@ -164,4 +175,19 @@ class Governor(private val eventStore: EventRepository) {
         is String -> value.toIntOrNull()
         else      -> null
     }
+
+    /**
+     * Returns `true` if CSL rejects the contract at the given [position] within
+     * a run of [total] contracts.  Uses surface LG with no conditional branches;
+     * validation capacity is set to twice the total so all valid sequences pass.
+     */
+    private fun cslRejected(position: Int, total: Int): Boolean =
+        csl.evaluate(
+            ContractDescriptor(
+                surface = SurfaceType.LG,
+                executionCount = position,
+                conditionCount = 0,
+                validationCapacity = total * 2
+            )
+        ).outcome == Outcome.REJECTED
 }
