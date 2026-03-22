@@ -27,6 +27,9 @@ import com.agoii.mobile.irs.RiskLevel
 import com.agoii.mobile.irs.SimulationRuleResult
 import com.agoii.mobile.irs.CcfScore
 import com.agoii.mobile.irs.IrsAuditReport
+import com.agoii.mobile.irs.ContractLayer
+import com.agoii.mobile.irs.ContractScopeLaw
+import com.agoii.mobile.irs.SurfaceClass
 import com.agoii.mobile.irs.reality.ContradictionEngine
 import com.agoii.mobile.irs.reality.EvidenceScoringEngine
 import com.agoii.mobile.irs.reality.RealityKnowledgeGateway
@@ -1674,6 +1677,93 @@ class CoreTest {
         assertTrue(report.ccf.totalScore >= 13)
         assertEquals("LOW", report.ccf.riskLevel)
         assertEquals("APPROVED", report.approvalStatus)
+    }
+
+    // ── CSL-RECOVERY-01: ContractScopeLaw Tests ───────────────────────────────
+
+    /**
+     * Canonical five-layer decomposition from CSL-RECOVERY-01 section 5.
+     * L1 (ST) → L2 (LG) → L3 (SP) → L4 (SP) → L5 (TS)
+     * Each layer satisfies EL ≤ VC; the composite is never computed.
+     */
+    private fun canonicalLayers(): List<ContractLayer> = listOf(
+        ContractLayer("L1", SurfaceClass.ST, weight = 3, extensions = 1, constraints = 0, executionLoad =  4, validationCapacity =  7),
+        ContractLayer("L2", SurfaceClass.LG, weight = 2, extensions = 1, constraints = 0, executionLoad =  3, validationCapacity =  7),
+        ContractLayer("L3", SurfaceClass.SP, weight = 5, extensions = 2, constraints = 1, executionLoad =  9, validationCapacity = 10),
+        ContractLayer("L4", SurfaceClass.SP, weight = 5, extensions = 3, constraints = 2, executionLoad = 12, validationCapacity = 22),
+        ContractLayer("L5", SurfaceClass.TS, weight = 1, extensions = 2, constraints = 1, executionLoad =  5, validationCapacity = 20)
+    )
+
+    @Test
+    fun `ContractLayer is valid when EL is within VC`() {
+        val layer = ContractLayer("L1", SurfaceClass.ST, 3, 1, 0, executionLoad = 4, validationCapacity = 7)
+        assertTrue(layer.isValid)
+        assertEquals(SurfaceClass.ST, layer.surfaceClass)
+    }
+
+    @Test
+    fun `ContractLayer rejects construction when EL exceeds VC`() {
+        try {
+            ContractLayer("COMPOSITE", SurfaceClass.LG, 5, 3, 2, executionLoad = 29, validationCapacity = 19)
+            fail("Expected IllegalArgumentException when EL > VC")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message?.contains("COMPOSITE") == true)
+        }
+    }
+
+    @Test
+    fun `ContractScopeLaw evaluates canonical five layers as fully valid`() {
+        val law    = ContractScopeLaw()
+        val result = law.evaluate(canonicalLayers())
+        assertTrue(result.valid)
+        assertTrue(result.violations.isEmpty())
+        assertEquals(5, result.layers.size)
+    }
+
+    @Test
+    fun `ContractScopeLaw evaluate returns layers in input order`() {
+        val layers = canonicalLayers()
+        val result = ContractScopeLaw().evaluate(layers)
+        assertEquals(layers, result.layers)
+    }
+
+    @Test
+    fun `ContractScopeLaw evaluate on empty list produces valid result with no violations`() {
+        val result = ContractScopeLaw().evaluate(emptyList())
+        assertTrue(result.valid)
+        assertTrue(result.violations.isEmpty())
+        assertTrue(result.layers.isEmpty())
+    }
+
+    @Test
+    fun `ContractScopeLaw resolveViolation produces canonical CSL-RECOVERY-01 audit record`() {
+        val record = ContractScopeLaw().resolveViolation(
+            originalEL      = 29,
+            originalVC      = 19,
+            layersValidated = 5
+        )
+        assertEquals("contract_scope_violation_resolved", record.event)
+        assertEquals(29,                   record.originalEL)
+        assertEquals(19,                   record.originalVC)
+        assertEquals("layered_decomposition", record.resolution)
+        assertEquals(5,                    record.layersValidated)
+        assertEquals("preserved",          record.spineIntegrity)
+        assertEquals("unchanged",          record.determinism)
+    }
+
+    @Test
+    fun `ContractScopeAuditRecord fields are structurally correct`() {
+        val record = ContractScopeLaw().resolveViolation(29, 19, 5)
+        // original composite was invalid (EL > VC)
+        assertTrue(record.originalEL > record.originalVC)
+        // decomposition always produces more than zero layers
+        assertTrue(record.layersValidated > 0)
+    }
+
+    @Test
+    fun `SurfaceClass enum contains exactly ST LG SP TS`() {
+        val classes = SurfaceClass.values().map { it.name }.toSet()
+        assertEquals(setOf("ST", "LG", "SP", "TS"), classes)
     }
 }
 
