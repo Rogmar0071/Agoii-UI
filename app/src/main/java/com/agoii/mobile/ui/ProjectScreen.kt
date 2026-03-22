@@ -81,7 +81,6 @@ fun ProjectScreen(projectId: String) {
             .fillMaxSize()
             .background(Background)
             .statusBarsPadding()
-            .navigationBarsPadding()
     ) {
         // ── HEADER ──────────────────────────────────────────────────────────
         Header(projectId = projectId, auditResult = auditResult)
@@ -337,6 +336,7 @@ private fun InputBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .imePadding()
             .background(SurfaceVariant)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
