@@ -1535,30 +1535,68 @@ class CoreTest {
         assertEquals(result.reasons, result.issues)
     }
 
-    // ── IRS-05C-AUDIT-CLOSURE-REVISION: Replay Determinism (STEP 2) ──────────
+    // ── IRS-05C-FINAL-DETERMINISM-VALIDATION: 3-layer structural replay proof ────
 
     @Test
     fun `IRS pipeline is deterministic across 5 identical replay runs`() {
-        fun runPipeline(): OrchestratorResult? {
+        data class PipelineRun(
+            val stageSequence:       List<IrsStage>,
+            val finalResult:         OrchestratorResult?,
+            val simulationEvaluations: List<SimulationRuleResult>
+        )
+
+        fun runPipeline(): PipelineRun {
             val orchestrator = IrsOrchestrator()
             val id = "replay-determinism-${System.nanoTime()}"
             orchestrator.createSession(id, fullFields(), relevantEvidence(), majorityConfig())
-            var result: OrchestratorResult? = null
             repeat(9) {
                 val step = orchestrator.step(id)
-                if (step.terminal) { result = step.orchestratorResult; return@repeat }
+                if (step.terminal) return@repeat
             }
-            return result
+            return PipelineRun(
+                stageSequence        = orchestrator.replayHistory(id).map { it.stage },
+                finalResult          = orchestrator.replayHistory(id).last().orchestratorResult
+                    ?: orchestrator.step(id).orchestratorResult,
+                simulationEvaluations = orchestrator.realitySimulationResult(id)?.evaluations
+                    ?: emptyList()
+            )
         }
 
-        val results = (1..5).map { runPipeline() }
-        val first = results.first()
-        results.forEach { run ->
+        val runs = (1..5).map { runPipeline() }
+        val first = runs.first()
+
+        // Layer 1 — Stage sequence equality
+        assertFalse("Stage sequence must not be empty", first.stageSequence.isEmpty())
+        runs.forEachIndexed { i, run ->
             assertEquals(
-                "Replay divergence detected — pipeline is not deterministic",
-                first?.javaClass?.simpleName,
-                run?.javaClass?.simpleName
+                "Stage sequence divergence on run ${i + 1}",
+                first.stageSequence,
+                run.stageSequence
             )
+        }
+
+        // Layer 2 — Full OrchestratorResult structural equality (not just class name)
+        runs.forEachIndexed { i, run ->
+            assertEquals(
+                "OrchestratorResult divergence on run ${i + 1}",
+                first.finalResult,
+                run.finalResult
+            )
+        }
+
+        // Layer 3 — Simulation trace equality: ruleIds, triggered flags, messages
+        assertFalse("Simulation evaluations must not be empty", first.simulationEvaluations.isEmpty())
+        runs.forEachIndexed { i, run ->
+            assertEquals(
+                "Simulation evaluation count divergence on run ${i + 1}",
+                first.simulationEvaluations.size,
+                run.simulationEvaluations.size
+            )
+            first.simulationEvaluations.zip(run.simulationEvaluations).forEachIndexed { j, (expected, actual) ->
+                assertEquals("ruleId mismatch at evaluation[$j] on run ${i + 1}", expected.ruleId,    actual.ruleId)
+                assertEquals("triggered mismatch at evaluation[$j] on run ${i + 1}", expected.triggered, actual.triggered)
+                assertEquals("message mismatch at evaluation[$j] on run ${i + 1}", expected.message,  actual.message)
+            }
         }
     }
 

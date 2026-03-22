@@ -106,6 +106,16 @@ class IrsOrchestrator(
     fun replayHistory(sessionId: String): List<IrsSnapshot> =
         stateManager.replayHistory(sessionId)
 
+    /**
+     * Return the [RealitySimulationResult] stored during the REALITY_VALIDATION stage,
+     * or null when that stage has not yet executed (or the session does not exist).
+     *
+     * Provides direct traceability access so callers can compare simulation evaluations
+     * across replay runs without navigating the full validation result chain.
+     */
+    fun realitySimulationResult(sessionId: String): RealitySimulationResult? =
+        stateManager.realitySimulationResult(sessionId)
+
     // ─── Stage dispatch ───────────────────────────────────────────────────────
 
     private fun nextStage(session: IrsSession): IrsStage {
