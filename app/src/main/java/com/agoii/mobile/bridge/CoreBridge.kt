@@ -5,6 +5,7 @@ import com.agoii.mobile.core.AuditResult
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventStore
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.core.ExecutionOrchestrator
 import com.agoii.mobile.core.Governor
 import com.agoii.mobile.core.LedgerAudit
 import com.agoii.mobile.core.Replay
@@ -32,13 +33,14 @@ import com.agoii.mobile.irs.SwarmConfig
  */
 class CoreBridge(context: Context) {
 
-    private val eventStore    = EventStore(context)
-    private val governor      = Governor(eventStore)
-    private val ledgerAudit   = LedgerAudit(eventStore)
-    private val replay        = Replay(eventStore)
-    private val replayTest    = ReplayTest(eventStore)
-    private val buildExecutor = BuildExecutor()
-    private val irsOrchestrator = IrsOrchestrator()
+    private val eventStore           = EventStore(context)
+    private val governor             = Governor(eventStore)
+    private val executionOrchestrator = ExecutionOrchestrator(eventStore)
+    private val ledgerAudit          = LedgerAudit(eventStore)
+    private val replay               = Replay(eventStore)
+    private val replayTest           = ReplayTest(eventStore)
+    private val buildExecutor        = BuildExecutor()
+    private val irsOrchestrator      = IrsOrchestrator()
 
     /** Append an intent_submitted event. Called when the user sends an objective. */
     fun submitIntent(projectId: String, objective: String) {
@@ -52,15 +54,27 @@ class CoreBridge(context: Context) {
     /**
      * Trigger one governor step. Returns the result of that step.
      *
-     * When the last event is contract_started:
-     *  1. Resolves the contract name from the ledger.
-     *  2. Calls BuildExecutor.execute(contractName).
-     *  3. If execution fails → returns NO_EVENT (blocks contract_completed).
-     *  4. If execution passes → lets the Governor proceed naturally.
+     * Gate enforcement order:
+     *  1. When the last event is contracts_approved:
+     *     a. Run ExecutionOrchestrator.executeContracts — governance gate (G5 enforcement point).
+     *     b. If rejected → return NO_EVENT (blocks execution_started).
+     *  2. When the last event is contract_started:
+     *     a. Resolve the contract name from the ledger.
+     *     b. Call BuildExecutor.execute(contractName).
+     *     c. If execution fails → return NO_EVENT (blocks contract_completed).
+     *  3. In all other cases → delegate directly to the Governor.
      */
     fun runGovernorStep(projectId: String): Governor.GovernorResult {
         val events    = eventStore.loadEvents(projectId)
         val lastEvent = events.lastOrNull()
+
+        // ── Governance gate: contracts_approved → execution_started ──────────
+        if (lastEvent?.type == EventTypes.CONTRACTS_APPROVED) {
+            val decision = executionOrchestrator.executeContracts(projectId)
+            if (decision is ExecutionOrchestrator.ExecutionDecision.Rejected) {
+                return Governor.GovernorResult.NO_EVENT
+            }
+        }
 
         if (lastEvent?.type == EventTypes.CONTRACT_STARTED) {
             val contractId   = lastEvent.payload["contract_id"]?.toString() ?: ""

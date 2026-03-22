@@ -3,11 +3,15 @@ package com.agoii.mobile
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.core.ExecutionOrchestrator
 import com.agoii.mobile.core.Governor
 import com.agoii.mobile.core.LedgerAudit
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.core.SystemVerificationContract
+import com.agoii.mobile.governance.ContractDescriptor
+import com.agoii.mobile.governance.ContractGate
+import com.agoii.mobile.governance.SurfaceType
 import com.agoii.mobile.irs.ConsensusRule
 import com.agoii.mobile.irs.EvidenceRef
 import com.agoii.mobile.irs.EvidenceValidator
@@ -1880,6 +1884,132 @@ class CoreTest {
         assertTrue(report.ssaIsolation.isolatedFromCore)
         assertTrue(report.ssaIsolation.ssaPackage.contains("governance"))
         assertTrue(report.ssaIsolation.notInExecutionPath)
+    }
+
+    // ── ContractGate tests ───────────────────────────────────────────────────
+
+    @Test
+    fun `ContractGate approves contract when EL is within VC`() {
+        val gate = ContractGate()
+        // EL = 2 (LG weight) + 1 (executionCount) + 0 = 3, VC = 5 → ALLOWED
+        val descriptor = ContractDescriptor(
+            surface = SurfaceType.LG,
+            executionCount = 1,
+            conditionCount = 0,
+            validationCapacity = Governor.VC
+        )
+        assertTrue("ContractGate must approve when EL <= VC", gate.approve(descriptor))
+    }
+
+    @Test
+    fun `ContractGate rejects contract when EL exceeds VC`() {
+        val gate = ContractGate()
+        // EL = 2 (LG weight) + 4 (executionCount) + 0 = 6, VC = 5 → REJECTED
+        val descriptor = ContractDescriptor(
+            surface = SurfaceType.LG,
+            executionCount = 4,
+            conditionCount = 0,
+            validationCapacity = Governor.VC
+        )
+        assertFalse("ContractGate must reject when EL > VC", gate.approve(descriptor))
+    }
+
+    @Test
+    fun `ContractGate approves contracts at boundary (EL equals VC)`() {
+        val gate = ContractGate()
+        // EL = 2 (LG weight) + 3 (executionCount) + 0 = 5, VC = 5 → ALLOWED (EL == VC)
+        val descriptor = ContractDescriptor(
+            surface = SurfaceType.LG,
+            executionCount = 3,
+            conditionCount = 0,
+            validationCapacity = Governor.VC
+        )
+        assertTrue("ContractGate must approve when EL == VC (boundary)", gate.approve(descriptor))
+    }
+
+    // ── ExecutionOrchestrator tests ──────────────────────────────────────────
+
+    @Test
+    fun `ExecutionOrchestrator returns Approved when all contracts pass gate`() {
+        val events = listOf(
+            Event(EventTypes.INTENT_SUBMITTED,    mapOf("objective" to "obj")),
+            Event(EventTypes.CONTRACTS_GENERATED, mapOf(
+                "total" to 3.0,
+                "contracts" to listOf(
+                    mapOf("id" to "contract_1", "name" to "Core Setup"),
+                    mapOf("id" to "contract_2", "name" to "Integration"),
+                    mapOf("id" to "contract_3", "name" to "Validation")
+                )
+            )),
+            Event(EventTypes.CONTRACTS_READY,    mapOf("total_contracts" to 3.0)),
+            Event(EventTypes.CONTRACTS_APPROVED, emptyMap())
+        )
+        val orchestrator = ExecutionOrchestrator(store(events))
+        val decision = orchestrator.executeContracts("proj")
+        assertTrue(
+            "ExecutionOrchestrator must return Approved for positions 1-3 (EL <= VC=5)",
+            decision is ExecutionOrchestrator.ExecutionDecision.Approved
+        )
+    }
+
+    @Test
+    fun `ExecutionOrchestrator returns Rejected when contracts_generated event is absent`() {
+        val events = listOf(Event(EventTypes.INTENT_SUBMITTED, mapOf("objective" to "obj")))
+        val orchestrator = ExecutionOrchestrator(store(events))
+        val decision = orchestrator.executeContracts("proj")
+        assertTrue(
+            "ExecutionOrchestrator must return Rejected when no contracts_generated event exists",
+            decision is ExecutionOrchestrator.ExecutionDecision.Rejected
+        )
+    }
+
+    @Test
+    fun `ExecutionOrchestrator returns Rejected when a contract position exceeds VC`() {
+        // 4 contracts in payload; position 4 → EL=6 > VC=5 → gate rejects
+        val events = listOf(
+            Event(EventTypes.INTENT_SUBMITTED,    mapOf("objective" to "obj")),
+            Event(EventTypes.CONTRACTS_GENERATED, mapOf(
+                "total" to 4.0,
+                "contracts" to listOf(
+                    mapOf("id" to "contract_1", "name" to "C1"),
+                    mapOf("id" to "contract_2", "name" to "C2"),
+                    mapOf("id" to "contract_3", "name" to "C3"),
+                    mapOf("id" to "contract_4", "name" to "C4")
+                )
+            )),
+            Event(EventTypes.CONTRACTS_APPROVED, emptyMap())
+        )
+        val orchestrator = ExecutionOrchestrator(store(events))
+        val decision = orchestrator.executeContracts("proj")
+        assertTrue(
+            "ExecutionOrchestrator must return Rejected when any contract's EL exceeds VC",
+            decision is ExecutionOrchestrator.ExecutionDecision.Rejected
+        )
+        val reason = (decision as ExecutionOrchestrator.ExecutionDecision.Rejected).reason
+        assertTrue("Rejection reason must mention position 4", reason.contains("4"))
+    }
+
+    @Test
+    fun `ExecutionOrchestrator gate does not mutate the ledger on rejection`() {
+        val events = listOf(
+            Event(EventTypes.INTENT_SUBMITTED, mapOf("objective" to "obj")),
+            Event(EventTypes.CONTRACTS_GENERATED, mapOf(
+                "total" to 4.0,
+                "contracts" to listOf(
+                    mapOf("id" to "contract_1", "name" to "C1"),
+                    mapOf("id" to "contract_2", "name" to "C2"),
+                    mapOf("id" to "contract_3", "name" to "C3"),
+                    mapOf("id" to "contract_4", "name" to "C4")
+                )
+            )),
+            Event(EventTypes.CONTRACTS_APPROVED, emptyMap())
+        )
+        val s = store(events)
+        val initialSize = s.loadEvents("proj").size
+        val orchestrator = ExecutionOrchestrator(s)
+        orchestrator.executeContracts("proj")
+        // Ledger must not be extended after a rejected evaluation (no events emitted — G4)
+        assertEquals("Ledger must not be mutated by governance gate rejection", initialSize, s.loadEvents("proj").size)
     }
 }
 
