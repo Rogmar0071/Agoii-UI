@@ -25,7 +25,8 @@ class IntentStateManager {
         val simResult:               SimulationResult?,
         val availableEvidence:       Map<String, List<EvidenceRef>>,
         val scoutReport:             KnowledgeScoutReport?,
-        val evidenceValidationResult: EvidenceValidationResult?
+        val evidenceValidationResult: EvidenceValidationResult?,
+        val realityValidationResult:  RealityValidationResult?
     )
 
     private val records = mutableMapOf<String, SessionRecord>()
@@ -59,7 +60,8 @@ class IntentStateManager {
             simResult               = null,
             availableEvidence       = availableEvidence,
             scoutReport             = null,
-            evidenceValidationResult = null
+            evidenceValidationResult = null,
+            realityValidationResult  = null
         )
         return session
     }
@@ -72,6 +74,7 @@ class IntentStateManager {
      * @param simResult               Supply when simulation has produced a result.
      * @param scoutReport             Supply when knowledge scouting has produced a report.
      * @param evidenceValidationResult Supply when evidence validation has run.
+     * @param realityValidationResult  Supply when reality validation has run.
      * @return The updated immutable [IrsSession] view.
      */
     fun append(
@@ -81,7 +84,8 @@ class IntentStateManager {
         swarmResult:              SwarmResult?              = null,
         simResult:                SimulationResult?         = null,
         scoutReport:              KnowledgeScoutReport?     = null,
-        evidenceValidationResult: EvidenceValidationResult? = null
+        evidenceValidationResult: EvidenceValidationResult? = null,
+        realityValidationResult:  RealityValidationResult?  = null
     ): IrsSession {
         val record = records[sessionId]
             ?: error("Session '$sessionId' does not exist")
@@ -91,7 +95,8 @@ class IntentStateManager {
             swarmResult              = swarmResult              ?: record.swarmResult,
             simResult                = simResult                ?: record.simResult,
             scoutReport              = scoutReport              ?: record.scoutReport,
-            evidenceValidationResult = evidenceValidationResult ?: record.evidenceValidationResult
+            evidenceValidationResult = evidenceValidationResult ?: record.evidenceValidationResult,
+            realityValidationResult  = realityValidationResult  ?: record.realityValidationResult
         )
         records[sessionId] = newRecord
         return buildSession(newRecord)
@@ -107,11 +112,11 @@ class IntentStateManager {
     fun currentIntent(sessionId: String): IntentData? =
         records[sessionId]?.currentIntent
 
-    /** Return the swarm result stored during step 4, or null. */
+    /** Return the swarm result stored during step 6, or null. */
     fun swarmResult(sessionId: String): SwarmResult? =
         records[sessionId]?.swarmResult
 
-    /** Return the simulation result stored during step 5, or null. */
+    /** Return the simulation result stored during step 7, or null. */
     fun simResult(sessionId: String): SimulationResult? =
         records[sessionId]?.simResult
 
@@ -126,6 +131,10 @@ class IntentStateManager {
     /** Return the evidence validation result stored during evidence validation, or null. */
     fun evidenceValidationResult(sessionId: String): EvidenceValidationResult? =
         records[sessionId]?.evidenceValidationResult
+
+    /** Return the reality validation result stored during reality validation, or null. */
+    fun realityValidationResult(sessionId: String): RealityValidationResult? =
+        records[sessionId]?.realityValidationResult
 
     /**
      * Replay the full snapshot history for [sessionId].

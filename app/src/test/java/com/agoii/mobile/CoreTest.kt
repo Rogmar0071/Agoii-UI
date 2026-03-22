@@ -22,6 +22,10 @@ import com.agoii.mobile.irs.ScoutOrchestrator
 import com.agoii.mobile.irs.SimulationEngine
 import com.agoii.mobile.irs.SwarmConfig
 import com.agoii.mobile.irs.SwarmValidator
+import com.agoii.mobile.irs.reality.ContradictionDetector
+import com.agoii.mobile.irs.reality.CredibilityScorer
+import com.agoii.mobile.irs.reality.RealityKnowledgeGateway
+import com.agoii.mobile.irs.reality.RealityValidator
 import com.agoii.mobile.irs.scout.ConstraintScout
 import com.agoii.mobile.irs.scout.DependencyScout
 import com.agoii.mobile.irs.scout.EnvironmentScout
@@ -852,6 +856,10 @@ class CoreTest {
 
         result = orchestrator.step("s1")
         assertFalse(result.terminal)
+        assertEquals(IrsStage.REALITY_VALIDATION, result.executedStage)
+
+        result = orchestrator.step("s1")
+        assertFalse(result.terminal)
         assertEquals(IrsStage.SWARM_VALIDATION, result.executedStage)
 
         result = orchestrator.step("s1")
@@ -886,12 +894,12 @@ class CoreTest {
         val orchestrator = IrsOrchestrator()
         orchestrator.createSession("s3", fullFields(), relevantEvidence(), majorityConfig())
 
-        repeat(7) { orchestrator.step("s3") }
+        repeat(8) { orchestrator.step("s3") }
 
         val history = orchestrator.replayHistory("s3")
-        assertEquals(7, history.size)
+        assertEquals(8, history.size)
         assertEquals(IrsStage.GAP_DETECTION, history[0].stage)
-        assertEquals(IrsStage.CERTIFICATION, history[6].stage)
+        assertEquals(IrsStage.CERTIFICATION, history[7].stage)
     }
 
     @Test
@@ -899,7 +907,7 @@ class CoreTest {
         val orchestrator = IrsOrchestrator()
         orchestrator.createSession("s4", fullFields(), relevantEvidence(), majorityConfig())
 
-        repeat(7) { orchestrator.step("s4") }
+        repeat(8) { orchestrator.step("s4") }
         val extraCall = orchestrator.step("s4")
         assertTrue(extraCall.terminal)
         assertTrue(extraCall.orchestratorResult is OrchestratorResult.Certified)
@@ -1094,6 +1102,187 @@ class CoreTest {
         val rejected = evStep.orchestratorResult as? OrchestratorResult.Rejected
         assertNotNull(rejected)
         assertEquals("EVIDENCE_INVALID", rejected!!.reason)
+    }
+
+    // ── IRS-05: RealityKnowledgeGateway tests ─────────────────────────────────
+
+    @Test
+    fun `RealityKnowledgeGateway returns facts for known domain`() {
+        val gateway = RealityKnowledgeGateway()
+        val intent  = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val facts   = gateway.query("environment", intent)
+        assertTrue(facts.isNotEmpty())
+        assertTrue(facts.all { it.domain == "environment" })
+        assertTrue(facts.all { it.credibilityScore in 0.0..1.0 })
+        assertTrue(facts.all { it.source.isNotBlank() })
+    }
+
+    @Test
+    fun `RealityKnowledgeGateway returns empty list for unknown domain`() {
+        val gateway = RealityKnowledgeGateway()
+        val intent  = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val facts   = gateway.query("unknown-domain-xyz", intent)
+        assertTrue(facts.isEmpty())
+    }
+
+    @Test
+    fun `RealityKnowledgeGateway queryAll returns facts for all configured domains`() {
+        val gateway  = RealityKnowledgeGateway()
+        val intent   = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val allFacts = gateway.queryAll(intent)
+        assertTrue(allFacts.isNotEmpty())
+        assertTrue(allFacts.containsKey("environment"))
+        assertTrue(allFacts.containsKey("dependency"))
+        assertTrue(allFacts.containsKey("constraint"))
+    }
+
+    // ── IRS-05: CredibilityScorer tests ──────────────────────────────────────
+
+    @Test
+    fun `CredibilityScorer returns acceptable score for well-evidenced intent`() {
+        val scorer = CredibilityScorer()
+        val intent = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val report = scorer.score(intent)
+        assertTrue(report.overallScore >= 0.5)
+        assertTrue(report.isAcceptable)
+        assertTrue(report.fieldScores.containsKey("objective"))
+        assertTrue(report.fieldScores.containsKey("environment"))
+    }
+
+    @Test
+    fun `CredibilityScorer penalises fields with unavailability markers`() {
+        val scorer = CredibilityScorer()
+        val fields = fullFields().toMutableMap().also { it["resources"] = "unavailable" }
+        val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
+        val report = scorer.score(intent)
+        val resourceScore = report.fieldScores["resources"] ?: 1.0
+        assertTrue(resourceScore < 0.7)
+    }
+
+    @Test
+    fun `CredibilityScorer reports low-credibility fields when score is below threshold`() {
+        val scorer = CredibilityScorer()
+        val fields = mapOf(
+            "objective"   to "x",
+            "constraints" to "y",
+            "environment" to "z",
+            "resources"   to "unavailable"
+        )
+        val intent = ReconstructionEngine().reconstruct(fields, emptyMap())
+        val report = scorer.score(intent)
+        assertTrue(report.lowCredibilityFields.contains("resources"))
+    }
+
+    // ── IRS-05: ContradictionDetector tests ──────────────────────────────────
+
+    @Test
+    fun `ContradictionDetector detects no contradictions for clean intent`() {
+        val detector = ContradictionDetector()
+        val intent   = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val report   = detector.detect(intent)
+        assertFalse(report.hasContradictions)
+        assertTrue(report.contradictions.isEmpty())
+    }
+
+    @Test
+    fun `ContradictionDetector detects offline vs cloud semantic contradiction`() {
+        val detector = ContradictionDetector()
+        val fields   = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "must work offline",
+            "environment" to "cloud platform",
+            "resources"   to "team available"
+        )
+        val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
+        val report = detector.detect(intent)
+        assertTrue(report.hasContradictions)
+        assertTrue(report.contradictions.any { it.description.contains("offline") })
+    }
+
+    @Test
+    fun `ContradictionDetector detects real-time vs serverless semantic contradiction`() {
+        val detector = ContradictionDetector()
+        val fields   = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "real-time processing required",
+            "environment" to "serverless",
+            "resources"   to "team available"
+        )
+        val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
+        val report = detector.detect(intent)
+        assertTrue(report.hasContradictions)
+        assertTrue(report.contradictions.any { it.description.contains("real-time") })
+    }
+
+    // ── IRS-05: RealityValidator tests ────────────────────────────────────────
+
+    @Test
+    fun `RealityValidator passes for well-formed intent with no contradictions`() {
+        val validator = RealityValidator()
+        val intent    = ReconstructionEngine().reconstruct(fullFields(), relevantEvidence())
+        val result    = validator.validate(intent)
+        assertTrue(result.passed)
+        assertTrue(result.issues.isEmpty())
+        assertTrue(result.credibilityReport.isAcceptable)
+        assertFalse(result.contradictionReport.hasContradictions)
+    }
+
+    @Test
+    fun `RealityValidator fails when contradictions are detected`() {
+        val validator = RealityValidator()
+        val fields    = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "must work offline",
+            "environment" to "cloud",
+            "resources"   to "team available"
+        )
+        val intent = ReconstructionEngine().reconstruct(fields, relevantEvidence())
+        val result = validator.validate(intent)
+        assertFalse(result.passed)
+        assertTrue(result.issues.any { it.contains("contradiction") })
+        assertTrue(result.contradictionReport.hasContradictions)
+    }
+
+    @Test
+    fun `IrsOrchestrator halts at REALITY_VALIDATION with REALITY_UNVERIFIABLE for contradictory intent`() {
+        val orchestrator = IrsOrchestrator()
+        val fields = mapOf(
+            "objective"   to "Build app",
+            "constraints" to "must work offline",
+            "environment" to "cloud",
+            "resources"   to "team available"
+        )
+        orchestrator.createSession("s-rv-fail", fields, relevantEvidence(), majorityConfig())
+
+        orchestrator.step("s-rv-fail")  // GAP_DETECTION
+        orchestrator.step("s-rv-fail")  // SCOUTING
+        orchestrator.step("s-rv-fail")  // EVIDENCE_VALIDATION
+
+        val rvStep = orchestrator.step("s-rv-fail")  // REALITY_VALIDATION
+        assertTrue(rvStep.terminal)
+        assertEquals(IrsStage.REALITY_VALIDATION, rvStep.executedStage)
+        val rejected = rvStep.orchestratorResult as? OrchestratorResult.Rejected
+        assertNotNull(rejected)
+        assertEquals("REALITY_UNVERIFIABLE", rejected!!.reason)
+        assertTrue(rejected.details.any { it.contains("contradiction") })
+    }
+
+    @Test
+    fun `IrsOrchestrator REALITY_VALIDATION stage is included in full pipeline history`() {
+        val orchestrator = IrsOrchestrator()
+        orchestrator.createSession("s-rv-hist", fullFields(), relevantEvidence(), majorityConfig())
+
+        repeat(8) { orchestrator.step("s-rv-hist") }
+
+        val history = orchestrator.replayHistory("s-rv-hist")
+        val stages  = history.map { it.stage }
+        assertTrue(stages.contains(IrsStage.REALITY_VALIDATION))
+        val rvIndex = stages.indexOf(IrsStage.REALITY_VALIDATION)
+        val evIndex = stages.indexOf(IrsStage.EVIDENCE_VALIDATION)
+        val swIndex = stages.indexOf(IrsStage.SWARM_VALIDATION)
+        // REALITY_VALIDATION must come after EVIDENCE_VALIDATION and before SWARM_VALIDATION
+        assertTrue(rvIndex > evIndex)
+        assertTrue(rvIndex < swIndex)
     }
 }
 

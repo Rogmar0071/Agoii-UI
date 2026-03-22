@@ -1,5 +1,6 @@
 package com.agoii.mobile.irs
 
+import com.agoii.mobile.irs.reality.RealityValidator
 import com.agoii.mobile.irs.scout.ConstraintScout
 import com.agoii.mobile.irs.scout.DependencyScout
 import com.agoii.mobile.irs.scout.EnvironmentScout
@@ -14,13 +15,15 @@ import com.agoii.mobile.irs.scout.EnvironmentScout
  *   step 3 → ScoutOrchestrator + KnowledgeScouts (EnvironmentScout, DependencyScout, ConstraintScout)
  *   step 4 → EvidenceValidator
  *              → if invalid → HALT (Rejected / EVIDENCE_INVALID)
- *   step 5 → SwarmValidator
+ *   step 5 → RealityValidator (RealityKnowledgeGateway + CredibilityScorer + ContradictionDetector)
+ *              → if unverifiable → HALT (Rejected / REALITY_UNVERIFIABLE)
+ *   step 6 → SwarmValidator
  *              → if inconsistent → HALT (Rejected / UNSTABLE)
- *   step 6 → SimulationEngine
+ *   step 7 → SimulationEngine
  *              → if infeasible   → HALT (Rejected / INFEASIBLE)
- *   step 7 → PCCVValidator
+ *   step 8 → PCCVValidator
  *              → if fail         → HALT (Rejected / PCCV_FAIL)
- *   step 8 → CertificationEmitter → terminal (Certified)
+ *   step 9 → CertificationEmitter → terminal (Certified)
  *
  * Rules:
  *  - [step] executes EXACTLY one stage per call; no internal loops.
@@ -37,6 +40,7 @@ class IrsOrchestrator(
     private val dependencyScout:      DependencyScout       = DependencyScout(),
     private val constraintScout:      ConstraintScout       = ConstraintScout(),
     private val evidenceValidator:    EvidenceValidator     = EvidenceValidator(),
+    private val realityValidator:     RealityValidator      = RealityValidator(),
     private val swarmValidator:       SwarmValidator        = SwarmValidator(),
     private val simulationEngine:     SimulationEngine      = SimulationEngine(),
     private val pcCVValidator:        PCCVValidator         = PCCVValidator()
@@ -107,14 +111,15 @@ class IrsOrchestrator(
     private fun nextStage(session: IrsSession): IrsStage {
         val lastStage = session.history.lastOrNull()?.stage ?: return IrsStage.GAP_DETECTION
         return when (lastStage) {
-            IrsStage.RECONSTRUCTION    -> IrsStage.GAP_DETECTION
-            IrsStage.GAP_DETECTION     -> IrsStage.SCOUTING
-            IrsStage.SCOUTING          -> IrsStage.EVIDENCE_VALIDATION
-            IrsStage.EVIDENCE_VALIDATION -> IrsStage.SWARM_VALIDATION
-            IrsStage.SWARM_VALIDATION  -> IrsStage.SIMULATION
-            IrsStage.SIMULATION        -> IrsStage.PCCV
-            IrsStage.PCCV              -> IrsStage.CERTIFICATION
-            IrsStage.CERTIFICATION     -> IrsStage.CERTIFICATION  // already terminal
+            IrsStage.RECONSTRUCTION      -> IrsStage.GAP_DETECTION
+            IrsStage.GAP_DETECTION       -> IrsStage.SCOUTING
+            IrsStage.SCOUTING            -> IrsStage.EVIDENCE_VALIDATION
+            IrsStage.EVIDENCE_VALIDATION -> IrsStage.REALITY_VALIDATION
+            IrsStage.REALITY_VALIDATION  -> IrsStage.SWARM_VALIDATION
+            IrsStage.SWARM_VALIDATION    -> IrsStage.SIMULATION
+            IrsStage.SIMULATION          -> IrsStage.PCCV
+            IrsStage.PCCV                -> IrsStage.CERTIFICATION
+            IrsStage.CERTIFICATION       -> IrsStage.CERTIFICATION  // already terminal
         }
     }
 
@@ -208,7 +213,47 @@ class IrsOrchestrator(
                 }
             }
 
-            // ── Step 5: Swarm validation ──────────────────────────────────────
+            // ── Step 5: Reality validation ────────────────────────────────────
+            IrsStage.REALITY_VALIDATION -> {
+                val intent    = stateManager.currentIntent(sessionId)!!
+                val rvResult  = realityValidator.validate(intent)
+                if (!rvResult.passed) {
+                    val updatedSession = stateManager.append(
+                        sessionId               = sessionId,
+                        snapshot                = IrsSnapshot(
+                            stage = stage,
+                            orchestratorResult = OrchestratorResult.Rejected(
+                                reason  = "REALITY_UNVERIFIABLE",
+                                details = rvResult.issues
+                            )
+                        ),
+                        realityValidationResult = rvResult
+                    )
+                    StepResult(
+                        executedStage      = stage,
+                        session            = updatedSession,
+                        terminal           = true,
+                        orchestratorResult = OrchestratorResult.Rejected(
+                            reason  = "REALITY_UNVERIFIABLE",
+                            details = rvResult.issues
+                        )
+                    )
+                } else {
+                    val updatedSession = stateManager.append(
+                        sessionId               = sessionId,
+                        snapshot                = IrsSnapshot(stage = stage, orchestratorResult = null),
+                        realityValidationResult = rvResult
+                    )
+                    StepResult(
+                        executedStage      = stage,
+                        session            = updatedSession,
+                        terminal           = false,
+                        orchestratorResult = null
+                    )
+                }
+            }
+
+            // ── Step 6: Swarm validation ──────────────────────────────────────
             IrsStage.SWARM_VALIDATION -> {
                 val intent      = stateManager.currentIntent(sessionId)!!
                 val swarmResult = swarmValidator.validate(intent, session.swarmConfig)
@@ -248,7 +293,7 @@ class IrsOrchestrator(
                 }
             }
 
-            // ── Step 6: Simulation ────────────────────────────────────────────
+            // ── Step 7: Simulation ────────────────────────────────────────────
             IrsStage.SIMULATION -> {
                 val intent    = stateManager.currentIntent(sessionId)!!
                 val simResult = simulationEngine.simulate(intent)
@@ -288,7 +333,7 @@ class IrsOrchestrator(
                 }
             }
 
-            // ── Step 7: PCCV ──────────────────────────────────────────────────
+            // ── Step 8: PCCV ──────────────────────────────────────────────────
             IrsStage.PCCV -> {
                 val intent       = stateManager.currentIntent(sessionId)!!
                 val swarmResult  = stateManager.swarmResult(sessionId)
@@ -321,7 +366,7 @@ class IrsOrchestrator(
                 }
             }
 
-            // ── Step 8: Certification ─────────────────────────────────────────
+            // ── Step 9: Certification ─────────────────────────────────────────
             IrsStage.CERTIFICATION -> {
                 terminal(sessionId, stage, OrchestratorResult.Certified)
             }

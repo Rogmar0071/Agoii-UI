@@ -77,6 +77,85 @@ data class EvidenceValidationResult(
     val issues: List<String>
 )
 
+// ─── Reality Validation ───────────────────────────────────────────────────────
+
+/**
+ * A single traceable fact retrieved from the reality knowledge gateway.
+ *
+ * @property domain          The knowledge domain this fact belongs to (e.g. "environment", "dependency").
+ * @property claim           Human-readable factual statement.
+ * @property credibilityScore How credible this fact is; 0.0 = unreliable, 1.0 = fully authoritative.
+ * @property source          Identifier of the knowledge source that provided this fact.
+ */
+data class KnowledgeFact(
+    val domain:           String,
+    val claim:            String,
+    val credibilityScore: Double,
+    val source:           String
+) {
+    init {
+        require(credibilityScore in 0.0..1.0) {
+            "credibilityScore must be in [0.0, 1.0], got $credibilityScore"
+        }
+    }
+}
+
+/**
+ * Output produced by the credibility scorer.
+ *
+ * @property overallScore        Weighted average credibility across all mandatory fields (0.0–1.0).
+ * @property fieldScores         Per-field credibility score keyed by field name.
+ * @property lowCredibilityFields Names of fields whose score is below the acceptance threshold (< 0.5).
+ */
+data class CredibilityReport(
+    val overallScore:         Double,
+    val fieldScores:          Map<String, Double>,
+    val lowCredibilityFields: List<String>
+) {
+    /** true when [overallScore] is ≥ 0.5 and no individual field is below the threshold. */
+    val isAcceptable: Boolean get() =
+        overallScore >= 0.5 && lowCredibilityFields.isEmpty()
+}
+
+/**
+ * A single contradiction detected between two intent fields or evidence sources.
+ *
+ * @property fieldA      First field involved in the contradiction.
+ * @property fieldB      Second field involved in the contradiction.
+ * @property description Human-readable description of why these values conflict.
+ */
+data class Contradiction(
+    val fieldA:      String,
+    val fieldB:      String,
+    val description: String
+)
+
+/**
+ * Output produced by the contradiction detector.
+ *
+ * @property hasContradictions true when at least one contradiction was found.
+ * @property contradictions    All detected contradictions (empty when [hasContradictions] = false).
+ */
+data class ContradictionReport(
+    val hasContradictions: Boolean,
+    val contradictions:    List<Contradiction>
+)
+
+/**
+ * Terminal output of the REALITY_VALIDATION stage.
+ *
+ * @property passed               true only when credibility is acceptable AND no contradictions exist.
+ * @property credibilityReport    Detailed per-field credibility scores.
+ * @property contradictionReport  Detected cross-field contradictions.
+ * @property issues               All failure descriptions collected during validation.
+ */
+data class RealityValidationResult(
+    val passed:              Boolean,
+    val credibilityReport:   CredibilityReport,
+    val contradictionReport: ContradictionReport,
+    val issues:              List<String>
+)
+
 // ─── Intent ──────────────────────────────────────────────────────────────────
 
 /**
@@ -184,6 +263,7 @@ enum class IrsStage {
     GAP_DETECTION,
     SCOUTING,
     EVIDENCE_VALIDATION,
+    REALITY_VALIDATION,
     SWARM_VALIDATION,
     SIMULATION,
     PCCV,
