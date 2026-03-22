@@ -1,5 +1,11 @@
 package com.agoii.mobile.core
 
+import com.agoii.mobile.governance.ContractDescriptor
+import com.agoii.mobile.governance.ContractSurfaceLayer
+import com.agoii.mobile.governance.Outcome
+import com.agoii.mobile.governance.StateSurfaceMirror
+import com.agoii.mobile.governance.SurfaceType
+
 /**
  * Governor — the ONLY execution authority in the system.
  *
@@ -9,6 +15,7 @@ package com.agoii.mobile.core
  *  - Appends EXACTLY ONE event per invocation (or zero if waiting/completed).
  *  - Never mutates state directly.
  *  - Stops and returns WAITING_FOR_APPROVAL when the last event is contracts_ready.
+ *  - Contract issuance is gated by SSM state and CSL validation; returns DRIFT on failure.
  *
  * Full execution lifecycle (one governor call per arrow):
  *   execution_started
@@ -25,7 +32,21 @@ package com.agoii.mobile.core
  */
 class Governor(private val eventStore: EventRepository) {
 
+    private val ssm = StateSurfaceMirror()
+    private val csl = ContractSurfaceLayer()
+
+    init {
+        ssm.initialize()
+        ssm.activateSurface(SurfaceType.LG)
+    }
+
     companion object {
+        /**
+         * Fixed validation capacity — deterministic baseline for CSL evaluation.
+         * Must not be derived dynamically or set to total * N.
+         */
+        const val VC = 5
+
         /**
          * Defines every legal automatic single-step transition driven by the governor.
          * User-driven transitions (intent_submitted, contracts_approved) are NOT listed here
@@ -53,7 +74,9 @@ class Governor(private val eventStore: EventRepository) {
         /** Execution is fully complete (assembly_completed reached). */
         COMPLETED,
         /** Ledger is empty or in an unknown terminal state. */
-        NO_EVENT
+        NO_EVENT,
+        /** Contract issuance blocked by SSM or CSL gate. */
+        DRIFT
     }
 
     fun runGovernor(projectId: String): GovernorResult {
@@ -73,6 +96,7 @@ class Governor(private val eventStore: EventRepository) {
             // ── execution_started → start the first contract ──────────────────────
             // Reads total from replay so the value is ledger-derived, not inferred.
             lastType == EventTypes.EXECUTION_STARTED -> {
+                if (!canIssue(1)) return GovernorResult.DRIFT
                 val total = Replay(eventStore).replay(projectId).totalContracts
                 eventStore.appendEvent(
                     projectId, EventTypes.CONTRACT_STARTED,
@@ -108,6 +132,7 @@ class Governor(private val eventStore: EventRepository) {
                 val total    = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
                 if (position < total) {
                     val nextPosition = position + 1
+                    if (!canIssue(nextPosition)) return GovernorResult.DRIFT
                     eventStore.appendEvent(
                         projectId, EventTypes.CONTRACT_STARTED,
                         mapOf(
@@ -135,6 +160,29 @@ class Governor(private val eventStore: EventRepository) {
 
             else -> GovernorResult.NO_EVENT
         }
+    }
+
+    /**
+     * Single gate function — the only path to contract issuance.
+     * Returns false (blocking issuance) if:
+     *  - SSM is not initialized
+     *  - LG surface is not active
+     *  - CSL evaluation rejects the contract at the given position
+     */
+    private fun canIssue(position: Int): Boolean {
+        if (!ssm.isInitialized()) return false
+        if (!ssm.getActiveSurfaces().contains(SurfaceType.LG)) return false
+
+        val result = csl.evaluate(
+            ContractDescriptor(
+                surface = SurfaceType.LG,
+                executionCount = position,
+                conditionCount = 0,
+                validationCapacity = VC
+            )
+        )
+
+        return result.outcome == Outcome.ALLOWED
     }
 
     private fun buildPayload(nextType: String, triggerEvent: Event): Map<String, Any> =
