@@ -58,15 +58,15 @@ class ContractModuleUI {
     }
 
     private fun deriveTotalCount(state: UIState): Int {
-        val progressDenominator = if (state.progress > 0f && state.progress < 1f) {
-            deriveCompletedCount(state).toFloat() / state.progress
-        } else if (state.isComplete) {
-            deriveCompletedCount(state).toFloat()
-        } else {
-            0f
+        val completed = deriveCompletedCount(state)
+        val progress = state.progress
+        // Guard against division by zero; derive total only when progress is a
+        // non-zero, non-unity fraction so the inverse is well-defined.
+        return when {
+            progress > 0f && progress < 1f -> (completed.toFloat() / progress).toInt()
+            state.isComplete && completed > 0 -> completed
+            else -> 0
         }
-        val derived = progressDenominator.toInt()
-        return if (derived > 0) derived else 0
     }
 
     private fun deriveStatus(position: Int, completedCount: Int, state: UIState): String = when {

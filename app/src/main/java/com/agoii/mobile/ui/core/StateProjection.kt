@@ -45,7 +45,10 @@ class StateProjection {
 
     private fun deriveActiveContractId(state: ReplayState): String? {
         return when (state.phase) {
-            EventTypes.CONTRACT_STARTED,
+            // contractsCompleted counts fully finished contracts, so the contract
+            // currently being executed is position (contractsCompleted + 1).
+            EventTypes.CONTRACT_STARTED -> "contract-${state.contractsCompleted + 1}"
+            // The contract that just finished is at position contractsCompleted.
             EventTypes.CONTRACT_COMPLETED -> "contract-${state.contractsCompleted}"
             else -> null
         }
