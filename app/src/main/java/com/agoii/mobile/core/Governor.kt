@@ -465,4 +465,24 @@ class Governor(
         is String -> value.toIntOrNull()
         else      -> null
     }
+
+    /**
+     * User-action entry trigger: appends an intent_submitted event.
+     * Governor is the sole authority allowed to write to the event ledger.
+     */
+    fun submitIntent(projectId: String, objective: String) {
+        eventStore.appendEvent(
+            projectId,
+            EventTypes.INTENT_SUBMITTED,
+            mapOf("objective" to objective)
+        )
+    }
+
+    /**
+     * User-action entry trigger: appends a contracts_approved event.
+     * Governor is the sole authority allowed to write to the event ledger.
+     */
+    fun approveContracts(projectId: String) {
+        eventStore.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
+    }
 }

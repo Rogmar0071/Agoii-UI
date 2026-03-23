@@ -21,6 +21,7 @@ class StructuralStateAwareness {
     fun governorStates(): Set<String> = setOf(
         "ADVANCED",
         "WAITING_FOR_APPROVAL",
+        "WAITING",
         "COMPLETED",
         "NO_EVENT",
         "DRIFT"
