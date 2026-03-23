@@ -5,7 +5,7 @@ import com.agoii.mobile.core.AuditResult
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventStore
 import com.agoii.mobile.core.EventTypes
-import com.agoii.mobile.core.Governor
+import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.core.LedgerAudit
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayState

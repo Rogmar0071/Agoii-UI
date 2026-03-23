@@ -1,5 +1,10 @@
-package com.agoii.mobile.core
+package com.agoii.mobile.governor
 
+import com.agoii.mobile.core.Event
+import com.agoii.mobile.core.EventRepository
+import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.core.Replay
+import com.agoii.mobile.core.ReplayState
 import com.agoii.mobile.governance.StateSurfaceMirror
 import com.agoii.mobile.governance.StructuralStateAwareness
 

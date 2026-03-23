@@ -1,7 +1,11 @@
-package com.agoii.mobile.core
+package com.agoii.mobile.governor
 
 import com.agoii.mobile.assembly.AssemblyValidator
 import com.agoii.mobile.contractor.ContractorRegistry
+import com.agoii.mobile.core.Event
+import com.agoii.mobile.core.EventRepository
+import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.core.Replay
 import com.agoii.mobile.decision.DecisionAction
 import com.agoii.mobile.decision.DecisionEngine
 import com.agoii.mobile.execution.ExecutionOrchestrator
