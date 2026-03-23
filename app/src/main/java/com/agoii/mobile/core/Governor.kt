@@ -171,7 +171,8 @@ class Governor(
             lastType == EventTypes.TASK_STARTED -> {
                 val contractId    = lastEvent.payload["contract_id"]  as? String ?: "unknown"
                 val contractorId  = lastEvent.payload["contractorId"] as? String ?: ""
-                val taskId        = lastEvent.payload["taskId"]       as? String ?: ""
+                val taskId        = lastEvent.payload["taskId"]       as? String
+                    ?: "$contractId-step1"
                 val position      = resolveInt(lastEvent.payload["position"]) ?: 1
                 val total         = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
                 val task          = taskForContract(contractId, position, taskId)
@@ -212,7 +213,8 @@ class Governor(
             lastType == EventTypes.TASK_COMPLETED -> {
                 val contractId   = lastEvent.payload["contract_id"]  as? String ?: "unknown"
                 val contractorId = lastEvent.payload["contractorId"] as? String ?: ""
-                val taskId       = lastEvent.payload["taskId"]       as? String ?: ""
+                val taskId       = lastEvent.payload["taskId"]       as? String
+                    ?: "$contractId-step1"
                 val position     = resolveInt(lastEvent.payload["position"]) ?: 1
                 val total        = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
                 val task         = taskForContract(contractId, position, taskId)
@@ -267,9 +269,10 @@ class Governor(
             // ── task_failed → retry / reassign / escalate ─────────────────────────
             // Governor owns the retry decision; RetryEngine is a pure decision engine.
             lastType == EventTypes.TASK_FAILED -> {
-                val taskId       = lastEvent.payload["taskId"]       as? String ?: ""
-                val contractorId = lastEvent.payload["contractorId"] as? String ?: ""
                 val contractId   = lastEvent.payload["contract_id"]  as? String ?: "unknown"
+                val taskId       = lastEvent.payload["taskId"]       as? String
+                    ?: "$contractId-step1"
+                val contractorId = lastEvent.payload["contractorId"] as? String ?: ""
                 val position     = resolveInt(lastEvent.payload["position"]) ?: 1
                 val total        = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
                 val task         = taskForContract(contractId, position, taskId)
@@ -431,7 +434,7 @@ class Governor(
         position:   Int,
         taskId:     String = "$contractId-step1"
     ): Task = Task(
-        taskId               = taskId.ifEmpty { "$contractId-step1" },
+        taskId               = taskId,
         contractReference    = contractId,
         stepReference        = 1,
         module               = "CORE",

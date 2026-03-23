@@ -724,8 +724,11 @@ class CoreTest {
      */
     private fun registryWithContractor(): ContractorRegistry {
         val cap = ContractorCapabilityVector(
-            constraintObedience = 3, structuralAccuracy = 3,
-            driftScore = 0, complexityCapacity = 3, reliability = 3
+            constraintObedience = 3,
+            structuralAccuracy  = 3,
+            driftScore          = 0,
+            complexityCapacity  = 3,
+            reliability         = 3
         )
         val profile = ContractorProfile(
             id                = "test-contractor",
