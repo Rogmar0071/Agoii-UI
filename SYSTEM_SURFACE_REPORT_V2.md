@@ -86,19 +86,15 @@ No raw state is rendered directly. No formatting occurs inside the UI layer. No 
 
 ## SECTION 4 — MUTATION AUTHORITY
 
-**VERDICT: CORRECTIONS_REQUIRED (dead code risk)**
+**VERDICT: PASS**
 
 | Caller | Calls appendEvent? | Status |
 |---|---|---|
-| `governor/Governor.kt` | ✅ Yes — sole active mutation authority | COMPLIANT |
-| `execution/ExecutionEventEmitter.kt` | ⚠️ Yes — but **never instantiated or called** anywhere | DEAD CODE (risk) |
+| `governor/Governor.kt` | ✅ Yes — sole mutation authority | COMPLIANT |
 | `bridge/CoreBridge.kt` | ❌ No direct writes | COMPLIANT |
 | Any other module | ❌ No | COMPLIANT |
 
-`ExecutionEventEmitter` is defined with direct `eventStore.appendEvent` calls but has
-**zero callers** across the entire codebase. It is unreachable dead code. If it were
-ever wired in, it would violate the mutation authority rule (only Governor should call
-`appendEvent`). This must be resolved.
+`ExecutionEventEmitter` has been deleted. All `appendEvent` calls reside exclusively inside `governor/Governor.kt`.
 
 ---
 
@@ -191,10 +187,9 @@ No UI duplication of formatting. No parallel output pipelines. No multiple mappe
 
 | Risk | Location | Severity | Description |
 |---|---|---|---|
-| **Dead code — mutation bypass risk** | `execution/ExecutionEventEmitter.kt` | HIGH | Defines direct `eventStore.appendEvent` calls but is never instantiated or called. If wired in, violates mutation authority. Must be removed or documented as Governor-delegated only. |
 | **Unused bridge** | `interaction/SimulationInteractionBridge.kt` | LOW | `SimulationInteractionBridge.map()` is a pass-through that is never called. The `SimulationView` flows directly through `InteractionInput.SimulationInput`. Dead code but not a logic risk. |
-| **ContractorEventEmitter** | `contractor/ContractorEventEmitter.kt` | LOW | Not audited for `appendEvent` calls. Pending verification. |
-| **TaskEventEmitter** | `tasks/TaskEventEmitter.kt` | LOW | Not audited for `appendEvent` calls. Pending verification. |
+| **ContractorEventEmitter** | `contractor/ContractorEventEmitter.kt` | NONE | Audited — no `appendEvent` calls. Does not violate mutation authority. |
+| **TaskEventEmitter** | `tasks/TaskEventEmitter.kt` | NONE | Audited — no `appendEvent` calls. Does not violate mutation authority. |
 
 ---
 
@@ -203,8 +198,7 @@ No UI duplication of formatting. No parallel output pipelines. No multiple mappe
 The build failure has been resolved: `LedgerAudit.kt` no longer references
 `Governor` in any compilable form. Core package has zero module imports.
 
-Section 4 (Mutation Authority) identifies `ExecutionEventEmitter` as dead code that
-would violate the mutation authority rule if activated. This requires resolution before
-the proof phase can begin.
+Mutation authority is fully enforced: `ExecutionEventEmitter.kt` has been deleted;
+`appendEvent` is now called exclusively inside `governor/Governor.kt`.
 
-CORRECTIONS_REQUIRED
+SYSTEM_LOCKED_FOR_PROOF

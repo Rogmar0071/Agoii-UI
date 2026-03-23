@@ -9,7 +9,6 @@ import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.execution.ContractorExecutionInput
 import com.agoii.mobile.execution.ContractorExecutor
-import com.agoii.mobile.execution.ExecutionEventEmitter
 import com.agoii.mobile.execution.ExecutionOrchestrator
 import com.agoii.mobile.execution.ExecutionResult
 import com.agoii.mobile.execution.ExecutionStatus
@@ -38,7 +37,6 @@ import org.junit.Test
  *  - ContractorExecutor    (success / failure outputs)
  *  - ResultValidator       (VALIDATED / FAILED verdicts, rule evaluation)
  *  - RetryEngine           (RETRY → REASSIGN → ESCALATE chain)
- *  - ExecutionEventEmitter (correct event types appended to store)
  *  - ExecutionOrchestrator (full step-by-step lifecycle, failure handling)
  *
  * All tests run on the JVM without an Android device.
@@ -314,56 +312,6 @@ class ExecutionEngineTest {
         val outcome = engine.evaluate(task, primary, attemptCount = 3)
         assertEquals(RetryDecision.REASSIGN, outcome.decision)
         assertEquals("replacement", outcome.assignedContractor?.id)
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // ExecutionEventEmitter
-    // ══════════════════════════════════════════════════════════════════════════
-
-    @Test
-    fun `emitter - taskAssigned appends correct event type`() {
-        val emitter = ExecutionEventEmitter(store)
-        emitter.taskAssigned("proj-1", "task-1", "contractor-a")
-        val events = store.loadEvents("proj-1")
-        assertEquals(1, events.size)
-        assertEquals(EventTypes.TASK_ASSIGNED, events[0].type)
-        assertEquals("task-1", events[0].payload["taskId"])
-        assertEquals("contractor-a", events[0].payload["contractorId"])
-    }
-
-    @Test
-    fun `emitter - taskValidated appends correct event type`() {
-        val emitter = ExecutionEventEmitter(store)
-        emitter.taskValidated("proj-1", "task-1")
-        val events = store.loadEvents("proj-1")
-        assertEquals(EventTypes.TASK_VALIDATED, events[0].type)
-    }
-
-    @Test
-    fun `emitter - taskFailed appends correct event type with reason`() {
-        val emitter = ExecutionEventEmitter(store)
-        emitter.taskFailed("proj-1", "task-1", "contractor-a", "something broke")
-        val events = store.loadEvents("proj-1")
-        assertEquals(EventTypes.TASK_FAILED, events[0].type)
-        assertEquals("something broke", events[0].payload["reason"])
-    }
-
-    @Test
-    fun `emitter - contractorReassigned appends correct event with both contractor ids`() {
-        val emitter = ExecutionEventEmitter(store)
-        emitter.contractorReassigned("proj-1", "task-1", "old-c", "new-c")
-        val events = store.loadEvents("proj-1")
-        assertEquals(EventTypes.CONTRACTOR_REASSIGNED, events[0].type)
-        assertEquals("old-c", events[0].payload["previousContractorId"])
-        assertEquals("new-c", events[0].payload["newContractorId"])
-    }
-
-    @Test
-    fun `emitter - contractFailed appends correct event type`() {
-        val emitter = ExecutionEventEmitter(store)
-        emitter.contractFailed("proj-1", "task-1", "all retries exhausted")
-        val events = store.loadEvents("proj-1")
-        assertEquals(EventTypes.CONTRACT_FAILED, events[0].type)
     }
 
     // ══════════════════════════════════════════════════════════════════════════
