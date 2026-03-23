@@ -23,7 +23,6 @@ import com.agoii.mobile.bridge.CoreBridge
 import com.agoii.mobile.core.AuditResult
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventTypes
-import com.agoii.mobile.core.Governor
 import com.agoii.mobile.core.ReplayState
 import com.agoii.mobile.core.ReplayVerification
 import com.agoii.mobile.interaction.InteractionContract
@@ -65,7 +64,6 @@ fun ProjectScreen(projectId: String) {
     var verification      by remember { mutableStateOf<ReplayVerification?>(null) }
     var interactionResult by remember { mutableStateOf<InteractionResult?>(null) }
     var inputText         by remember { mutableStateOf("") }
-    var statusMsg         by remember { mutableStateOf("") }
 
     val listState = rememberLazyListState()
 
@@ -107,21 +105,8 @@ fun ProjectScreen(projectId: String) {
         Header(projectId = projectId, auditResult = auditResult)
 
         // ── STATE PANEL ─────────────────────────────────────────────────────
-        StatePanel(state = replayState, verification = verification,
+        StatePanel(verification = verification,
                    interactionResult = interactionResult)
-
-        // ── STATUS MESSAGE ──────────────────────────────────────────────────
-        if (statusMsg.isNotBlank()) {
-            Text(
-                text     = statusMsg,
-                color    = Primary,
-                fontSize = 12.sp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp),
-                textAlign = TextAlign.Center
-            )
-        }
 
         // ── EVENT LIST ──────────────────────────────────────────────────────
         LazyColumn(
@@ -158,20 +143,11 @@ fun ProjectScreen(projectId: String) {
         ActionBar(
             showApprove   = showApprove,
             onRunStep     = {
-                val result = bridge.runGovernorStep(projectId)
-                statusMsg = when (result) {
-                    Governor.GovernorResult.ADVANCED             -> "Governor advanced."
-                    Governor.GovernorResult.WAITING_FOR_APPROVAL -> "Waiting for approval."
-                    Governor.GovernorResult.WAITING              -> "Waiting for a contractor."
-                    Governor.GovernorResult.COMPLETED            -> "Execution complete."
-                    Governor.GovernorResult.NO_EVENT             -> "No event to process."
-                    Governor.GovernorResult.DRIFT                -> "Governor drift detected."
-                }
+                bridge.runGovernorStep(projectId)
                 reload()
             },
             onApprove     = {
                 bridge.approveContracts(projectId)
-                statusMsg = "Contracts approved."
                 reload()
             }
         )
@@ -185,7 +161,6 @@ fun ProjectScreen(projectId: String) {
                 if (objective.isNotEmpty()) {
                     bridge.submitIntent(projectId, objective)
                     inputText = ""
-                    statusMsg = "Intent submitted."
                     reload()
                 }
             }
@@ -238,7 +213,7 @@ private fun Header(projectId: String, auditResult: AuditResult?) {
 // ── STATE PANEL ──────────────────────────────────────────────────────────────
 
 @Composable
-private fun StatePanel(state: ReplayState?, verification: ReplayVerification?,
+private fun StatePanel(verification: ReplayVerification?,
                        interactionResult: InteractionResult?) {
     Column(
         modifier = Modifier
@@ -256,12 +231,12 @@ private fun StatePanel(state: ReplayState?, verification: ReplayVerification?,
                 fontSize = 11.sp
             )
         } else {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                StateItem("phase",          state?.phase ?: "idle")
-                StateItem("contracts",      if (state != null) "${state.contractsCompleted}/${state.totalContracts}" else "0/0")
-                StateItem("exec_started",   state?.executionStarted?.toString() ?: "false")
-                StateItem("exec_completed", state?.executionCompleted?.toString() ?: "false")
-            }
+            Text(
+                text     = "Loading…",
+                color    = OnSurface.copy(alpha = 0.4f),
+                style    = MonoStyle,
+                fontSize = 11.sp
+            )
         }
         if (verification != null) {
             Spacer(modifier = Modifier.height(4.dp))
@@ -282,28 +257,19 @@ private fun StatePanel(state: ReplayState?, verification: ReplayVerification?,
     Divider(color = Surface, thickness = 1.dp)
 }
 
-@Composable
-private fun StateItem(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = label, color = OnSurface.copy(alpha = 0.5f), fontSize = 10.sp)
-        Text(text = value, color = OnBackground,                 fontSize = 12.sp, style = LabelStyle)
-    }
-}
-
 // ── EVENT ROW ────────────────────────────────────────────────────────────────
 
 @Composable
 private fun EventRow(event: Event) {
-    val bubbleColor = eventBubbleColor(event.type)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(bubbleColor.copy(alpha = 0.15f), shape = RoundedCornerShape(6.dp))
-            .border(1.dp, bubbleColor.copy(alpha = 0.4f), shape = RoundedCornerShape(6.dp))
+            .background(EventSystem.copy(alpha = 0.15f), shape = RoundedCornerShape(6.dp))
+            .border(1.dp, EventSystem.copy(alpha = 0.4f), shape = RoundedCornerShape(6.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         Column {
-            Text(text = event.type, color = bubbleColor, style = MonoStyle, fontSize = 12.sp)
+            Text(text = event.type, color = EventSystem, style = MonoStyle, fontSize = 12.sp)
             if (event.payload.isNotEmpty()) {
                 Text(
                     text  = event.payload.entries.joinToString(" | ") { "${it.key}=${it.value}" },
@@ -314,14 +280,6 @@ private fun EventRow(event: Event) {
             }
         }
     }
-}
-
-private fun eventBubbleColor(type: String): Color = when (type) {
-    EventTypes.ASSEMBLY_COMPLETED                                                   -> EventComplete
-    EventTypes.CONTRACTS_APPROVED, EventTypes.CONTRACTS_READY                      -> EventApproval
-    EventTypes.CONTRACT_STARTED, EventTypes.CONTRACT_COMPLETED,
-    EventTypes.EXECUTION_STARTED                                                    -> EventExecution
-    else                                                                            -> EventSystem
 }
 
 // ── ACTION BAR ───────────────────────────────────────────────────────────────

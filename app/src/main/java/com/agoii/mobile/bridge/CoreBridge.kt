@@ -40,13 +40,9 @@ class CoreBridge(context: Context) {
     private val buildExecutor = BuildExecutor()
     private val irsOrchestrator = IrsOrchestrator()
 
-    /** Append an intent_submitted event. Called when the user sends an objective. */
+    /** Append an intent_submitted event via Governor (sole mutation authority). */
     fun submitIntent(projectId: String, objective: String) {
-        eventStore.appendEvent(
-            projectId,
-            "intent_submitted",
-            mapOf("objective" to objective)
-        )
+        governor.submitIntent(projectId, objective)
     }
 
     /**
@@ -89,9 +85,9 @@ class CoreBridge(context: Context) {
         return match?.get("name")?.toString() ?: contractId
     }
 
-    /** Append a contracts_approved event. Called when the user taps APPROVE. */
+    /** Append a contracts_approved event via Governor (sole mutation authority). */
     fun approveContracts(projectId: String) {
-        eventStore.appendEvent(projectId, "contracts_approved", emptyMap())
+        governor.approveContracts(projectId)
     }
 
     /** Load all events from the ledger (read-only). */
