@@ -27,9 +27,13 @@ class AssemblyTest {
     // ── helpers ───────────────────────────────────────────────────────────────
 
     private fun store(events: List<Event> = emptyList()): EventRepository {
-        val repo = EventRepository()
-        events.forEach { repo.appendEvent("proj", it.type, it.payload) }
-        return repo
+        val ledger = events.toMutableList()
+        return object : EventRepository {
+            override fun appendEvent(projectId: String, type: String, payload: Map<String, Any>) {
+                ledger.add(Event(type, payload))
+            }
+            override fun loadEvents(projectId: String): List<Event> = ledger.toList()
+        }
     }
 
     /** Builds a minimal but complete single-contract execution ledger. */
@@ -206,105 +210,6 @@ class AssemblyTest {
     }
 
     // ── UI integration: assembly visibility in StateProjection ────────────────
-
-    @Test
-    fun `StateProjection exposes assemblyStarted from ReplayState`() {
-        val events = singleContractLedger()   // ends at assembly_validated
-        val ui = StateProjection().project(replayStateAt(events))
-        assertTrue(ui.assemblyStarted)
-        assertTrue(ui.assemblyValidated)
-        assertFalse(ui.assemblyCompleted)
-    }
-
-    @Test
-    fun `StateProjection assemblyCompleted true when assembly_completed reached`() {
-        val events = singleContractLedger() + Event(EventTypes.ASSEMBLY_COMPLETED, emptyMap())
-        val ui = StateProjection().project(replayStateAt(events))
-        assertTrue(ui.assemblyStarted)
-        assertTrue(ui.assemblyValidated)
-        assertTrue(ui.assemblyCompleted)
-        assertTrue(ui.isComplete)
-    }
-
-    @Test
-    fun `StateProjection assembly flags all false on idle state`() {
-        val idleState = ReplayState(
-            phase = "idle",
-            contractsCompleted = 0,
-            totalContracts = 0,
-            executionStarted = false,
-            executionCompleted = false,
-            assemblyStarted = false,
-            assemblyValidated = false,
-            objective = null,
-            assemblyCompleted = false
-        )
-        val ui = StateProjection().project(idleState)
-        assertFalse(ui.assemblyStarted)
-        assertFalse(ui.assemblyValidated)
-        assertFalse(ui.assemblyCompleted)
-    }
-
-    // ── LedgerViewEngine: assembly visibility ─────────────────────────────────
-
-    @Test
-    fun `LedgerViewEngine assembly properties are false before any render`() {
-        val engine = LedgerViewEngine()
-        assertFalse(engine.assemblyStarted)
-        assertFalse(engine.assemblyValidated)
-        assertFalse(engine.assemblyCompleted)
-    }
-
-    @Test
-    fun `LedgerViewEngine reflects assembly state after render`() {
-        val engine = LedgerViewEngine()
-        val state = replayStateAt(singleContractLedger())  // assembly_started + validated
-        engine.render(state)
-        assertTrue(engine.assemblyStarted)
-        assertTrue(engine.assemblyValidated)
-        assertFalse(engine.assemblyCompleted)
-    }
-
-    @Test
-    fun `LedgerViewEngine assemblyCompleted true when full assembly reached`() {
-        val engine = LedgerViewEngine()
-        val events = singleContractLedger() + Event(EventTypes.ASSEMBLY_COMPLETED, emptyMap())
-        engine.render(replayStateAt(events))
-        assertTrue(engine.assemblyCompleted)
-    }
-}
-
-    // ── ReplayState: assemblyCompleted is derived from ledger ─────────────────
-
-    @Test
-    fun `ReplayState assemblyCompleted is false before assembly_completed event`() {
-        val state = Replay(store()).deriveState(singleContractLedger())
-        // ledger ends at assembly_validated — assemblyCompleted must be false
-        assertFalse(state.assemblyCompleted)
-        assertTrue(state.assemblyStarted)
-        assertTrue(state.assemblyValidated)
-    }
-
-    @Test
-    fun `ReplayState assemblyCompleted is true after assembly_completed event`() {
-        val events = singleContractLedger() + Event(EventTypes.ASSEMBLY_COMPLETED, emptyMap())
-        val state = Replay(store()).deriveState(events)
-        assertTrue(state.assemblyCompleted)
-        assertEquals(EventTypes.ASSEMBLY_COMPLETED, state.phase)
-    }
-
-    @Test
-    fun `ReplayState assembly flags all false on empty ledger`() {
-        val state = Replay(store()).deriveState(emptyList())
-        assertFalse(state.assemblyStarted)
-        assertFalse(state.assemblyValidated)
-        assertFalse(state.assemblyCompleted)
-    }
-
-    // ── UI integration: assembly visibility in StateProjection ────────────────
-
-    private fun replayStateAt(events: List<Event>): ReplayState =
-        Replay(store()).deriveState(events)
 
     @Test
     fun `StateProjection exposes assemblyStarted from ReplayState`() {
