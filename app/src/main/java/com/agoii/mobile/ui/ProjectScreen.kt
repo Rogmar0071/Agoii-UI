@@ -26,6 +26,11 @@ import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.Governor
 import com.agoii.mobile.core.ReplayState
 import com.agoii.mobile.core.ReplayVerification
+import com.agoii.mobile.interaction.InteractionContract
+import com.agoii.mobile.interaction.InteractionEngine
+import com.agoii.mobile.interaction.InteractionResult
+import com.agoii.mobile.interaction.InteractionScope
+import com.agoii.mobile.interaction.OutputType
 import com.agoii.mobile.ui.theme.*
 
 /**
@@ -49,14 +54,16 @@ import com.agoii.mobile.ui.theme.*
 fun ProjectScreen(projectId: String) {
     val context = LocalContext.current
     val bridge  = remember { CoreBridge(context) }
+    val interactionEngine = remember { InteractionEngine() }
 
     // ── UI state — all derived from ledger, never directly mutated ──────────
-    var events       by remember { mutableStateOf(emptyList<Event>()) }
-    var replayState  by remember { mutableStateOf<ReplayState?>(null) }
-    var auditResult  by remember { mutableStateOf<AuditResult?>(null) }
-    var verification by remember { mutableStateOf<ReplayVerification?>(null) }
-    var inputText    by remember { mutableStateOf("") }
-    var statusMsg    by remember { mutableStateOf("") }
+    var events            by remember { mutableStateOf(emptyList<Event>()) }
+    var replayState       by remember { mutableStateOf<ReplayState?>(null) }
+    var auditResult       by remember { mutableStateOf<AuditResult?>(null) }
+    var verification      by remember { mutableStateOf<ReplayVerification?>(null) }
+    var interactionResult by remember { mutableStateOf<InteractionResult?>(null) }
+    var inputText         by remember { mutableStateOf("") }
+    var statusMsg         by remember { mutableStateOf("") }
 
     val listState = rememberLazyListState()
 
@@ -66,6 +73,17 @@ fun ProjectScreen(projectId: String) {
         replayState  = bridge.replayState(projectId)
         auditResult  = bridge.auditLedger(projectId)
         verification = bridge.verifyReplay(projectId)
+        interactionResult = replayState?.let { state ->
+            interactionEngine.execute(
+                InteractionContract(
+                    contractId = projectId,
+                    query      = "system state",
+                    scope      = InteractionScope.FULL_SYSTEM,
+                    outputType = OutputType.DETAILED
+                ),
+                state
+            )
+        }
     }
 
     // Initial load
@@ -86,7 +104,8 @@ fun ProjectScreen(projectId: String) {
         Header(projectId = projectId, auditResult = auditResult)
 
         // ── STATE PANEL ─────────────────────────────────────────────────────
-        StatePanel(state = replayState, verification = verification)
+        StatePanel(state = replayState, verification = verification,
+                   interactionResult = interactionResult)
 
         // ── STATUS MESSAGE ──────────────────────────────────────────────────
         if (statusMsg.isNotBlank()) {
@@ -216,7 +235,8 @@ private fun Header(projectId: String, auditResult: AuditResult?) {
 // ── STATE PANEL ──────────────────────────────────────────────────────────────
 
 @Composable
-private fun StatePanel(state: ReplayState?, verification: ReplayVerification?) {
+private fun StatePanel(state: ReplayState?, verification: ReplayVerification?,
+                       interactionResult: InteractionResult?) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -225,11 +245,20 @@ private fun StatePanel(state: ReplayState?, verification: ReplayVerification?) {
     ) {
         Text("STATE  (from replay)", color = OnSurface.copy(alpha = 0.6f), fontSize = 11.sp)
         Spacer(modifier = Modifier.height(4.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            StateItem("phase",               state?.phase ?: "idle")
-            StateItem("contracts",           if (state != null) "${state.contractsCompleted}/${state.totalContracts}" else "0/0")
-            StateItem("exec_started",        state?.executionStarted?.toString() ?: "false")
-            StateItem("exec_completed",      state?.executionCompleted?.toString() ?: "false")
+        if (interactionResult != null) {
+            Text(
+                text  = interactionResult.content,
+                color = OnBackground,
+                style = MonoStyle,
+                fontSize = 11.sp
+            )
+        } else {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                StateItem("phase",          state?.phase ?: "idle")
+                StateItem("contracts",      if (state != null) "${state.contractsCompleted}/${state.totalContracts}" else "0/0")
+                StateItem("exec_started",   state?.executionStarted?.toString() ?: "false")
+                StateItem("exec_completed", state?.executionCompleted?.toString() ?: "false")
+            }
         }
         if (verification != null) {
             Spacer(modifier = Modifier.height(4.dp))
