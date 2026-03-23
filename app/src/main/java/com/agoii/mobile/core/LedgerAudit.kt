@@ -22,6 +22,20 @@ data class AuditResult(
  */
 class LedgerAudit(private val eventStore: EventRepository) {
 
+    /**
+     * Fixed single-step transitions driven automatically by the governor.
+     * Defined here using core-only [EventTypes] constants so that [LedgerAudit]
+     * remains independent of the governor package.
+     */
+    private val validTransitions: Map<String, String> = mapOf(
+        EventTypes.INTENT_SUBMITTED    to EventTypes.CONTRACTS_GENERATED,
+        EventTypes.CONTRACTS_GENERATED to EventTypes.CONTRACTS_READY,
+        EventTypes.CONTRACTS_APPROVED  to EventTypes.EXECUTION_STARTED,
+        EventTypes.EXECUTION_COMPLETED to EventTypes.ASSEMBLY_STARTED,
+        EventTypes.ASSEMBLY_STARTED    to EventTypes.ASSEMBLY_VALIDATED,
+        EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED
+    )
+
     fun auditLedger(projectId: String): AuditResult {
         val events = eventStore.loadEvents(projectId)
         if (events.isEmpty()) {
@@ -62,7 +76,7 @@ class LedgerAudit(private val eventStore: EventRepository) {
 
     private fun isLegalTransition(from: String, to: String): Boolean {
         // Standard governor-driven single-step transitions (includes assembly pipeline)
-        if (Governor.VALID_TRANSITIONS[from] == to) return true
+        if (validTransitions[from] == to) return true
         // User-driven: approval after contracts are ready
         if (from == EventTypes.CONTRACTS_READY && to == EventTypes.CONTRACTS_APPROVED) return true
         // Governor: execution begins — start the first contract
