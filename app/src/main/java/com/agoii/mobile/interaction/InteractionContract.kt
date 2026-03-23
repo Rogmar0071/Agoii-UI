@@ -1,21 +1,29 @@
 package com.agoii.mobile.interaction
 
 /**
- * Describes a query against the ledger-derived state.
+ * Describes a query against either ledger-derived state or a simulation result.
  *
- * The UI creates one of these, passes it to [InteractionEngine.execute], and
- * renders the resulting [InteractionResult].  No business logic lives here.
+ * The UI creates one of these, passes it to [InteractionEngine.execute] or
+ * [InteractionEngine.executeSimulation], and renders the resulting [InteractionResult].
+ * No business logic lives here.
  *
- * @param contractId  Identifies this interaction (typically the project id).
- * @param query       Human-readable description of what is being asked.
- * @param scope       Which slice of [com.agoii.mobile.core.ReplayState] to expose.
- * @param outputType  How the response should be formatted.
+ * Source exclusivity rule: at most ONE of the two sources may be active per execution.
+ *  - Ledger-based path  ([InteractionEngine.execute]):           [simulationId] is null.
+ *  - Simulation-based path ([InteractionEngine.executeSimulation]): [simulationId] is set.
+ *
+ * @param contractId    Identifies this interaction (typically the project id).
+ * @param query         Human-readable description of what is being asked.
+ * @param scope         Which slice of the source to expose.
+ * @param outputType    How the response should be formatted.
+ * @param simulationId  Optional binding to a [com.agoii.mobile.simulation.SimulationResult].
+ *                      When non-null the contract targets the simulation path, not the ledger.
  */
 data class InteractionContract(
     val contractId: String,
     val query: String,
     val scope: InteractionScope,
-    val outputType: OutputType
+    val outputType: OutputType,
+    val simulationId: String? = null
 )
 
 /** Determines which portion of the replay state is extracted by [InteractionEngine]. */
