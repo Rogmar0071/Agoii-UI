@@ -11,6 +11,7 @@ import com.agoii.mobile.execution.ContractorExecutionInput
 import com.agoii.mobile.execution.ContractorExecutor
 import com.agoii.mobile.execution.ExecutionEventEmitter
 import com.agoii.mobile.execution.ExecutionOrchestrator
+import com.agoii.mobile.execution.ExecutionResult
 import com.agoii.mobile.execution.ExecutionStatus
 import com.agoii.mobile.execution.ResultValidator
 import com.agoii.mobile.execution.RetryDecision
@@ -366,130 +367,87 @@ class ExecutionEngineTest {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // ExecutionOrchestrator — happy-path lifecycle
+    // ExecutionOrchestrator — pure worker (no events, no lifecycle state)
     // ══════════════════════════════════════════════════════════════════════════
 
-    private fun buildOrchestrator(): ExecutionOrchestrator {
-        val emitter = ExecutionEventEmitter(store)
-        return ExecutionOrchestrator(
-            eventStore  = store,
-            registry    = registry,
-            emitter     = emitter
-        )
-    }
+    private fun buildOrchestrator(): ExecutionOrchestrator = ExecutionOrchestrator()
 
     private fun taskGraphWith(vararg tasks: Task) =
         TaskGraph(contractReference = "contract-1", tasks = tasks.toList())
 
     @Test
-    fun `orchestrator - NO_TASKS when graph is empty`() {
-        val orch = buildOrchestrator()
-        val result = orch.step("proj", taskGraphWith())
-        assertEquals(com.agoii.mobile.execution.ExecutionStepResult.NO_TASKS, result)
-    }
-
-    @Test
-    fun `orchestrator - WAITING when no contractor available`() {
-        val orch = buildOrchestrator()
-        val task = simpleTask(taskId = "task-1")
-        val result = orch.step("proj", taskGraphWith(task))
-        assertEquals(com.agoii.mobile.execution.ExecutionStepResult.WAITING, result)
-    }
-
-    @Test
-    fun `orchestrator - full happy-path lifecycle produces validated terminal state`() {
+    fun `orchestrator - execute returns success for capable contractor`() {
         val contractor = verifiedProfile()
-        registry.registerVerified(contractor)
+        val orch       = buildOrchestrator()
+        val task       = simpleTask(taskId = "task-1")
 
-        val orch = buildOrchestrator()
-        val task = simpleTask(taskId = "task-1")
-        val graph = taskGraphWith(task)
+        val result = orch.execute(task, contractor)
 
-        // Step 1: TASK_READY → TASK_ASSIGNED
-        var result = orch.step("proj", graph)
-        assertEquals(com.agoii.mobile.execution.ExecutionStepResult.ADVANCED, result)
-
-        // Step 2: TASK_ASSIGNED → TASK_STARTED
-        result = orch.step("proj", graph)
-        assertEquals(com.agoii.mobile.execution.ExecutionStepResult.ADVANCED, result)
-
-        // Step 3: TASK_STARTED → TASK_COMPLETED
-        result = orch.step("proj", graph)
-        assertEquals(com.agoii.mobile.execution.ExecutionStepResult.ADVANCED, result)
-
-        // Step 4: TASK_COMPLETED → TASK_VALIDATED (terminal)
-        result = orch.step("proj", graph)
-        assertEquals(com.agoii.mobile.execution.ExecutionStepResult.COMPLETED, result)
-
-        // Verify event sequence in the ledger.
-        val events = store.loadEvents("proj").filter { it.payload["taskId"] == "task-1" }
-        val types  = events.map { it.type }
-        assertTrue(types.contains(EventTypes.TASK_ASSIGNED))
-        assertTrue(types.contains(EventTypes.TASK_STARTED))
-        assertTrue(types.contains(EventTypes.TASK_COMPLETED))
-        assertTrue(types.contains(EventTypes.TASK_VALIDATED))
+        assertTrue("Expected execution success", result.success)
+        assertFalse("Expected non-empty artifact", result.artifact.isEmpty())
+        assertEquals("Expected VALIDATED verdict",
+            ValidationVerdict.VALIDATED, result.validationResult.verdict)
+        assertNull("Expected no error on success", result.error)
     }
 
     @Test
-    fun `orchestrator - emits events for each step (no silent transitions)`() {
-        val contractor = verifiedProfile()
-        registry.registerVerified(contractor)
-
-        val orch  = buildOrchestrator()
-        val task  = simpleTask(taskId = "task-2")
-        val graph = taskGraphWith(task)
-
-        // Drive until completed.
-        repeat(10) { orch.step("proj2", graph) }
-
-        val events = store.loadEvents("proj2")
-        // Every meaningful transition must emit at least one event.
-        assertTrue("Expected at least 4 events", events.size >= 4)
-    }
-
-    @Test
-    fun `orchestrator - deterministic same event stream same outcome`() {
-        val contractor = verifiedProfile()
-
-        // Run once.
-        val store1    = InMemoryEventStore()
-        val registry1 = ContractorRegistry().also { it.registerVerified(contractor) }
-        val orch1     = ExecutionOrchestrator(
-            eventStore = store1, registry = registry1,
-            emitter    = ExecutionEventEmitter(store1)
+    fun `orchestrator - execute returns failure for zero-capability contractor`() {
+        val zeroCapContractor = ContractorProfile(
+            id            = "zero-cap",
+            capabilities  = ContractorCapabilityVector(0, 0, 0, 0, 0),
+            status        = VerificationStatus.VERIFIED,
+            source        = "test"
         )
-        val graph = taskGraphWith(simpleTask(taskId = "task-det"))
-        repeat(10) { orch1.step("proj-det", graph) }
+        val orch   = buildOrchestrator()
+        val task   = simpleTask(taskId = "task-zero")
 
-        // Run again with fresh store and registry.
-        val store2    = InMemoryEventStore()
-        val registry2 = ContractorRegistry().also { it.registerVerified(contractor) }
-        val orch2     = ExecutionOrchestrator(
-            eventStore = store2, registry = registry2,
-            emitter    = ExecutionEventEmitter(store2)
-        )
-        repeat(10) { orch2.step("proj-det", graph) }
+        val result = orch.execute(task, zeroCapContractor)
 
-        val types1 = store1.loadEvents("proj-det").map { it.type }
-        val types2 = store2.loadEvents("proj-det").map { it.type }
-        assertEquals("Determinism violated: event sequences differ", types1, types2)
+        assertFalse("Expected execution failure", result.success)
+        assertNotNull("Expected error message on failure", result.error)
     }
 
     @Test
-    fun `orchestrator - second step when already completed returns COMPLETED immediately`() {
+    fun `orchestrator - execute is deterministic (same input same result)`() {
         val contractor = verifiedProfile()
-        registry.registerVerified(contractor)
+        val orch       = buildOrchestrator()
+        val task       = simpleTask(taskId = "task-det")
 
-        val orch  = buildOrchestrator()
-        val task  = simpleTask(taskId = "task-done")
-        val graph = taskGraphWith(task)
+        val result1 = orch.execute(task, contractor)
+        val result2 = orch.execute(task, contractor)
 
-        // Run to completion.
-        repeat(10) { orch.step("proj-done", graph) }
+        assertEquals("Determinism violated: success differs",
+            result1.success, result2.success)
+        assertEquals("Determinism violated: artifact differs",
+            result1.artifact, result2.artifact)
+        assertEquals("Determinism violated: verdict differs",
+            result1.validationResult.verdict, result2.validationResult.verdict)
+    }
 
-        // One more step — should still return COMPLETED, not advance.
-        val result = orch.step("proj-done", graph)
-        assertEquals(com.agoii.mobile.execution.ExecutionStepResult.COMPLETED, result)
+    @Test
+    fun `orchestrator - execute produces artifact with task id`() {
+        val contractor = verifiedProfile()
+        val orch       = buildOrchestrator()
+        val task       = simpleTask(taskId = "task-artifact")
+
+        val result = orch.execute(task, contractor)
+
+        assertTrue("Artifact must contain taskId", result.artifact.containsKey("taskId"))
+        assertEquals("Artifact taskId must match task", "task-artifact", result.artifact["taskId"])
+    }
+
+    @Test
+    fun `orchestrator - no events emitted during execute (pure worker)`() {
+        val contractor = verifiedProfile()
+        val orch       = buildOrchestrator()
+        val task       = simpleTask(taskId = "task-silent")
+
+        // Execute — no event store interaction expected
+        orch.execute(task, contractor)
+
+        // The shared store must remain empty since orchestrator does not emit events
+        val events = store.loadEvents("proj")
+        assertEquals("ExecutionOrchestrator must not emit any events", 0, events.size)
     }
 
     // ══════════════════════════════════════════════════════════════════════════
