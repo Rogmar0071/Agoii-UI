@@ -12,7 +12,8 @@ data class ReplayState(
     val executionCompleted: Boolean,
     val assemblyStarted: Boolean,
     val assemblyValidated: Boolean,
-    val objective: String?
+    val objective: String?,
+    val assemblyCompleted: Boolean = false
 )
 
 /**
@@ -44,6 +45,7 @@ class Replay(private val eventStore: EventRepository) {
         var executionCompleted = false
         var assemblyStarted = false
         var assemblyValidated = false
+        var assemblyCompleted = false
         var objective: String? = null
 
         for (event in events) {
@@ -96,6 +98,7 @@ class Replay(private val eventStore: EventRepository) {
                 }
                 EventTypes.ASSEMBLY_COMPLETED -> {
                     phase = EventTypes.ASSEMBLY_COMPLETED
+                    assemblyCompleted = true
                 }
             }
         }
@@ -108,7 +111,8 @@ class Replay(private val eventStore: EventRepository) {
             executionCompleted = executionCompleted,
             assemblyStarted = assemblyStarted,
             assemblyValidated = assemblyValidated,
-            objective = objective
+            objective = objective,
+            assemblyCompleted = assemblyCompleted
         )
     }
 

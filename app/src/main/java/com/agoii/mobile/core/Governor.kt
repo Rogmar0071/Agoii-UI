@@ -1,5 +1,6 @@
 package com.agoii.mobile.core
 
+import com.agoii.mobile.assembly.AssemblyValidator
 import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.decision.DecisionAction
 import com.agoii.mobile.decision.DecisionEngine
@@ -368,6 +369,16 @@ class Governor(
                         mapOf("contracts_completed" to total)
                     )
                 }
+                GovernorResult.ADVANCED
+            }
+
+            // ── assembly_validated → validate integrity before completing assembly ─
+            // AssemblyValidator is a pure, ledger-driven check — no mutation occurs.
+            // If validation fails, assembly_completed is blocked and NO_EVENT is returned.
+            lastType == EventTypes.ASSEMBLY_VALIDATED -> {
+                val validationResult = AssemblyValidator().validate(events)
+                if (!validationResult.isValid) return GovernorResult.NO_EVENT
+                eventStore.appendEvent(projectId, EventTypes.ASSEMBLY_COMPLETED, emptyMap())
                 GovernorResult.ADVANCED
             }
 
