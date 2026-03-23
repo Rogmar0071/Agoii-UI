@@ -1,7 +1,13 @@
-package com.agoii.mobile.governance
+package com.agoii.mobile.core
+
+import com.agoii.mobile.governance.ContractDescriptor
+import com.agoii.mobile.governance.ContractSurfaceLayer
+import com.agoii.mobile.governance.Outcome
+import com.agoii.mobile.governance.StateSurfaceMirror
+import com.agoii.mobile.governance.SurfaceType
 
 /**
- * Fixed validation capacity — governance-owned deterministic baseline for CSL evaluation.
+ * Fixed validation capacity — orchestration-owned deterministic baseline for CSL evaluation.
  * Must not be derived dynamically or read from any external source.
  */
 private const val VC = 5
@@ -11,7 +17,7 @@ private const val VC = 5
  *
  * Rules:
  *  - Single enforcement point for contract issuance decisions.
- *  - Fully governance-owned; no dependency on execution core.
+ *  - Lives in the orchestration (core) layer; depends on governance, never on Governor.
  *  - Read-only: evaluates contracts without mutating state.
  */
 class ExecutionOrchestrator(
