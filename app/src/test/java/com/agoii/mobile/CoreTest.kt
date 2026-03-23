@@ -598,7 +598,9 @@ class CoreTest {
 
     /**
      * LOCK STEP 2 — TRANSITION LOCK
-     * Verifies Governor.VALID_TRANSITIONS is frozen: exactly the 6 defined governor transitions.
+     * Verifies Governor.VALID_TRANSITIONS is frozen: exactly the 5 defined governor transitions.
+     * Note: assembly_started → assembly_validated is handled by a dedicated assembly gate
+     * (AssemblyValidator) rather than an automatic VALID_TRANSITIONS entry.
      */
     @Test
     fun `lock - Governor VALID_TRANSITIONS is frozen with exactly the 6 locked entries`() {
@@ -607,10 +609,9 @@ class CoreTest {
             "contracts_generated" to "contracts_ready",
             "contracts_approved"  to "execution_started",
             "execution_completed" to "assembly_started",
-            "assembly_started"    to "assembly_validated",
             "assembly_validated"  to "assembly_completed"
         )
-        assertEquals("VALID_TRANSITIONS must contain exactly 6 locked entries", 6, Governor.VALID_TRANSITIONS.size)
+        assertEquals("VALID_TRANSITIONS must contain exactly 5 locked entries", 5, Governor.VALID_TRANSITIONS.size)
         assertEquals("VALID_TRANSITIONS must match the locked map exactly", locked, Governor.VALID_TRANSITIONS)
     }
 

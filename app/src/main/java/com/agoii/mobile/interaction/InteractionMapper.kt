@@ -29,10 +29,11 @@ class InteractionMapper {
             executionCompleted = state.executionCompleted,
             assemblyStarted    = state.assemblyStarted,
             assemblyValidated  = state.assemblyValidated,
+            assemblyCompleted  = state.assemblyCompleted,
             references         = listOf("phase", "objective", "contractsCompleted",
                                         "totalContracts", "executionStarted",
                                         "executionCompleted", "assemblyStarted",
-                                        "assemblyValidated")
+                                        "assemblyValidated", "assemblyCompleted")
         )
 
         InteractionScope.CONTRACT -> StateSlice(
@@ -44,6 +45,7 @@ class InteractionMapper {
             executionCompleted = false,
             assemblyStarted    = false,
             assemblyValidated  = false,
+            assemblyCompleted  = false,
             references         = listOf("phase", "objective", "contractsCompleted",
                                         "totalContracts")
         )
@@ -57,6 +59,7 @@ class InteractionMapper {
             executionCompleted = false,
             assemblyStarted    = false,
             assemblyValidated  = false,
+            assemblyCompleted  = false,
             references         = listOf("phase", "contractsCompleted", "totalContracts",
                                         "executionStarted")
         )
@@ -70,6 +73,7 @@ class InteractionMapper {
             executionCompleted = state.executionCompleted,
             assemblyStarted    = false,
             assemblyValidated  = false,
+            assemblyCompleted  = false,
             references         = listOf("phase", "contractsCompleted", "totalContracts",
                                         "executionStarted", "executionCompleted")
         )
@@ -83,6 +87,7 @@ class InteractionMapper {
             executionCompleted = false,
             assemblyStarted    = false,
             assemblyValidated  = false,
+            assemblyCompleted  = false,
             references         = listOf("phase", "objective")
         )
     }
@@ -105,6 +110,7 @@ class InteractionMapper {
             executionCompleted = false,
             assemblyStarted    = false,
             assemblyValidated  = false,
+            assemblyCompleted  = false,
             references         = view.details
         )
     }
@@ -125,5 +131,6 @@ data class StateSlice(
     val executionCompleted: Boolean,
     val assemblyStarted: Boolean,
     val assemblyValidated: Boolean,
+    val assemblyCompleted: Boolean = false,
     val references: List<String>
 )

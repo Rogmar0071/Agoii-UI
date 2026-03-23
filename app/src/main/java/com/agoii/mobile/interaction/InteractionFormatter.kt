@@ -36,7 +36,8 @@ class InteractionFormatter {
         appendLine("Execution started: ${slice.executionStarted}")
         appendLine("Execution completed: ${slice.executionCompleted}")
         appendLine("Assembly started: ${slice.assemblyStarted}")
-        append("Assembly validated: ${slice.assemblyValidated}")
+        appendLine("Assembly validated: ${slice.assemblyValidated}")
+        append("Assembly completed: ${slice.assemblyCompleted}")
     }
 
     private fun buildExplanation(slice: StateSlice): String = when {
