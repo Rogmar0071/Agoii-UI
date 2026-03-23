@@ -549,11 +549,13 @@ class CoreTest {
 
     /**
      * LOCK STEP 1 — EVENT MODEL LOCK
-     * Verifies EventTypes.ALL is frozen: exactly the 11 defined event types, no more, no less.
+     * Verifies EventTypes.ALL is frozen: exactly the 18 defined event types
+     * (11 core pipeline + 7 execution engine lifecycle types), no more, no less.
      */
     @Test
-    fun `lock - EventTypes ALL is frozen with exactly the 11 locked event types`() {
+    fun `lock - EventTypes ALL is frozen with exactly the 18 locked event types`() {
         val locked = setOf(
+            // Core pipeline (original 11)
             "intent_submitted",
             "contracts_generated",
             "contracts_ready",
@@ -564,9 +566,17 @@ class CoreTest {
             "execution_completed",
             "assembly_started",
             "assembly_validated",
-            "assembly_completed"
+            "assembly_completed",
+            // Execution engine lifecycle (added by AGOII-EXECUTION-ENGINE-01)
+            "task_assigned",
+            "task_started",
+            "task_completed",
+            "task_validated",
+            "task_failed",
+            "contractor_reassigned",
+            "contract_failed"
         )
-        assertEquals("EventTypes.ALL must contain exactly 11 locked event types", 11, EventTypes.ALL.size)
+        assertEquals("EventTypes.ALL must contain exactly 18 locked event types", 18, EventTypes.ALL.size)
         assertEquals("EventTypes.ALL must match the locked set exactly", locked, EventTypes.ALL)
     }
 
