@@ -18,6 +18,15 @@ object EventTypes {
     const val ASSEMBLY_VALIDATED  = "assembly_validated"
     const val ASSEMBLY_COMPLETED  = "assembly_completed"
 
+    // ── Task execution lifecycle events ──────────────────────────────────────
+    const val TASK_ASSIGNED           = "task_assigned"
+    const val TASK_STARTED            = "task_started"
+    const val TASK_COMPLETED          = "task_completed"
+    const val TASK_VALIDATED          = "task_validated"
+    const val TASK_FAILED             = "task_failed"
+    const val CONTRACTOR_REASSIGNED   = "contractor_reassigned"
+    const val CONTRACT_FAILED         = "contract_failed"
+
     val ALL: Set<String> = setOf(
         INTENT_SUBMITTED,
         CONTRACTS_GENERATED,
@@ -29,7 +38,14 @@ object EventTypes {
         EXECUTION_COMPLETED,
         ASSEMBLY_STARTED,
         ASSEMBLY_VALIDATED,
-        ASSEMBLY_COMPLETED
+        ASSEMBLY_COMPLETED,
+        TASK_ASSIGNED,
+        TASK_STARTED,
+        TASK_COMPLETED,
+        TASK_VALIDATED,
+        TASK_FAILED,
+        CONTRACTOR_REASSIGNED,
+        CONTRACT_FAILED
     )
 
     /** Default number of contracts generated per intent. */
