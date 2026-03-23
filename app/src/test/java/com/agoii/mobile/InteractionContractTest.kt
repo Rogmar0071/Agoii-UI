@@ -4,9 +4,11 @@ import com.agoii.mobile.core.ReplayState
 import com.agoii.mobile.interaction.InteractionContract
 import com.agoii.mobile.interaction.InteractionEngine
 import com.agoii.mobile.interaction.InteractionFormatter
+import com.agoii.mobile.interaction.InteractionInput
 import com.agoii.mobile.interaction.InteractionMapper
 import com.agoii.mobile.interaction.InteractionScope
 import com.agoii.mobile.interaction.OutputType
+import com.agoii.mobile.interaction.SourceType
 import com.agoii.mobile.interaction.StateSlice
 import org.junit.Assert.*
 import org.junit.Test
@@ -58,8 +60,8 @@ class InteractionContractTest {
         val original = state(phase = "execution_started", executionStarted = true)
         val snapshot = original.copy()
         engine.execute(
-            InteractionContract("id-1", "query", InteractionScope.FULL_SYSTEM, OutputType.SUMMARY),
-            original
+            InteractionContract("id-1", "query", InteractionScope.FULL_SYSTEM, OutputType.SUMMARY, SourceType.LEDGER),
+            InteractionInput.LedgerInput(original)
         )
         assertEquals("ReplayState must not be mutated by execute()", snapshot, original)
     }
@@ -67,8 +69,8 @@ class InteractionContractTest {
     @Test
     fun `execute multiple times does not change the state`() {
         val s = state(phase = "contracts_ready", totalContracts = 3)
-        val contract = InteractionContract("id-x", "q", InteractionScope.CONTRACT, OutputType.STATUS)
-        repeat(5) { engine.execute(contract, s) }
+        val contract = InteractionContract("id-x", "q", InteractionScope.CONTRACT, OutputType.STATUS, SourceType.LEDGER)
+        repeat(5) { engine.execute(contract, InteractionInput.LedgerInput(s)) }
         assertEquals("contracts_ready", s.phase)
         assertEquals(3, s.totalContracts)
     }
@@ -175,17 +177,17 @@ class InteractionContractTest {
         val s = state(phase = "contract_started", contractsCompleted = 1, totalContracts = 3,
                       executionStarted = true)
         val contract = InteractionContract("proj-1", "status?", InteractionScope.FULL_SYSTEM,
-                                          OutputType.SUMMARY)
-        val r1 = engine.execute(contract, s)
-        val r2 = engine.execute(contract, s)
+                                          OutputType.SUMMARY, SourceType.LEDGER)
+        val r1 = engine.execute(contract, InteractionInput.LedgerInput(s))
+        val r2 = engine.execute(contract, InteractionInput.LedgerInput(s))
         assertEquals("Output must be deterministic", r1, r2)
     }
 
     @Test
     fun `different states produce different SUMMARY outputs`() {
-        val contract = InteractionContract("c", "q", InteractionScope.FULL_SYSTEM, OutputType.SUMMARY)
-        val r1 = engine.execute(contract, state(phase = "idle"))
-        val r2 = engine.execute(contract, state(phase = "execution_started"))
+        val contract = InteractionContract("c", "q", InteractionScope.FULL_SYSTEM, OutputType.SUMMARY, SourceType.LEDGER)
+        val r1 = engine.execute(contract, InteractionInput.LedgerInput(state(phase = "idle")))
+        val r2 = engine.execute(contract, InteractionInput.LedgerInput(state(phase = "execution_started")))
         assertNotEquals(r1.content, r2.content)
     }
 
@@ -195,8 +197,8 @@ class InteractionContractTest {
     fun `InteractionEngine works with no external dependencies`() {
         val localEngine = InteractionEngine(InteractionMapper(), InteractionFormatter())
         val result = localEngine.execute(
-            InteractionContract("self-contained", "test", InteractionScope.FULL_SYSTEM, OutputType.STATUS),
-            state(phase = "idle")
+            InteractionContract("self-contained", "test", InteractionScope.FULL_SYSTEM, OutputType.STATUS, SourceType.LEDGER),
+            InteractionInput.LedgerInput(state(phase = "idle"))
         )
         assertNotNull(result)
         assertEquals("self-contained", result.contractId)
@@ -206,8 +208,8 @@ class InteractionContractTest {
     fun `contractId is echoed verbatim in InteractionResult`() {
         val id = "unique-contract-99"
         val result = engine.execute(
-            InteractionContract(id, "q", InteractionScope.FULL_SYSTEM, OutputType.STATUS),
-            state()
+            InteractionContract(id, "q", InteractionScope.FULL_SYSTEM, OutputType.STATUS, SourceType.LEDGER),
+            InteractionInput.LedgerInput(state())
         )
         assertEquals(id, result.contractId)
     }

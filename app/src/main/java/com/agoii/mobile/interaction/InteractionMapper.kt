@@ -1,12 +1,14 @@
 package com.agoii.mobile.interaction
 
 import com.agoii.mobile.core.ReplayState
+import com.agoii.mobile.simulation.SimulationView
 
 /**
- * Extracts the relevant subset of [ReplayState] for a given [InteractionScope].
+ * Extracts the relevant subset of [ReplayState] for a given [InteractionScope],
+ * and maps a [SimulationView] directly into a [StateSlice] for the simulation path.
  *
  * Responsibility: mapping only — no formatting, no business logic.
- * Every field in the returned [StateSlice] is copied verbatim from [ReplayState].
+ * Every field in the returned [StateSlice] is copied verbatim from its source.
  */
 class InteractionMapper {
 
@@ -82,6 +84,28 @@ class InteractionMapper {
             assemblyStarted    = false,
             assemblyValidated  = false,
             references         = listOf("phase", "objective")
+        )
+    }
+
+    /**
+     * Map a [SimulationView] directly into a [StateSlice].
+     *
+     * Rules:
+     *  - Direct field mapping ONLY — no interpretation, no derived logic.
+     *  - Must not depend on [ReplayState] or [SimulationResult].
+     *  - [SimulationView] fields are copied verbatim; no meaning is inferred.
+     */
+    fun extractFromSimulationView(view: SimulationView): StateSlice {
+        return StateSlice(
+            phase              = "simulation_${view.mode}",
+            objective          = view.summary,
+            contractsCompleted = 0,
+            totalContracts     = 0,
+            executionStarted   = false,
+            executionCompleted = false,
+            assemblyStarted    = false,
+            assemblyValidated  = false,
+            references         = view.details
         )
     }
 }
