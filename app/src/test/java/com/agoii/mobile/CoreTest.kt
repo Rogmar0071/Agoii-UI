@@ -3,11 +3,11 @@ package com.agoii.mobile
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
-import com.agoii.mobile.core.Governor
+import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.core.LedgerAudit
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayTest
-import com.agoii.mobile.core.SystemVerificationContract
+import com.agoii.mobile.governor.SystemVerificationContract
 import com.agoii.mobile.contractor.ContractorCapabilityVector
 import com.agoii.mobile.contractor.ContractorProfile
 import com.agoii.mobile.contractor.ContractorRegistry
