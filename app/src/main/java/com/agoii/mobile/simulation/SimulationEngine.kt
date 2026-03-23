@@ -44,4 +44,24 @@ class SimulationEngine {
             scenarios     = analysis.scenarios
         )
     }
+
+    /**
+     * Pure transformation of a [SimulationResult] into a [SimulationView].
+     *
+     * Rules:
+     *  - No formatting, no external dependencies.
+     *  - [SimulationView] is the only object allowed to leave the Simulation layer
+     *    carrying derived meaning.
+     *
+     * @param result Immutable output from [simulate].
+     * @return       [SimulationView] ready for cross-layer consumption.
+     */
+    fun toView(result: SimulationResult): SimulationView {
+        return SimulationView(
+            summary    = result.findings.firstOrNull() ?: "",
+            details    = result.findings,
+            confidence = result.confidence,
+            mode       = result.mode.name
+        )
+    }
 }
