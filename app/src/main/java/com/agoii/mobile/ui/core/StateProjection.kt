@@ -13,7 +13,10 @@ data class UIState(
     val activeContractId: String?,
     val activeTaskId: String?,
     val progress: Float,
-    val isComplete: Boolean
+    val isComplete: Boolean,
+    val assemblyStarted: Boolean = false,
+    val assemblyValidated: Boolean = false,
+    val assemblyCompleted: Boolean = false
 )
 
 /**
@@ -31,7 +34,10 @@ class StateProjection {
             activeContractId = deriveActiveContractId(state),
             activeTaskId = null,
             progress = progress,
-            isComplete = isComplete
+            isComplete = isComplete,
+            assemblyStarted = state.assemblyStarted,
+            assemblyValidated = state.assemblyValidated,
+            assemblyCompleted = state.assemblyCompleted
         )
     }
 

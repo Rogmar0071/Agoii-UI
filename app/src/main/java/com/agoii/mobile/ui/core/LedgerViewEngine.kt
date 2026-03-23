@@ -22,6 +22,15 @@ class LedgerViewEngine(private val projection: StateProjection = StateProjection
     /** Fraction of contracts completed in the current execution run (0.0–1.0). */
     val executionProgress: Float get() = _uiState?.progress ?: 0f
 
+    /** Whether the assembly phase has been started. */
+    val assemblyStarted: Boolean get() = _uiState?.assemblyStarted ?: false
+
+    /** Whether assembly validation has passed. */
+    val assemblyValidated: Boolean get() = _uiState?.assemblyValidated ?: false
+
+    /** Whether the assembly phase has fully completed. */
+    val assemblyCompleted: Boolean get() = _uiState?.assemblyCompleted ?: false
+
     private var _uiState: UIState? = null
 
     /**
