@@ -7,7 +7,7 @@ import com.agoii.mobile.core.Governor
 import com.agoii.mobile.core.LedgerAudit
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayTest
-import com.agoii.mobile.core.SystemVerificationContract
+import com.agoii.mobile.governance.SystemVerificationContract
 import com.agoii.mobile.contractor.ContractorCapabilityVector
 import com.agoii.mobile.contractor.ContractorProfile
 import com.agoii.mobile.contractor.ContractorRegistry
