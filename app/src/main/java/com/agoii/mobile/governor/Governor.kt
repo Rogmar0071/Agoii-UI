@@ -82,7 +82,6 @@ class Governor(
             EventTypes.CONTRACTS_GENERATED to EventTypes.CONTRACTS_READY,
             EventTypes.CONTRACTS_APPROVED  to EventTypes.EXECUTION_STARTED,
             EventTypes.EXECUTION_COMPLETED to EventTypes.ASSEMBLY_STARTED,
-            EventTypes.ASSEMBLY_STARTED    to EventTypes.ASSEMBLY_VALIDATED,
             EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED
         )
     }
@@ -376,13 +375,14 @@ class Governor(
                 GovernorResult.ADVANCED
             }
 
-            // ── assembly_validated → validate integrity before completing assembly ─
-            // AssemblyValidator is a pure, ledger-driven check — no mutation occurs.
-            // If validation fails, assembly_completed is blocked and NO_EVENT is returned.
-            lastType == EventTypes.ASSEMBLY_VALIDATED -> {
-                val validationResult = AssemblyValidator().validate(events)
-                if (!validationResult.isValid) return GovernorResult.NO_EVENT
-                eventStore.appendEvent(projectId, EventTypes.ASSEMBLY_COMPLETED, emptyMap())
+            // ── assembly_started → validate integrity before emitting assembly_validated ─
+            // AssemblyValidator is a pure, state-driven check — no mutation occurs.
+            // If validation fails, assembly_validated is blocked and NO_EVENT is returned.
+            lastType == EventTypes.ASSEMBLY_STARTED -> {
+                val replayState = Replay(eventStore).replay(projectId)
+                val assemblyResult = AssemblyValidator().validate(replayState)
+                if (!assemblyResult.isValid) return GovernorResult.NO_EVENT
+                eventStore.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap())
                 GovernorResult.ADVANCED
             }
 
