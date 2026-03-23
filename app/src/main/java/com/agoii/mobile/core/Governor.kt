@@ -1,8 +1,9 @@
 package com.agoii.mobile.core
 
 import com.agoii.mobile.contractor.ContractorRegistry
+import com.agoii.mobile.decision.DecisionAction
+import com.agoii.mobile.decision.DecisionEngine
 import com.agoii.mobile.execution.ExecutionOrchestrator
-import com.agoii.mobile.execution.RetryDecision
 import com.agoii.mobile.execution.RetryEngine
 import com.agoii.mobile.execution.ValidationVerdict
 import com.agoii.mobile.governance.ContractDescriptor
@@ -49,7 +50,8 @@ class Governor(
     private val ssm = StateSurfaceMirror()
     private val csl = ContractSurfaceLayer()
     // RetryEngine shares the same registry as the Governor for consistent contractor lookup.
-    private val retryEngine = RetryEngine(registry)
+    private val retryEngine    = RetryEngine(registry)
+    private val decisionEngine = DecisionEngine()
 
     init {
         ssm.initialize()
@@ -267,7 +269,7 @@ class Governor(
             }
 
             // ── task_failed → retry / reassign / escalate ─────────────────────────
-            // Governor owns the retry decision; RetryEngine is a pure decision engine.
+            // Governor owns the retry decision; DecisionEngine evaluates structured failure.
             lastType == EventTypes.TASK_FAILED -> {
                 val contractId   = lastEvent.payload["contract_id"]  as? String ?: "unknown"
                 val taskId       = lastEvent.payload["taskId"]       as? String
@@ -282,9 +284,9 @@ class Governor(
                 val failureCount = events.count {
                     it.type == EventTypes.TASK_FAILED && it.payload["taskId"] == taskId
                 }
-                val outcome = retryEngine.evaluate(task, contractor, failureCount)
-                when (outcome.decision) {
-                    RetryDecision.RETRY -> {
+                val decision = decisionEngine.evaluate(taskId, contractorId.ifEmpty { null }, failureCount)
+                when (decision.action) {
+                    DecisionAction.RETRY -> {
                         eventStore.appendEvent(
                             projectId, EventTypes.TASK_ASSIGNED,
                             mapOf(
@@ -297,14 +299,16 @@ class Governor(
                         )
                         GovernorResult.ADVANCED
                     }
-                    RetryDecision.REASSIGN -> {
-                        val newContractor = outcome.assignedContractor!!
+                    DecisionAction.REASSIGN -> {
+                        val replacement = retryEngine.evaluate(task, contractor, failureCount)
+                            .assignedContractor
+                            ?: contractor
                         eventStore.appendEvent(
                             projectId, EventTypes.CONTRACTOR_REASSIGNED,
                             mapOf(
                                 "taskId"               to task.taskId,
                                 "previousContractorId" to contractor.id,
-                                "newContractorId"      to newContractor.id,
+                                "newContractorId"      to replacement.id,
                                 "contract_id"          to contractId,
                                 "position"             to position,
                                 "total"                to total
@@ -312,13 +316,13 @@ class Governor(
                         )
                         GovernorResult.ADVANCED
                     }
-                    RetryDecision.ESCALATE -> {
+                    DecisionAction.FAIL -> {
                         eventStore.appendEvent(
                             projectId, EventTypes.CONTRACT_FAILED,
                             mapOf(
                                 "taskId"      to task.taskId,
                                 "contract_id" to contractId,
-                                "reason"      to outcome.reason
+                                "reason"      to decision.reason
                             )
                         )
                         GovernorResult.NO_EVENT
