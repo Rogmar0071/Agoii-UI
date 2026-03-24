@@ -347,7 +347,39 @@ class CoreTest {
         assertTrue(result.invariantErrors.isEmpty())
     }
 
-    // ── Governor tests ────────────────────────────────────────────────────────
+    @Test
+    fun `verify_replay invariant fires when tasks completed but not assigned`() {
+        // A malformed ledger where task_created, task_completed, task_validated
+        // and execution_completed are present but task_assigned is absent.
+        // fullyExecuted=true (completedTasks==totalTasks, validatedTasks==totalTasks, executionCompleted)
+        // but assignedTasks != totalTasks — invariant 1 must fire.
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 1.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 1.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("task_created",        mapOf("taskId" to "contract_1-step1")),
+            // task_assigned deliberately omitted
+            Event("task_completed",      mapOf("taskId" to "contract_1-step1")),
+            Event("task_validated",      mapOf("taskId" to "contract_1-step1")),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("execution_completed", mapOf("contracts_completed" to 1))
+        )
+        val state = Replay(store()).deriveStructuralState(events)
+        // fullyExecuted is true: totalTasks=1, completedTasks=1, validatedTasks=1, executionCompleted
+        assertTrue(state.execution.fullyExecuted)
+        // but assignedTasks=0 != totalTasks=1
+        assertEquals(0, state.execution.assignedTasks)
+        assertEquals(1, state.execution.totalTasks)
+        // ReplayTest invariant must catch this data inconsistency
+        val result = ReplayTest(store(events)).verifyReplay("proj")
+        assertFalse(result.valid)
+        assertTrue(result.invariantErrors.any { it.contains("assignedTasks") })
+    }
+
+
 
     @Test
     fun `governor returns NO_EVENT on empty ledger`() {
