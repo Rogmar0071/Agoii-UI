@@ -1,12 +1,12 @@
 package com.agoii.mobile.ui.core
 
-import com.agoii.mobile.core.ReplayState
+import com.agoii.mobile.core.ReplayStructuralState
 
 /**
- * Reads a [ReplayState] and exposes the ledger's current phase, active
+ * Reads a [ReplayStructuralState] and exposes the ledger's current phase, active
  * contract / task identifiers, and overall execution progress.
  *
- * Responsibility: mapping only — no computation beyond reading [ReplayState].
+ * Responsibility: mapping only — no computation beyond reading [ReplayStructuralState].
  */
 class LedgerViewEngine(private val projection: StateProjection = StateProjection()) {
 
@@ -34,10 +34,10 @@ class LedgerViewEngine(private val projection: StateProjection = StateProjection
     private var _uiState: UIState? = null
 
     /**
-     * Ingest a new [ReplayState] and update all exposed properties.
+     * Ingest a new [ReplayStructuralState] and update all exposed properties.
      * This is the only write path into the engine.
      */
-    fun render(state: ReplayState) {
+    fun render(state: ReplayStructuralState) {
         _uiState = projection.project(state)
     }
 

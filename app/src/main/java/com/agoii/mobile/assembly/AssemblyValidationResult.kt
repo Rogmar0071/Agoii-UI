@@ -1,7 +1,7 @@
 package com.agoii.mobile.assembly
 
 /**
- * Result produced by [AssemblyValidator] after inspecting the full [ReplayState].
+ * Result produced by [AssemblyValidator] after inspecting the full [ReplayStructuralState].
  *
  * @property isValid           true when all validation rules pass; false otherwise.
  * @property completionStatus  "COMPLETE" when valid; "INCOMPLETE" otherwise.

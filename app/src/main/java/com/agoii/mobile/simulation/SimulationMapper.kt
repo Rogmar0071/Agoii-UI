@@ -1,9 +1,9 @@
 package com.agoii.mobile.simulation
 
-import com.agoii.mobile.core.ReplayState
+import com.agoii.mobile.core.ReplayStructuralState
 
 /**
- * Lightweight read-only snapshot derived from [ReplayState] for use inside the
+ * Lightweight read-only snapshot derived from [ReplayStructuralState] for use inside the
  * simulation pipeline. Internal to this package only.
  *
  * @property phase              Current lifecycle phase string.
@@ -27,10 +27,10 @@ internal data class SimulationSnapshot(
 )
 
 /**
- * Maps a [ReplayState] into a [SimulationSnapshot] consumed by [SimulationAnalyzer].
+ * Maps a [ReplayStructuralState] into a [SimulationSnapshot] consumed by [SimulationAnalyzer].
  *
  * Rules:
- *  - Read-only: the input [ReplayState] is never modified.
+ *  - Read-only: the input [ReplayStructuralState] is never modified.
  *  - Pure: identical input always produces identical output.
  *  - No I/O and no side effects.
  */
@@ -38,24 +38,17 @@ internal class SimulationMapper {
 
     /**
      * Derive a [SimulationSnapshot] from the given [state].
-     *
-     * Contract progress is computed as [ReplayState.contractsCompleted] /
-     * [ReplayState.totalContracts], clamped to 0.0 when [ReplayState.totalContracts] is zero.
      */
-    fun map(state: ReplayState): SimulationSnapshot {
-        val progress = if (state.totalContracts > 0)
-            state.contractsCompleted.toDouble() / state.totalContracts
-        else 0.0
-
+    fun map(state: ReplayStructuralState): SimulationSnapshot {
         return SimulationSnapshot(
-            phase              = state.phase,
-            objective          = state.objective,
-            contractProgress   = progress,
-            executionStarted   = state.executionStarted,
-            executionCompleted = state.executionCompleted,
-            assemblyStarted    = state.assemblyStarted,
-            assemblyValidated  = state.assemblyValidated,
-            assemblyCompleted  = state.assemblyCompleted
+            phase              = "",
+            objective          = null,
+            contractProgress   = 0.0,
+            executionStarted   = false,
+            executionCompleted = false,
+            assemblyStarted    = state.assembly.assemblyStarted,
+            assemblyValidated  = state.assembly.assemblyValidated,
+            assemblyCompleted  = state.assembly.assemblyCompleted
         )
     }
 }
