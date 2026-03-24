@@ -27,9 +27,12 @@ class ActionGate {
 
     // ── private rules ─────────────────────────────────────────────────────────
 
-    private fun canApproveContracts(state: ReplayStructuralState): Boolean = false
+    private fun canApproveContracts(state: ReplayStructuralState): Boolean =
+        state.contracts.generated && state.contracts.valid
 
-    private fun canStartExecution(state: ReplayStructuralState): Boolean = false
+    private fun canStartExecution(state: ReplayStructuralState): Boolean =
+        state.contracts.valid && !state.execution.fullyExecuted
 
-    private fun canRetry(state: ReplayStructuralState): Boolean = false
+    private fun canRetry(state: ReplayStructuralState): Boolean =
+        state.execution.assignedTasks > 0 && !state.execution.fullyExecuted
 }

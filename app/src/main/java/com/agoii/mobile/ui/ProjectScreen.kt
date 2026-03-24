@@ -136,7 +136,7 @@ fun ProjectScreen(projectId: String) {
         }
 
         // ── ACTION BAR ──────────────────────────────────────────────────────
-        val showApprove = false
+        val showApprove = replayState?.contracts?.valid == true
 
         ActionBar(
             showApprove   = showApprove,

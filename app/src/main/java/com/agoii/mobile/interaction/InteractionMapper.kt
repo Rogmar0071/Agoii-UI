@@ -15,74 +15,44 @@ class InteractionMapper {
     /**
      * Extract the state fields that belong to [scope] from [state].
      *
-     * Fields not relevant to a given scope are omitted (set to their zero value)
-     * so that downstream formatting is always working with a clean, bounded slice.
+     * Only structural fields from [ReplayStructuralState] are mapped.
+     * Fields with no structural equivalent are omitted and resolved from data class defaults.
      */
     fun extract(scope: InteractionScope, state: ReplayStructuralState): StateSlice = when (scope) {
 
         InteractionScope.FULL_SYSTEM -> StateSlice(
-            phase              = "",
-            objective          = null,
-            contractsCompleted = 0,
-            totalContracts     = 0,
-            executionStarted   = false,
-            executionCompleted = false,
+            executionCompleted = state.execution.fullyExecuted,
             assemblyStarted    = state.assembly.assemblyStarted,
             assemblyValidated  = state.assembly.assemblyValidated,
             assemblyCompleted  = state.assembly.assemblyCompleted,
-            references         = listOf("assemblyStarted", "assemblyValidated", "assemblyCompleted")
+            references         = listOf("executionCompleted", "assemblyStarted",
+                                        "assemblyValidated", "assemblyCompleted")
         )
 
         InteractionScope.CONTRACT -> StateSlice(
-            phase              = "",
-            objective          = null,
-            contractsCompleted = 0,
-            totalContracts     = 0,
-            executionStarted   = false,
-            executionCompleted = false,
-            assemblyStarted    = false,
-            assemblyValidated  = false,
-            assemblyCompleted  = false,
-            references         = emptyList()
+            assemblyStarted   = state.assembly.assemblyStarted,
+            assemblyValidated = state.assembly.assemblyValidated,
+            references        = listOf("assemblyStarted", "assemblyValidated")
         )
 
         InteractionScope.TASK -> StateSlice(
-            phase              = "",
-            objective          = null,
-            contractsCompleted = 0,
-            totalContracts     = 0,
-            executionStarted   = false,
-            executionCompleted = false,
-            assemblyStarted    = false,
-            assemblyValidated  = false,
-            assemblyCompleted  = false,
-            references         = emptyList()
+            executionCompleted = state.execution.fullyExecuted,
+            assemblyStarted    = state.assembly.assemblyStarted,
+            references         = listOf("executionCompleted", "assemblyStarted")
         )
 
         InteractionScope.EXECUTION -> StateSlice(
-            phase              = "",
-            objective          = null,
-            contractsCompleted = 0,
-            totalContracts     = 0,
-            executionStarted   = false,
-            executionCompleted = false,
-            assemblyStarted    = false,
-            assemblyValidated  = false,
-            assemblyCompleted  = false,
-            references         = emptyList()
+            executionCompleted = state.execution.fullyExecuted,
+            assemblyStarted    = state.assembly.assemblyStarted,
+            assemblyValidated  = state.assembly.assemblyValidated,
+            assemblyCompleted  = state.assembly.assemblyCompleted,
+            references         = listOf("executionCompleted", "assemblyStarted",
+                                        "assemblyValidated", "assemblyCompleted")
         )
 
         InteractionScope.SIMULATION -> StateSlice(
-            phase              = "",
-            objective          = null,
-            contractsCompleted = 0,
-            totalContracts     = 0,
-            executionStarted   = false,
-            executionCompleted = false,
-            assemblyStarted    = false,
-            assemblyValidated  = false,
-            assemblyCompleted  = false,
-            references         = emptyList()
+            assemblyStarted = state.assembly.assemblyStarted,
+            references      = listOf("assemblyStarted")
         )
     }
 
@@ -96,16 +66,9 @@ class InteractionMapper {
      */
     fun extractFromSimulationView(view: SimulationView): StateSlice {
         return StateSlice(
-            phase              = "simulation_${view.mode}",
-            objective          = view.summary,
-            contractsCompleted = 0,
-            totalContracts     = 0,
-            executionStarted   = false,
-            executionCompleted = false,
-            assemblyStarted    = false,
-            assemblyValidated  = false,
-            assemblyCompleted  = false,
-            references         = view.details
+            phase      = "simulation_${view.mode}",
+            objective  = view.summary,
+            references = view.details
         )
     }
 }
@@ -115,16 +78,17 @@ class InteractionMapper {
  *
  * Used as the intermediate value between [InteractionMapper] and
  * [InteractionFormatter].  Contains no methods and performs no computation.
+ * Fields with no structural equivalent carry their data class defaults.
  */
 data class StateSlice(
-    val phase: String,
-    val objective: String?,
-    val contractsCompleted: Int,
-    val totalContracts: Int,
-    val executionStarted: Boolean,
-    val executionCompleted: Boolean,
-    val assemblyStarted: Boolean,
-    val assemblyValidated: Boolean,
+    val phase: String = "",
+    val objective: String? = null,
+    val contractsCompleted: Int = 0,
+    val totalContracts: Int = 0,
+    val executionStarted: Boolean = false,
+    val executionCompleted: Boolean = false,
+    val assemblyStarted: Boolean = false,
+    val assemblyValidated: Boolean = false,
     val assemblyCompleted: Boolean = false,
-    val references: List<String>
+    val references: List<String> = emptyList()
 )
