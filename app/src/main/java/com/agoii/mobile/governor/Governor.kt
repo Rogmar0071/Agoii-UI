@@ -167,7 +167,7 @@ class Governor(
                     projectId, EventTypes.TASK_ASSIGNED,
                     mapOf(
                         "taskId"       to task.taskId,
-                        "contractorId" to contractor!!.id,
+                        "contractorId" to (contractor?.id ?: return GovernorResult.WAITING),
                         "contract_id"  to contractId,
                         "position"     to position,
                         "total"        to total

@@ -2,6 +2,7 @@ package com.agoii.mobile.governance
 
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.core.TransitionLaw
 
 // ─── GovernanceGate — Single Write Authority ──────────────────────────────────
 
@@ -10,7 +11,7 @@ import com.agoii.mobile.core.EventTypes
  *
  * Rules:
  *  - ALL event writes MUST pass through [appendEvent]; no caller may bypass this gate.
- *  - The gate writes unconditionally — it does NOT evaluate module state or make decisions.
+ *  - The gate enforces [TransitionLaw] before writing — illegal transitions are rejected.
  *  - The Governor is the sole decision authority; it checks module adapters BEFORE calling
  *    [appendEvent], never after.
  *  - [MODULE_ENFORCEMENT_MAP] is the deterministic declaration of which module adapter
@@ -38,7 +39,8 @@ class GovernanceGate(private val eventStore: EventRepository) {
     }
 
     /**
-     * Appends [type]/[payload] to [projectId]'s ledger unconditionally.
+     * Appends [type]/[payload] to [projectId]'s ledger after verifying the transition
+     * is permitted by [TransitionLaw].
      *
      * The Governor must have already verified all required module states via
      * [MODULE_ENFORCEMENT_MAP] before calling this method.
@@ -46,8 +48,14 @@ class GovernanceGate(private val eventStore: EventRepository) {
      * @param projectId The project ledger to write to.
      * @param type      The event type string.
      * @param payload   The event payload.
+     * @throws IllegalStateException if the transition from the current last event to [type]
+     *         is not permitted by [TransitionLaw].
      */
     fun appendEvent(projectId: String, type: String, payload: Map<String, Any>) {
+        val last = eventStore.loadEvents(projectId).lastOrNull()
+        check(last == null || TransitionLaw.isAllowed(last.type, type)) {
+            "TransitionLaw violation: '${last?.type}' → '$type' is not a permitted transition"
+        }
         eventStore.appendEvent(projectId, type, payload)
     }
 }
