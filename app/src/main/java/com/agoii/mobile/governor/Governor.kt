@@ -471,6 +471,30 @@ class Governor(
     }
 
     /**
+     * Admission gate for external event proposals.
+     * Validates the event type is known and the transition is permitted before
+     * delegating to the internal ledger. Governor is the sole authority that
+     * may accept or reject event proposals.
+     *
+     * Returns true if the event was admitted and appended; false if rejected.
+     */
+    fun proposeEvent(
+        projectId: String,
+        eventType: String,
+        payload: Map<String, Any> = emptyMap()
+    ): Boolean {
+        if (eventType !in EventTypes.ALL) return false
+        val events = eventStore.loadEvents(projectId)
+        val lastType = events.lastOrNull()?.type
+        if (lastType != null) {
+            val allowedNext = VALID_TRANSITIONS[lastType]
+            if (allowedNext != null && allowedNext != eventType) return false
+        }
+        eventStore.appendEvent(projectId, eventType, payload)
+        return true
+    }
+
+    /**
      * User-action entry trigger: appends an intent_submitted event.
      * Governor is the sole authority allowed to write to the event ledger.
      */
