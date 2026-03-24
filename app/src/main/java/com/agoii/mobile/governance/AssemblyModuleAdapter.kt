@@ -8,24 +8,20 @@ import com.agoii.mobile.assembly.AssemblyResult
  * AssemblyModuleAdapter — exposes the full structural state of the assembly module
  * after an [com.agoii.mobile.assembly.AssemblyValidator] pass.
  *
- * The Governor queries this adapter before appending [com.agoii.mobile.core.EventTypes.ASSEMBLY_VALIDATED].
- * Validation is complete only when [AssemblyResult.isValid] is true.
+ * This adapter exposes structural state only. The Governor reads [getStateSignature]
+ * and decides whether to append ASSEMBLY_VALIDATED or return NO_EVENT;
+ * the adapter does not validate or decide.
  *
- * @property result The full assembly validation result from [AssemblyValidator].
+ * @property result The full assembly validation result from AssemblyValidator.
  */
 class AssemblyModuleAdapter(
     private val result: AssemblyResult
 ) : ModuleState {
 
     override fun getStateSignature(): Map<String, Any> = mapOf(
-        "assemblyValid"      to result.isValid,
-        "completionStatus"   to result.completionStatus,
-        "missingElements"    to result.missingElements,
-        "failedChecks"       to result.failedChecks
+        "assemblyValid"    to result.isValid,
+        "completionStatus" to result.completionStatus,
+        "missingElements"  to result.missingElements,
+        "failedChecks"     to result.failedChecks
     )
-
-    override fun isValidationComplete(): Boolean = result.isValid
-
-    override fun getValidationErrors(): List<String> =
-        result.missingElements.map { "Missing: $it" } + result.failedChecks
 }

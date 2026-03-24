@@ -6,10 +6,10 @@ package com.agoii.mobile.governance
  * ContractIssuanceAdapter — exposes the full structural state of the contract-issuance
  * gate, combining [StateSurfaceMirror] (SSM) and [ContractSurfaceLayer] (CSL) checks.
  *
- * This adapter replaces any internal boolean gate logic in the Governor with an
- * explicit, queryable structural snapshot.
+ * This adapter exposes structural state only. The Governor reads [getStateSignature]
+ * and makes all issuance decisions itself; the adapter does not validate or decide.
  *
- * @property ssmInitialized  Whether the SSM has been explicitly initialised.
+ * @property ssmInitialized  Whether the SSM has been explicitly initialized.
  * @property lgSurfaceActive Whether the LG surface is currently active in the SSM.
  * @property cslResult       Full CSL evaluation result for the contract at [position].
  * @property position        The contract-issuance position being evaluated.
@@ -28,13 +28,4 @@ class ContractIssuanceAdapter(
         "cslReason"       to cslResult.reason,
         "position"        to position
     )
-
-    override fun isValidationComplete(): Boolean =
-        ssmInitialized && lgSurfaceActive && cslResult.outcome == Outcome.ALLOWED
-
-    override fun getValidationErrors(): List<String> = buildList {
-        if (!ssmInitialized)  add("SSM not initialized")
-        if (!lgSurfaceActive) add("LG surface not active in SSM")
-        if (cslResult.outcome != Outcome.ALLOWED) add(cslResult.reason)
-    }
 }

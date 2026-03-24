@@ -128,17 +128,20 @@ class Governor(
                     cslResult       = csl.evaluate(ContractDescriptor(SurfaceType.LG, 1, 0, VC)),
                     position        = 1
                 )
-                val total = Replay(eventStore).replay(projectId).totalContracts
-                if (!gate.appendEvent(
-                        projectId, EventTypes.CONTRACT_STARTED,
-                        mapOf(
-                            "contract_id" to "contract_1",
-                            "position"    to 1,
-                            "total"       to total
-                        ),
-                        listOf(issuanceAdapter)
-                    )
+                val issuanceState = issuanceAdapter.getStateSignature()
+                if (issuanceState["ssmInitialized"] != true ||
+                    issuanceState["lgSurfaceActive"] != true ||
+                    issuanceState["cslOutcome"] != "ALLOWED"
                 ) return GovernorResult.DRIFT
+                val total = Replay(eventStore).replay(projectId).totalContracts
+                gate.appendEvent(
+                    projectId, EventTypes.CONTRACT_STARTED,
+                    mapOf(
+                        "contract_id" to "contract_1",
+                        "position"    to 1,
+                        "total"       to total
+                    )
+                )
                 GovernorResult.ADVANCED
             }
 
@@ -150,18 +153,19 @@ class Governor(
                 val total      = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
                 val task       = taskForContract(contractId, position)
                 val contractor = registry.findBestMatch(task.requiredCapabilities)
-                    ?: return GovernorResult.WAITING
                 val contractorAdapter = ContractorModuleAdapter(contractor)
+                if (contractorAdapter.getStateSignature()["contractorAvailable"] != true) {
+                    return GovernorResult.WAITING
+                }
                 gate.appendEvent(
                     projectId, EventTypes.TASK_ASSIGNED,
                     mapOf(
                         "taskId"       to task.taskId,
-                        "contractorId" to contractor.id,
+                        "contractorId" to (contractor?.id ?: ""),
                         "contract_id"  to contractId,
                         "position"     to position,
                         "total"        to total
-                    ),
-                    listOf(contractorAdapter)
+                    )
                 )
                 GovernorResult.ADVANCED
             }
@@ -183,8 +187,8 @@ class Governor(
             }
 
             // ── task_started → execute via contractor ─────────────────────────────
-            // Step 3: Governor calls ExecutionOrchestrator (pure worker) and emits
-            // task_completed on success, task_failed on execution error.
+            // Step 3: Governor calls ExecutionOrchestrator (pure worker), reads the
+            // execution module state, and decides which event to emit.
             lastType == EventTypes.TASK_STARTED -> {
                 val contractId    = lastEvent.payload["contract_id"]  as? String ?: "unknown"
                 val contractorId  = lastEvent.payload["contractorId"] as? String ?: ""
@@ -196,9 +200,11 @@ class Governor(
                 val contractor    = registry.allVerified().find { it.id == contractorId }
                     ?: registry.findBestMatch(task.requiredCapabilities)
                     ?: return GovernorResult.WAITING
-                val result = orchestrator.execute(task, contractor)
-                val execAdapter = ExecutionModuleAdapter(result, checkValidation = false)
-                if (execAdapter.isValidationComplete()) {
+                val result      = orchestrator.execute(task, contractor)
+                val execAdapter = ExecutionModuleAdapter(result)
+                val execState   = execAdapter.getStateSignature()
+                // Governor reads executionSuccess from state signature and decides.
+                if (execState["executionSuccess"] == true) {
                     gate.appendEvent(
                         projectId, EventTypes.TASK_COMPLETED,
                         mapOf(
@@ -207,8 +213,7 @@ class Governor(
                             "contract_id"  to contractId,
                             "position"     to position,
                             "total"        to total
-                        ),
-                        listOf(execAdapter)
+                        )
                     )
                 } else {
                     gate.appendEvent(
@@ -227,8 +232,8 @@ class Governor(
             }
 
             // ── task_completed → validate the result ──────────────────────────────
-            // Step 4: Governor re-calls ExecutionOrchestrator (deterministic) to
-            // validate the artifact. Emits task_validated or task_failed.
+            // Step 4: Governor re-calls ExecutionOrchestrator (deterministic), reads the
+            // validation verdict from the execution module state, and decides which event to emit.
             lastType == EventTypes.TASK_COMPLETED -> {
                 val contractId   = lastEvent.payload["contract_id"]  as? String ?: "unknown"
                 val contractorId = lastEvent.payload["contractorId"] as? String ?: ""
@@ -240,9 +245,11 @@ class Governor(
                 val contractor   = registry.allVerified().find { it.id == contractorId }
                     ?: registry.findBestMatch(task.requiredCapabilities)
                     ?: return GovernorResult.WAITING
-                val result = orchestrator.execute(task, contractor)
-                val execAdapter = ExecutionModuleAdapter(result, checkValidation = true)
-                if (execAdapter.isValidationComplete()) {
+                val result      = orchestrator.execute(task, contractor)
+                val execAdapter = ExecutionModuleAdapter(result)
+                val execState   = execAdapter.getStateSignature()
+                // Governor reads validationVerdict from state signature and decides.
+                if (execState["validationVerdict"] == "VALIDATED") {
                     gate.appendEvent(
                         projectId, EventTypes.TASK_VALIDATED,
                         mapOf(
@@ -250,8 +257,7 @@ class Governor(
                             "contract_id" to contractId,
                             "position"    to position,
                             "total"       to total
-                        ),
-                        listOf(execAdapter)
+                        )
                     )
                 } else {
                     val reason = result.validationResult.failureReasons.joinToString("; ")
@@ -380,16 +386,19 @@ class Governor(
                         cslResult       = csl.evaluate(ContractDescriptor(SurfaceType.LG, nextPosition, 0, VC)),
                         position        = nextPosition
                     )
-                    if (!gate.appendEvent(
-                            projectId, EventTypes.CONTRACT_STARTED,
-                            mapOf(
-                                "contract_id" to "contract_$nextPosition",
-                                "position"    to nextPosition,
-                                "total"       to total
-                            ),
-                            listOf(issuanceAdapter)
-                        )
+                    val issuanceState = issuanceAdapter.getStateSignature()
+                    if (issuanceState["ssmInitialized"] != true ||
+                        issuanceState["lgSurfaceActive"] != true ||
+                        issuanceState["cslOutcome"] != "ALLOWED"
                     ) return GovernorResult.DRIFT
+                    gate.appendEvent(
+                        projectId, EventTypes.CONTRACT_STARTED,
+                        mapOf(
+                            "contract_id" to "contract_$nextPosition",
+                            "position"    to nextPosition,
+                            "total"       to total
+                        )
+                    )
                 } else {
                     gate.appendEvent(
                         projectId, EventTypes.EXECUTION_COMPLETED,
@@ -401,14 +410,15 @@ class Governor(
 
             // ── assembly_started → validate integrity before emitting assembly_validated ─
             // AssemblyValidator is a pure, state-driven check — no mutation occurs.
-            // If validation fails, assembly_validated is blocked and NO_EVENT is returned.
+            // Governor reads assemblyValid from the assembly module state and decides.
             lastType == EventTypes.ASSEMBLY_STARTED -> {
-                val replayState    = Replay(eventStore).replay(projectId)
-                val assemblyResult = AssemblyValidator().validate(replayState)
+                val replayState     = Replay(eventStore).replay(projectId)
+                val assemblyResult  = AssemblyValidator().validate(replayState)
                 val assemblyAdapter = AssemblyModuleAdapter(assemblyResult)
-                if (!gate.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap(), listOf(assemblyAdapter))) {
+                if (assemblyAdapter.getStateSignature()["assemblyValid"] != true) {
                     return GovernorResult.NO_EVENT
                 }
+                gate.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap())
                 GovernorResult.ADVANCED
             }
 

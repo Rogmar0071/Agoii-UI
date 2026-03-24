@@ -1,6 +1,7 @@
 package com.agoii.mobile.governance
 
 import com.agoii.mobile.core.EventRepository
+import com.agoii.mobile.core.EventTypes
 
 // ─── GovernanceGate — Single Write Authority ──────────────────────────────────
 
@@ -9,35 +10,46 @@ import com.agoii.mobile.core.EventRepository
  *
  * Rules:
  *  - ALL event writes MUST pass through [appendEvent]; no caller may bypass this gate.
- *  - The gate evaluates every [ModuleState] in [requiredStates] before writing.
- *  - If ANY required state reports [ModuleState.isValidationComplete] == false,
- *    the write is blocked and [appendEvent] returns false without touching the ledger.
- *  - When [requiredStates] is empty the gate always allows the write.
+ *  - The gate writes unconditionally — it does NOT evaluate module state or make decisions.
+ *  - The Governor is the sole decision authority; it checks module adapters BEFORE calling
+ *    [appendEvent], never after.
+ *  - [MODULE_ENFORCEMENT_MAP] is the deterministic declaration of which module adapter
+ *    the Governor MUST consult before issuing each guarded event type.
  *  - The gate is stateless; it never caches or mutates module state.
  */
 class GovernanceGate(private val eventStore: EventRepository) {
 
+    companion object {
+        /**
+         * Deterministic event-to-module enforcement map.
+         *
+         * For each event type listed here, the Governor MUST query the corresponding
+         * module adapter's [ModuleState.getStateSignature] and verify the required
+         * structural conditions before calling [appendEvent].
+         *
+         * This map is declarative and static — it is never evaluated at runtime by the gate.
+         * It is the canonical record of which module governs each guarded event.
+         */
+        val MODULE_ENFORCEMENT_MAP: Map<String, String> = mapOf(
+            EventTypes.CONTRACT_STARTED   to "ContractIssuanceAdapter",
+            EventTypes.TASK_ASSIGNED      to "ContractorModuleAdapter",
+            EventTypes.TASK_COMPLETED     to "ExecutionModuleAdapter",
+            EventTypes.TASK_VALIDATED     to "ExecutionModuleAdapter",
+            EventTypes.ASSEMBLY_VALIDATED to "AssemblyModuleAdapter"
+        )
+    }
+
     /**
-     * Attempts to append [type]/[payload] to [projectId]'s ledger.
+     * Appends [type]/[payload] to [projectId]'s ledger unconditionally.
      *
-     * @param projectId     The project ledger to write to.
-     * @param type          The event type string.
-     * @param payload       The event payload.
-     * @param requiredStates Module states that must ALL be validation-complete for the
-     *                      write to proceed.
-     * @return true when the event was appended; false when blocked by a failing state.
+     * The Governor must have already verified all required module states via
+     * [MODULE_ENFORCEMENT_MAP] before calling this method.
+     *
+     * @param projectId The project ledger to write to.
+     * @param type      The event type string.
+     * @param payload   The event payload.
      */
-    fun appendEvent(
-        projectId: String,
-        type: String,
-        payload: Map<String, Any>,
-        requiredStates: List<ModuleState> = emptyList()
-    ): Boolean {
-        val errors = requiredStates
-            .filter { !it.isValidationComplete() }
-            .flatMap { it.getValidationErrors() }
-        if (errors.isNotEmpty()) return false
+    fun appendEvent(projectId: String, type: String, payload: Map<String, Any>) {
         eventStore.appendEvent(projectId, type, payload)
-        return true
     }
 }

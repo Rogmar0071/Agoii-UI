@@ -8,8 +8,8 @@ import com.agoii.mobile.contractor.ContractorProfile
  * ContractorModuleAdapter — exposes the full structural state of the contractor module
  * for a single contractor-resolution attempt.
  *
- * The Governor queries this adapter before appending any task-assignment event.
- * Validation is complete only when a verified contractor is present.
+ * This adapter exposes structural state only. The Governor reads [getStateSignature]
+ * and decides whether to proceed or return WAITING; the adapter does not validate or decide.
  *
  * @property contractor The resolved contractor profile, or null if none was found.
  */
@@ -22,10 +22,4 @@ class ContractorModuleAdapter(
         "contractorId"        to (contractor?.id ?: ""),
         "contractorVerified"  to (contractor != null)
     )
-
-    override fun isValidationComplete(): Boolean = contractor != null
-
-    override fun getValidationErrors(): List<String> =
-        if (contractor != null) emptyList()
-        else listOf("No verified contractor available for task assignment")
 }
