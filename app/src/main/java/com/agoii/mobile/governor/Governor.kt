@@ -35,9 +35,8 @@ import com.agoii.mobile.tasks.TaskAssignmentStatus
  *     → task_started
  *     → task_completed
  *     → task_validated
- *     → contract_completed
- *     → execution_completed
- *     → execution_completed
+ *     → contract_completed       [governor: passive — modules emit execution_completed]
+ *     → execution_completed      (module-driven)
  *     → assembly_started
  *     → assembly_validated
  *     → assembly_completed
@@ -328,13 +327,8 @@ class Governor(
                 GovernorResult.ADVANCED
             }
 
-            // ── contract_completed → emit execution_completed ─────────────────────
-            // Relies only on event flow progression — no totals or counts.
+            // ── contract_completed → passive; lifecycle closure is deferred to modules ──
             lastType == EventTypes.CONTRACT_COMPLETED -> {
-                eventStore.appendEvent(
-                    projectId, EventTypes.EXECUTION_COMPLETED,
-                    emptyMap()
-                )
                 GovernorResult.ADVANCED
             }
 
