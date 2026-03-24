@@ -26,10 +26,9 @@ class AssemblyTest {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    private fun store(events: List<Event> = emptyList()): EventRepository {
-        val repo = EventRepository()
-        events.forEach { repo.appendEvent("proj", it.type, it.payload) }
-        return repo
+    private fun store(): EventRepository = object : EventRepository {
+        override fun appendEvent(projectId: String, type: String, payload: Map<String, Any>) {}
+        override fun loadEvents(projectId: String): List<Event> = emptyList()
     }
 
     /** Builds a minimal but complete single-contract execution ledger. */
