@@ -118,13 +118,13 @@ class Governor(
             // Reads total from replay so the value is ledger-derived, not inferred.
             lastType == EventTypes.EXECUTION_STARTED -> {
                 if (!canIssue(1)) return GovernorResult.DRIFT
-                val total = resolveInt(lastEvent.payload["total_contracts"]) ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
+                val state = Replay(eventStore).replayStructuralState(projectId)
                 eventStore.appendEvent(
                     projectId, EventTypes.CONTRACT_STARTED,
                     mapOf(
                         "contract_id" to "contract_1",
                         "position"    to 1,
-                        "total"       to total
+                        "total"       to state.execution.totalTasks
                     )
                 )
                 GovernorResult.ADVANCED
