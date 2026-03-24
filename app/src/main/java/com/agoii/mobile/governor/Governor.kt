@@ -10,8 +10,13 @@ import com.agoii.mobile.decision.DecisionAction
 import com.agoii.mobile.decision.DecisionEngine
 import com.agoii.mobile.execution.ExecutionOrchestrator
 import com.agoii.mobile.execution.ValidationVerdict
+import com.agoii.mobile.core.ReplayState
+import com.agoii.mobile.governance.AssemblyModuleState
 import com.agoii.mobile.governance.ContractDescriptor
+import com.agoii.mobile.governance.ContractModuleState
 import com.agoii.mobile.governance.ContractSurfaceLayer
+import com.agoii.mobile.governance.ExecutionModuleState
+import com.agoii.mobile.governance.IntentModuleState
 import com.agoii.mobile.governance.Outcome
 import com.agoii.mobile.governance.StateSurfaceMirror
 import com.agoii.mobile.governance.SurfaceType
@@ -380,6 +385,7 @@ class Governor(
             // If validation fails, assembly_validated is blocked and NO_EVENT is returned.
             lastType == EventTypes.ASSEMBLY_STARTED -> {
                 val replayState = Replay(eventStore).replay(projectId)
+                if (!verifySystemState(replayState)) return GovernorResult.DRIFT
                 val assemblyResult = AssemblyValidator().validate(replayState)
                 if (!assemblyResult.isValid) return GovernorResult.NO_EVENT
                 eventStore.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap())
@@ -396,6 +402,34 @@ class Governor(
 
             else -> GovernorResult.NO_EVENT
         }
+    }
+
+    /**
+     * Verifies cross-module system consistency using the ModuleState abstraction.
+     * Each module is the single source of truth for its own validity; the governor
+     * only enforces ordering invariants across modules (no validation logic is duplicated here).
+     *
+     * Returns false (triggering DRIFT) if any module is individually invalid or if
+     * cross-module ordering is violated.
+     */
+    private fun verifySystemState(state: ReplayState): Boolean {
+        val intent     = IntentModuleState(state)
+        val contracts  = ContractModuleState(state)
+        val execution  = ExecutionModuleState(state)
+        val assembly   = AssemblyModuleState(state)
+
+        // Module validity
+        if (!intent.isValid())    return false
+        if (!contracts.isValid()) return false
+        if (!execution.isValid()) return false
+        if (!assembly.isValid())  return false
+
+        // Cross-module consistency
+        if (contracts.isComplete() && !intent.isComplete())    return false
+        if (execution.isComplete() && !contracts.isComplete()) return false
+        if (assembly.isComplete()  && !execution.isComplete()) return false
+
+        return true
     }
 
     /**
