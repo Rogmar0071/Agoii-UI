@@ -9,10 +9,13 @@ import com.agoii.mobile.core.Replay
 import com.agoii.mobile.decision.DecisionAction
 import com.agoii.mobile.decision.DecisionEngine
 import com.agoii.mobile.execution.ExecutionOrchestrator
-import com.agoii.mobile.execution.ValidationVerdict
+import com.agoii.mobile.governance.AssemblyModuleAdapter
 import com.agoii.mobile.governance.ContractDescriptor
+import com.agoii.mobile.governance.ContractIssuanceAdapter
+import com.agoii.mobile.governance.ContractorModuleAdapter
 import com.agoii.mobile.governance.ContractSurfaceLayer
-import com.agoii.mobile.governance.Outcome
+import com.agoii.mobile.governance.ExecutionModuleAdapter
+import com.agoii.mobile.governance.GovernanceGate
 import com.agoii.mobile.governance.StateSurfaceMirror
 import com.agoii.mobile.governance.SurfaceType
 import com.agoii.mobile.tasks.Task
@@ -51,8 +54,9 @@ class Governor(
     private val orchestrator: ExecutionOrchestrator = ExecutionOrchestrator()
 ) {
 
-    private val ssm = StateSurfaceMirror()
-    private val csl = ContractSurfaceLayer()
+    private val ssm  = StateSurfaceMirror()
+    private val csl  = ContractSurfaceLayer()
+    private val gate = GovernanceGate(eventStore)
     // DecisionEngine is the sole authority for task-failure branching decisions.
     private val decisionEngine = DecisionEngine(registry)
 
@@ -118,16 +122,23 @@ class Governor(
             // ── execution_started → start the first contract ──────────────────────
             // Reads total from replay so the value is ledger-derived, not inferred.
             lastType == EventTypes.EXECUTION_STARTED -> {
-                if (!canIssue(1)) return GovernorResult.DRIFT
-                val total = Replay(eventStore).replay(projectId).totalContracts
-                eventStore.appendEvent(
-                    projectId, EventTypes.CONTRACT_STARTED,
-                    mapOf(
-                        "contract_id" to "contract_1",
-                        "position"    to 1,
-                        "total"       to total
-                    )
+                val issuanceAdapter = ContractIssuanceAdapter(
+                    ssmInitialized  = ssm.isInitialized(),
+                    lgSurfaceActive = ssm.getActiveSurfaces().contains(SurfaceType.LG),
+                    cslResult       = csl.evaluate(ContractDescriptor(SurfaceType.LG, 1, 0, VC)),
+                    position        = 1
                 )
+                val total = Replay(eventStore).replay(projectId).totalContracts
+                if (!gate.appendEvent(
+                        projectId, EventTypes.CONTRACT_STARTED,
+                        mapOf(
+                            "contract_id" to "contract_1",
+                            "position"    to 1,
+                            "total"       to total
+                        ),
+                        listOf(issuanceAdapter)
+                    )
+                ) return GovernorResult.DRIFT
                 GovernorResult.ADVANCED
             }
 
@@ -140,7 +151,8 @@ class Governor(
                 val task       = taskForContract(contractId, position)
                 val contractor = registry.findBestMatch(task.requiredCapabilities)
                     ?: return GovernorResult.WAITING
-                eventStore.appendEvent(
+                val contractorAdapter = ContractorModuleAdapter(contractor)
+                gate.appendEvent(
                     projectId, EventTypes.TASK_ASSIGNED,
                     mapOf(
                         "taskId"       to task.taskId,
@@ -148,7 +160,8 @@ class Governor(
                         "contract_id"  to contractId,
                         "position"     to position,
                         "total"        to total
-                    )
+                    ),
+                    listOf(contractorAdapter)
                 )
                 GovernorResult.ADVANCED
             }
@@ -156,7 +169,7 @@ class Governor(
             // ── task_assigned → start the task ────────────────────────────────────
             // Step 2 of the task execution lifecycle.
             lastType == EventTypes.TASK_ASSIGNED -> {
-                eventStore.appendEvent(
+                gate.appendEvent(
                     projectId, EventTypes.TASK_STARTED,
                     mapOf(
                         "taskId"       to (lastEvent.payload["taskId"]       ?: ""),
@@ -184,8 +197,9 @@ class Governor(
                     ?: registry.findBestMatch(task.requiredCapabilities)
                     ?: return GovernorResult.WAITING
                 val result = orchestrator.execute(task, contractor)
-                if (result.success) {
-                    eventStore.appendEvent(
+                val execAdapter = ExecutionModuleAdapter(result, checkValidation = false)
+                if (execAdapter.isValidationComplete()) {
+                    gate.appendEvent(
                         projectId, EventTypes.TASK_COMPLETED,
                         mapOf(
                             "taskId"       to task.taskId,
@@ -193,10 +207,11 @@ class Governor(
                             "contract_id"  to contractId,
                             "position"     to position,
                             "total"        to total
-                        )
+                        ),
+                        listOf(execAdapter)
                     )
                 } else {
-                    eventStore.appendEvent(
+                    gate.appendEvent(
                         projectId, EventTypes.TASK_FAILED,
                         mapOf(
                             "taskId"       to task.taskId,
@@ -226,19 +241,21 @@ class Governor(
                     ?: registry.findBestMatch(task.requiredCapabilities)
                     ?: return GovernorResult.WAITING
                 val result = orchestrator.execute(task, contractor)
-                if (result.validationResult.verdict == ValidationVerdict.VALIDATED) {
-                    eventStore.appendEvent(
+                val execAdapter = ExecutionModuleAdapter(result, checkValidation = true)
+                if (execAdapter.isValidationComplete()) {
+                    gate.appendEvent(
                         projectId, EventTypes.TASK_VALIDATED,
                         mapOf(
                             "taskId"      to task.taskId,
                             "contract_id" to contractId,
                             "position"    to position,
                             "total"       to total
-                        )
+                        ),
+                        listOf(execAdapter)
                     )
                 } else {
                     val reason = result.validationResult.failureReasons.joinToString("; ")
-                    eventStore.appendEvent(
+                    gate.appendEvent(
                         projectId, EventTypes.TASK_FAILED,
                         mapOf(
                             "taskId"       to task.taskId,
@@ -259,7 +276,7 @@ class Governor(
                 val contractId = lastEvent.payload["contract_id"] as? String ?: "unknown"
                 val position   = resolveInt(lastEvent.payload["position"]) ?: 1
                 val total      = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
-                eventStore.appendEvent(
+                gate.appendEvent(
                     projectId, EventTypes.CONTRACT_COMPLETED,
                     mapOf(
                         "contract_id" to contractId,
@@ -289,7 +306,7 @@ class Governor(
                 val outcome = decisionEngine.evaluate(task, contractor, failureCount)
                 when (outcome.action) {
                     DecisionAction.RETRY -> {
-                        eventStore.appendEvent(
+                        gate.appendEvent(
                             projectId, EventTypes.TASK_ASSIGNED,
                             mapOf(
                                 "taskId"       to task.taskId,
@@ -303,7 +320,7 @@ class Governor(
                     }
                     DecisionAction.REASSIGN -> {
                         val newContractor = outcome.assignedContractor!!
-                        eventStore.appendEvent(
+                        gate.appendEvent(
                             projectId, EventTypes.CONTRACTOR_REASSIGNED,
                             mapOf(
                                 "taskId"               to task.taskId,
@@ -317,7 +334,7 @@ class Governor(
                         GovernorResult.ADVANCED
                     }
                     DecisionAction.ESCALATE -> {
-                        eventStore.appendEvent(
+                        gate.appendEvent(
                             projectId, EventTypes.CONTRACT_FAILED,
                             mapOf(
                                 "taskId"      to task.taskId,
@@ -332,12 +349,12 @@ class Governor(
 
             // ── contractor_reassigned → re-assign task to new contractor ──────────
             lastType == EventTypes.CONTRACTOR_REASSIGNED -> {
-                val taskId        = lastEvent.payload["taskId"]          as? String ?: ""
+                val taskId          = lastEvent.payload["taskId"]          as? String ?: ""
                 val newContractorId = lastEvent.payload["newContractorId"] as? String ?: ""
-                val contractId    = lastEvent.payload["contract_id"]     as? String ?: "unknown"
-                val position      = resolveInt(lastEvent.payload["position"]) ?: 1
-                val total         = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
-                eventStore.appendEvent(
+                val contractId      = lastEvent.payload["contract_id"]     as? String ?: "unknown"
+                val position        = resolveInt(lastEvent.payload["position"]) ?: 1
+                val total           = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
+                gate.appendEvent(
                     projectId, EventTypes.TASK_ASSIGNED,
                     mapOf(
                         "taskId"       to taskId,
@@ -357,17 +374,24 @@ class Governor(
                 val total    = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
                 if (position < total) {
                     val nextPosition = position + 1
-                    if (!canIssue(nextPosition)) return GovernorResult.DRIFT
-                    eventStore.appendEvent(
-                        projectId, EventTypes.CONTRACT_STARTED,
-                        mapOf(
-                            "contract_id" to "contract_$nextPosition",
-                            "position"    to nextPosition,
-                            "total"       to total
-                        )
+                    val issuanceAdapter = ContractIssuanceAdapter(
+                        ssmInitialized  = ssm.isInitialized(),
+                        lgSurfaceActive = ssm.getActiveSurfaces().contains(SurfaceType.LG),
+                        cslResult       = csl.evaluate(ContractDescriptor(SurfaceType.LG, nextPosition, 0, VC)),
+                        position        = nextPosition
                     )
+                    if (!gate.appendEvent(
+                            projectId, EventTypes.CONTRACT_STARTED,
+                            mapOf(
+                                "contract_id" to "contract_$nextPosition",
+                                "position"    to nextPosition,
+                                "total"       to total
+                            ),
+                            listOf(issuanceAdapter)
+                        )
+                    ) return GovernorResult.DRIFT
                 } else {
-                    eventStore.appendEvent(
+                    gate.appendEvent(
                         projectId, EventTypes.EXECUTION_COMPLETED,
                         mapOf("contracts_completed" to total)
                     )
@@ -379,10 +403,12 @@ class Governor(
             // AssemblyValidator is a pure, state-driven check — no mutation occurs.
             // If validation fails, assembly_validated is blocked and NO_EVENT is returned.
             lastType == EventTypes.ASSEMBLY_STARTED -> {
-                val replayState = Replay(eventStore).replay(projectId)
+                val replayState    = Replay(eventStore).replay(projectId)
                 val assemblyResult = AssemblyValidator().validate(replayState)
-                if (!assemblyResult.isValid) return GovernorResult.NO_EVENT
-                eventStore.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap())
+                val assemblyAdapter = AssemblyModuleAdapter(assemblyResult)
+                if (!gate.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap(), listOf(assemblyAdapter))) {
+                    return GovernorResult.NO_EVENT
+                }
                 GovernorResult.ADVANCED
             }
 
@@ -390,35 +416,12 @@ class Governor(
             VALID_TRANSITIONS.containsKey(lastType) -> {
                 val nextType = VALID_TRANSITIONS[lastType]!!
                 val payload  = buildPayload(nextType, lastEvent)
-                eventStore.appendEvent(projectId, nextType, payload)
+                gate.appendEvent(projectId, nextType, payload)
                 GovernorResult.ADVANCED
             }
 
             else -> GovernorResult.NO_EVENT
         }
-    }
-
-    /**
-     * Single gate function — the only path to contract issuance.
-     * Returns false (blocking issuance) if:
-     *  - SSM is not initialized
-     *  - LG surface is not active
-     *  - CSL evaluation rejects the contract at the given position
-     */
-    private fun canIssue(position: Int): Boolean {
-        if (!ssm.isInitialized()) return false
-        if (!ssm.getActiveSurfaces().contains(SurfaceType.LG)) return false
-
-        val result = csl.evaluate(
-            ContractDescriptor(
-                surface = SurfaceType.LG,
-                executionCount = position,
-                conditionCount = 0,
-                validationCapacity = VC
-            )
-        )
-
-        return result.outcome == Outcome.ALLOWED
     }
 
     private fun buildPayload(nextType: String, triggerEvent: Event): Map<String, Any> =
@@ -472,10 +475,10 @@ class Governor(
 
     /**
      * User-action entry trigger: appends an intent_submitted event.
-     * Governor is the sole authority allowed to write to the event ledger.
+     * All ledger writes are routed through [GovernanceGate]; no direct store access.
      */
     fun submitIntent(projectId: String, objective: String) {
-        eventStore.appendEvent(
+        gate.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
             mapOf("objective" to objective)
@@ -484,9 +487,9 @@ class Governor(
 
     /**
      * User-action entry trigger: appends a contracts_approved event.
-     * Governor is the sole authority allowed to write to the event ledger.
+     * All ledger writes are routed through [GovernanceGate]; no direct store access.
      */
     fun approveContracts(projectId: String) {
-        eventStore.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
+        gate.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
     }
 }
