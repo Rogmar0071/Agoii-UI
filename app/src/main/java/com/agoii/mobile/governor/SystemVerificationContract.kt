@@ -4,7 +4,7 @@ import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.Replay
-import com.agoii.mobile.core.ReplayState
+import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.governance.StateSurfaceMirror
 import com.agoii.mobile.governance.StructuralStateAwareness
 
@@ -25,18 +25,18 @@ data class LedgerIntegrityCheck(
 )
 
 /**
- * Result of a replay-consistency check against the expected pre-governance state.
+ * Result of a replay-consistency check against structural state invariants.
  *
- * @property passed       True when replay matches the expected idle-ready snapshot exactly.
- * @property phase        The derived phase reported by [Replay].
- * @property contracts    Human-readable contracts ratio "completed/total".
- * @property execStarted  Whether [ReplayState.executionStarted] is true.
+ * @property passed           True when none of the three structural FAIL conditions are triggered.
+ * @property fullyExecuted    Whether [ReplayStructuralState.execution.fullyExecuted] is true.
+ * @property assemblyCompleted Whether [ReplayStructuralState.assembly.assemblyCompleted] is true.
+ * @property assemblyValid    Whether [ReplayStructuralState.assembly.assemblyValid] is true.
  */
 data class ReplayConsistencyCheck(
     val passed: Boolean,
-    val phase: String,
-    val contracts: String,
-    val execStarted: Boolean
+    val fullyExecuted: Boolean,
+    val assemblyCompleted: Boolean,
+    val assemblyValid: Boolean
 )
 
 /**
@@ -141,7 +141,7 @@ class SystemVerificationContract(private val eventStore: EventRepository) {
      */
     fun verify(projectId: String): SystemVerificationReport {
         val events = eventStore.loadEvents(projectId)
-        val state  = Replay(eventStore).replay(projectId)
+        val state  = Replay(eventStore).replayStructuralState(projectId)
 
         val ledger    = checkLedgerIntegrity(events)
         val replay    = checkReplayConsistency(state)
@@ -175,16 +175,18 @@ class SystemVerificationContract(private val eventStore: EventRepository) {
 
     // ── Check 2: Replay Consistency ───────────────────────────────────────────
 
-    private fun checkReplayConsistency(state: ReplayState): ReplayConsistencyCheck {
-        val passed = state.phase == EventTypes.INTENT_SUBMITTED &&
-                     state.contractsCompleted == 0             &&
-                     state.totalContracts     == 0             &&
-                     !state.executionStarted
+    private fun checkReplayConsistency(state: ReplayStructuralState): ReplayConsistencyCheck {
+        val assemblyCompletedBeforeExecution = !state.execution.fullyExecuted && state.assembly.assemblyCompleted
+        val executionMarkedCompleteWithPendingTasks = state.execution.totalTasks != state.execution.completedTasks &&
+                                                      state.execution.fullyExecuted
+        val assemblyValidBeforeExecutionComplete = state.assembly.assemblyValid && !state.execution.fullyExecuted
         return ReplayConsistencyCheck(
-            passed      = passed,
-            phase       = state.phase,
-            contracts   = "${state.contractsCompleted}/${state.totalContracts}",
-            execStarted = state.executionStarted
+            passed            = !assemblyCompletedBeforeExecution &&
+                                !executionMarkedCompleteWithPendingTasks &&
+                                !assemblyValidBeforeExecutionComplete,
+            fullyExecuted     = state.execution.fullyExecuted,
+            assemblyCompleted = state.assembly.assemblyCompleted,
+            assemblyValid     = state.assembly.assemblyValid
         )
     }
 

@@ -1,6 +1,5 @@
 package com.agoii.mobile.governor
 
-import com.agoii.mobile.assembly.AssemblyValidator
 import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
@@ -119,7 +118,7 @@ class Governor(
             // Reads total from replay so the value is ledger-derived, not inferred.
             lastType == EventTypes.EXECUTION_STARTED -> {
                 if (!canIssue(1)) return GovernorResult.DRIFT
-                val total = Replay(eventStore).replay(projectId).totalContracts
+                val total = resolveInt(lastEvent.payload["total_contracts"]) ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
                 eventStore.appendEvent(
                     projectId, EventTypes.CONTRACT_STARTED,
                     mapOf(
@@ -379,9 +378,9 @@ class Governor(
             // AssemblyValidator is a pure, state-driven check — no mutation occurs.
             // If validation fails, assembly_validated is blocked and NO_EVENT is returned.
             lastType == EventTypes.ASSEMBLY_STARTED -> {
-                val replayState = Replay(eventStore).replay(projectId)
-                val assemblyResult = AssemblyValidator().validate(replayState)
-                if (!assemblyResult.isValid) return GovernorResult.NO_EVENT
+                val state = Replay(eventStore).replayStructuralState(projectId)
+                if (!state.execution.fullyExecuted) return GovernorResult.NO_EVENT
+                if (!state.contracts.generated || !state.contracts.valid) return GovernorResult.NO_EVENT
                 eventStore.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap())
                 GovernorResult.ADVANCED
             }
