@@ -46,7 +46,7 @@ import org.junit.Test
 /**
  * Unit tests for the core layer (no Android framework required).
  *
- * Tests use [Replay.deriveState] and the audit/replay classes directly
+ * Tests use [Replay.deriveStructuralState] and the audit/replay classes directly
  * with an in-memory [EventRepository] so they run on the JVM without a device.
  *
  * Canonical contract lifecycle (per Agoii Master governance):
@@ -67,93 +67,114 @@ class CoreTest {
     // ── Replay tests ─────────────────────────────────────────────────────────
 
     @Test
-    fun `replay on empty ledger returns idle phase`() {
-        val state = Replay(store()).deriveState(emptyList())
-        assertEquals("idle", state.phase)
-        assertEquals(0, state.contractsCompleted)
-        assertEquals(0, state.totalContracts)
-        assertFalse(state.executionStarted)
-        assertFalse(state.executionCompleted)
-        assertFalse(state.assemblyStarted)
-        assertFalse(state.assemblyValidated)
-        assertNull(state.objective)
+    fun `replay on empty ledger returns no structural completion`() {
+        val state = Replay(store()).deriveStructuralState(emptyList())
+        assertFalse(state.intent.structurallyComplete)
+        assertFalse(state.contracts.generated)
+        assertFalse(state.contracts.valid)
+        assertEquals(0, state.execution.totalTasks)
+        assertEquals(0, state.execution.assignedTasks)
+        assertEquals(0, state.execution.completedTasks)
+        assertEquals(0, state.execution.validatedTasks)
+        assertFalse(state.execution.fullyExecuted)
+        assertFalse(state.assembly.assemblyStarted)
+        assertFalse(state.assembly.assemblyValidated)
+        assertFalse(state.assembly.assemblyCompleted)
+        assertFalse(state.assembly.assemblyValid)
     }
 
     @Test
-    fun `replay derives objective from intent_submitted`() {
+    fun `replay marks intent structurally complete after intent_submitted`() {
         val events = listOf(Event("intent_submitted", mapOf("objective" to "Build the thing")))
-        val state  = Replay(store()).deriveState(events)
-        assertEquals("intent_submitted", state.phase)
-        assertEquals("Build the thing", state.objective)
+        val state  = Replay(store()).deriveStructuralState(events)
+        assertTrue(state.intent.structurallyComplete)
+        assertFalse(state.contracts.generated)
     }
 
     @Test
-    fun `replay derives total_contracts from contracts_generated`() {
+    fun `replay marks contracts generated and valid after contracts_generated`() {
         val events = listOf(
             Event("intent_submitted",    mapOf("objective" to "obj")),
             Event("contracts_generated", mapOf("total" to 3.0))
         )
-        val state = Replay(store()).deriveState(events)
-        assertEquals("contracts_generated", state.phase)
-        assertEquals(3, state.totalContracts)
-        assertEquals(0, state.contractsCompleted)
+        val state = Replay(store()).deriveStructuralState(events)
+        assertTrue(state.intent.structurallyComplete)
+        assertTrue(state.contracts.generated)
+        assertTrue(state.contracts.valid)
+        assertEquals(0, state.execution.totalTasks)
     }
 
     @Test
-    fun `replay counts only contract_completed events toward contractsCompleted`() {
+    fun `replay counts task lifecycle events toward execution counters`() {
         val events = listOf(
             Event("intent_submitted",    mapOf("objective" to "obj")),
-            Event("contracts_generated", mapOf("total" to 3.0)),
+            Event("contracts_generated", mapOf("total" to 1.0)),
             Event("contracts_ready",     emptyMap()),
             Event("contracts_approved",  emptyMap()),
-            Event("execution_started",   mapOf("total_contracts" to 3.0)),
-            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
-            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
-            Event("contract_started",    mapOf("contract_id" to "contract_2", "position" to 2, "total" to 3))
+            Event("execution_started",   mapOf("total_contracts" to 1.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("task_created",        mapOf("taskId" to "contract_1-step1")),
+            Event("task_assigned",       mapOf("taskId" to "contract_1-step1", "contractorId" to "c1")),
+            Event("task_completed",      mapOf("taskId" to "contract_1-step1")),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1))
         )
-        val state = Replay(store()).deriveState(events)
-        assertEquals(EventTypes.CONTRACT_STARTED, state.phase)
-        // Only the one contract_completed event counts; contract_started does not
-        assertEquals(1, state.contractsCompleted)
-        assertTrue(state.executionStarted)
-        assertFalse(state.executionCompleted)
-        assertFalse(state.assemblyStarted)
-        assertFalse(state.assemblyValidated)
+        val state = Replay(store()).deriveStructuralState(events)
+        assertEquals(1, state.execution.totalTasks)
+        assertEquals(1, state.execution.assignedTasks)
+        assertEquals(1, state.execution.completedTasks)
+        assertEquals(0, state.execution.validatedTasks)
+        assertFalse(state.execution.fullyExecuted)
     }
 
     @Test
-    fun `replay sets executionCompleted on execution_completed event`() {
+    fun `replay sets fullyExecuted when all tasks completed and validated and execution_completed`() {
         val events = listOf(
             Event("intent_submitted",    mapOf("objective" to "obj")),
-            Event("contracts_generated", mapOf("total" to 2.0)),
+            Event("contracts_generated", mapOf("total" to 1.0)),
             Event("contracts_ready",     emptyMap()),
             Event("contracts_approved",  emptyMap()),
-            Event("execution_started",   mapOf("total_contracts" to 2.0)),
-            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 2)),
-            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 2)),
-            Event("contract_started",    mapOf("contract_id" to "contract_2", "position" to 2, "total" to 2)),
-            Event("contract_completed",  mapOf("contract_id" to "contract_2", "position" to 2, "total" to 2)),
-            Event("execution_completed", mapOf("contracts_completed" to 2))
+            Event("execution_started",   mapOf("total_contracts" to 1.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("task_created",        mapOf("taskId" to "contract_1-step1")),
+            Event("task_assigned",       mapOf("taskId" to "contract_1-step1", "contractorId" to "c1")),
+            Event("task_completed",      mapOf("taskId" to "contract_1-step1")),
+            Event("task_validated",      mapOf("taskId" to "contract_1-step1")),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("execution_completed", mapOf("contracts_completed" to 1))
         )
-        val state = Replay(store()).deriveState(events)
-        assertEquals(EventTypes.EXECUTION_COMPLETED, state.phase)
-        assertEquals(2, state.contractsCompleted)
-        assertTrue(state.executionStarted)
-        assertTrue(state.executionCompleted)
-        assertFalse(state.assemblyStarted)
-        assertFalse(state.assemblyValidated)
+        val state = Replay(store()).deriveStructuralState(events)
+        assertEquals(1, state.execution.totalTasks)
+        assertEquals(1, state.execution.completedTasks)
+        assertEquals(1, state.execution.validatedTasks)
+        assertTrue(state.execution.fullyExecuted)
+        assertFalse(state.assembly.assemblyStarted)
     }
 
     @Test
     fun `replay tracks full assembly pipeline flags`() {
-        val state = Replay(store()).deriveState(buildFullLedger())
-        assertEquals(EventTypes.ASSEMBLY_COMPLETED, state.phase)
-        assertEquals(3, state.contractsCompleted)
-        assertEquals(3, state.totalContracts)
-        assertTrue(state.executionStarted)
-        assertTrue(state.executionCompleted)
-        assertTrue(state.assemblyStarted)
-        assertTrue(state.assemblyValidated)
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 1.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 1.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("task_created",        mapOf("taskId" to "contract_1-step1")),
+            Event("task_assigned",       mapOf("taskId" to "contract_1-step1", "contractorId" to "c1")),
+            Event("task_completed",      mapOf("taskId" to "contract_1-step1")),
+            Event("task_validated",      mapOf("taskId" to "contract_1-step1")),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("execution_completed", mapOf("contracts_completed" to 1)),
+            Event("assembly_started",    emptyMap()),
+            Event("assembly_validated",  emptyMap()),
+            Event("assembly_completed",  emptyMap())
+        )
+        val state = Replay(store()).deriveStructuralState(events)
+        assertTrue(state.execution.fullyExecuted)
+        assertTrue(state.assembly.assemblyStarted)
+        assertTrue(state.assembly.assemblyValidated)
+        assertTrue(state.assembly.assemblyCompleted)
+        assertTrue(state.assembly.assemblyValid)
     }
 
     // ── LedgerAudit tests ────────────────────────────────────────────────────
@@ -301,30 +322,64 @@ class CoreTest {
     }
 
     @Test
-    fun `verify_replay detects execution_completed before all contracts done`() {
-        // Manually crafted ledger with execution_completed but only 1 of 3 contracts done.
-        // ReplayTest invariant 3 catches this.
+    fun `verify_replay detects assemblyValid without fullyExecuted invariant`() {
+        // assemblyValid=true requires fullyExecuted=true — this invariant is enforced by
+        // deriveStructuralState itself (assemblyValid cannot be true when fullyExecuted=false).
+        // This test confirms assemblyValid is false when tasks were never completed.
         val events = listOf(
             Event("intent_submitted",    mapOf("objective" to "obj")),
-            Event("contracts_generated", mapOf("total" to 3.0)),
+            Event("contracts_generated", mapOf("total" to 1.0)),
             Event("contracts_ready",     emptyMap()),
             Event("contracts_approved",  emptyMap()),
-            Event("execution_started",   mapOf("total_contracts" to 3.0)),
-            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
-            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 3)),
-            // execution_completed with only 1 of 3 contracts done
+            Event("execution_started",   mapOf("total_contracts" to 1.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
             Event("execution_completed", mapOf("contracts_completed" to 1)),
             Event("assembly_started",    emptyMap()),
             Event("assembly_validated",  emptyMap()),
             Event("assembly_completed",  emptyMap())
         )
         val result = ReplayTest(store(events)).verifyReplay("proj")
-        // Replay invariant: execution_completed only if all contracts completed
-        assertFalse(result.valid)
-        assertTrue(result.invariantErrors.any { it.contains("execution_completed") })
+        // audit passes (legal transitions), but structuralState.assembly.assemblyValid=false
+        // because no task_created/completed/validated events exist (fullyExecuted=false)
+        assertFalse(result.structuralState.assembly.assemblyValid)
+        assertFalse(result.structuralState.execution.fullyExecuted)
+        assertTrue(result.invariantErrors.isEmpty())
     }
 
-    // ── Governor tests ────────────────────────────────────────────────────────
+    @Test
+    fun `verify_replay invariant fires when tasks completed but not assigned`() {
+        // A malformed ledger where task_created, task_completed, task_validated
+        // and execution_completed are present but task_assigned is absent.
+        // fullyExecuted=true (completedTasks==totalTasks, validatedTasks==totalTasks, executionCompleted)
+        // but assignedTasks != totalTasks — invariant 1 must fire.
+        val events = listOf(
+            Event("intent_submitted",    mapOf("objective" to "obj")),
+            Event("contracts_generated", mapOf("total" to 1.0)),
+            Event("contracts_ready",     emptyMap()),
+            Event("contracts_approved",  emptyMap()),
+            Event("execution_started",   mapOf("total_contracts" to 1.0)),
+            Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("task_created",        mapOf("taskId" to "contract_1-step1")),
+            // task_assigned deliberately omitted
+            Event("task_completed",      mapOf("taskId" to "contract_1-step1")),
+            Event("task_validated",      mapOf("taskId" to "contract_1-step1")),
+            Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
+            Event("execution_completed", mapOf("contracts_completed" to 1))
+        )
+        val state = Replay(store()).deriveStructuralState(events)
+        // fullyExecuted is true: totalTasks=1, completedTasks=1, validatedTasks=1, executionCompleted
+        assertTrue(state.execution.fullyExecuted)
+        // but assignedTasks=0 != totalTasks=1
+        assertEquals(0, state.execution.assignedTasks)
+        assertEquals(1, state.execution.totalTasks)
+        // ReplayTest invariant must catch this data inconsistency
+        val result = ReplayTest(store(events)).verifyReplay("proj")
+        assertFalse(result.valid)
+        assertTrue(result.invariantErrors.any { it.contains("assignedTasks") })
+    }
+
+
 
     @Test
     fun `governor returns NO_EVENT on empty ledger`() {
@@ -707,14 +762,12 @@ class CoreTest {
                     "| Audit errors: ${verification.auditResult.errors}",
             verification.valid
         )
-        val state = verification.replayState
-        assertEquals(EventTypes.ASSEMBLY_COMPLETED, state.phase)
-        assertEquals(2, state.contractsCompleted)
-        assertEquals(2, state.totalContracts)
-        assertTrue(state.executionStarted)
-        assertTrue(state.executionCompleted)
-        assertTrue(state.assemblyStarted)
-        assertTrue(state.assemblyValidated)
+        val state = verification.structuralState
+        assertTrue(state.intent.structurallyComplete)
+        assertTrue(state.contracts.generated)
+        assertTrue(state.contracts.valid)
+        assertTrue(state.assembly.assemblyStarted)
+        assertTrue(state.assembly.assemblyValidated)
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

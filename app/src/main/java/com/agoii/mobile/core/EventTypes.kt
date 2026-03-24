@@ -19,6 +19,7 @@ object EventTypes {
     const val ASSEMBLY_COMPLETED  = "assembly_completed"
 
     // ── Task execution lifecycle events ──────────────────────────────────────
+    const val TASK_CREATED            = "task_created"
     const val TASK_ASSIGNED           = "task_assigned"
     const val TASK_STARTED            = "task_started"
     const val TASK_COMPLETED          = "task_completed"
@@ -39,6 +40,7 @@ object EventTypes {
         ASSEMBLY_STARTED,
         ASSEMBLY_VALIDATED,
         ASSEMBLY_COMPLETED,
+        TASK_CREATED,
         TASK_ASSIGNED,
         TASK_STARTED,
         TASK_COMPLETED,
