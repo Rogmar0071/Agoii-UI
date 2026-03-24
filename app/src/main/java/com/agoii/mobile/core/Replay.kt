@@ -1,5 +1,32 @@
 package com.agoii.mobile.core
 
+// ── Structural state model exposed for Governor ──────────────────────────────
+
+/** Structural view of intent phase: whether an intent has been submitted. */
+data class IntentStructuralState(val structurallyComplete: Boolean)
+
+/** Structural view of contracts phase: whether contracts are in a valid state. */
+data class ContractsStructuralState(val valid: Boolean)
+
+/** Structural view of execution phase: whether execution has fully completed. */
+data class ExecutionStructuralState(val fullyExecuted: Boolean)
+
+/** Structural view of assembly phase: whether the assembly has been validated. */
+data class AssemblyStructuralState(val assemblyValid: Boolean)
+
+/**
+ * Structural state derived from the full event ledger replay.
+ *
+ * This is the ONLY source of truth that Governor may use for decisions.
+ * Fields reflect system-level structural milestones, never raw payload data.
+ */
+data class ReplayStructuralState(
+    val intent: IntentStructuralState,
+    val contracts: ContractsStructuralState,
+    val execution: ExecutionStructuralState,
+    val assembly: AssemblyStructuralState
+)
+
 /**
  * Derived state produced by replaying the full event ledger.
  * This is the ONLY source of truth for the UI — never computed from direct mutations.
@@ -113,6 +140,34 @@ class Replay(private val eventStore: EventRepository) {
             assemblyValidated = assemblyValidated,
             objective = objective,
             assemblyCompleted = assemblyCompleted
+        )
+    }
+
+    /**
+     * Derives structural state from the event ledger for Governor decision-making.
+     *
+     * Returns a [ReplayStructuralState] whose four fields are the ONLY inputs
+     * Governor is permitted to use. Each field reflects a structural milestone:
+     *  - intent.structurallyComplete — an intent has been submitted.
+     *  - contracts.valid             — contracts have been generated.
+     *  - execution.fullyExecuted     — execution phase has fully completed.
+     *  - assembly.assemblyValid      — assembly has been validated.
+     */
+    fun replayStructuralState(projectId: String): ReplayStructuralState {
+        val state = replay(projectId)
+        return ReplayStructuralState(
+            intent = IntentStructuralState(
+                structurallyComplete = state.phase != "idle"
+            ),
+            contracts = ContractsStructuralState(
+                valid = state.phase !in setOf("idle", EventTypes.INTENT_SUBMITTED)
+            ),
+            execution = ExecutionStructuralState(
+                fullyExecuted = state.executionCompleted
+            ),
+            assembly = AssemblyStructuralState(
+                assemblyValid = state.assemblyValidated
+            )
         )
     }
 
