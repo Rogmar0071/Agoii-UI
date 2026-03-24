@@ -33,8 +33,6 @@ class GovernanceGate(private val eventStore: EventRepository) {
         val MODULE_ENFORCEMENT_MAP: Map<String, String> = mapOf(
             EventTypes.CONTRACT_STARTED   to "ContractIssuanceAdapter",
             EventTypes.TASK_ASSIGNED      to "ContractorModuleAdapter",
-            EventTypes.TASK_COMPLETED     to "ExecutionModuleAdapter",
-            EventTypes.TASK_VALIDATED     to "ExecutionModuleAdapter",
             EventTypes.ASSEMBLY_VALIDATED to "AssemblyModuleAdapter"
         )
     }

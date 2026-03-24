@@ -19,7 +19,6 @@ class ContractorModuleAdapter(
 
     override fun getStateSignature(): Map<String, Any> = mapOf(
         "contractorAvailable" to (contractor != null),
-        "contractorId"        to (contractor?.id ?: ""),
-        "contractorVerified"  to (contractor != null)
+        "contractorId"        to (contractor?.id ?: "")
     )
 }
