@@ -1,5 +1,47 @@
 package com.agoii.mobile.core
 
+// ── Structural-truth state hierarchy (CR 1.4) ────────────────────────────────
+
+/**
+ * Top-level structural truth produced by Replay.
+ * Governor makes all decisions from this object; no module self-validates.
+ */
+data class ReplayStructuralState(
+    val intent: IntentStructuralState,
+    val contracts: ContractStructuralState,
+    val execution: ExecutionStructuralState,
+    val assembly: AssemblyStructuralState
+)
+
+data class IntentStructuralState(
+    val exists: Boolean,
+    val objectiveDefined: Boolean,
+    val structurallyComplete: Boolean
+)
+
+data class ContractStructuralState(
+    val generated: Boolean,
+    val totalContracts: Int,
+    val valid: Boolean
+)
+
+data class ExecutionStructuralState(
+    val totalTasks: Int,
+    val assignedTasks: Int,
+    val completedTasks: Int,
+    val validatedTasks: Int,
+    val fullyExecuted: Boolean
+)
+
+data class AssemblyStructuralState(
+    val contractsClosed: Boolean,
+    val executionClosed: Boolean,
+    val structurallyComplete: Boolean,
+    val assemblyValid: Boolean
+)
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Derived state produced by replaying the full event ledger.
  * This is the ONLY source of truth for the UI — never computed from direct mutations.
@@ -115,6 +157,124 @@ class Replay(private val eventStore: EventRepository) {
             assemblyCompleted = assemblyCompleted
         )
     }
+
+    // ── Structural-truth API (CR 1.4) ────────────────────────────────────────
+
+    /**
+     * Returns the full structural truth for [projectId] by replaying the ledger.
+     * This is the authoritative read used by Governor for ALL structural decisions.
+     */
+    fun replayStructuralState(projectId: String): ReplayStructuralState {
+        val events = eventStore.loadEvents(projectId)
+        return deriveStructuralState(events)
+    }
+
+    /**
+     * Pure function: events → [ReplayStructuralState].
+     * No I/O, no side effects, fully deterministic.
+     */
+    fun deriveStructuralState(events: List<Event>): ReplayStructuralState {
+        // ── Step 1: Build base state ──────────────────────────────────────────
+        var intentExists = false
+        var intentObjective: String? = null
+        var totalContracts = 0
+        var contractsGenerated = false
+        var contractsCompleted = 0
+        var executionCompleted = false
+        var assemblyValidated = false
+
+        // taskId → latest lifecycle state
+        val taskStates = mutableMapOf<String, String>()
+
+        for (event in events) {
+            when (event.type) {
+                EventTypes.INTENT_SUBMITTED -> {
+                    intentExists = true
+                    intentObjective = event.payload["objective"] as? String
+                }
+                EventTypes.CONTRACTS_GENERATED -> {
+                    contractsGenerated = true
+                    totalContracts = resolveInt(event.payload["total"])
+                        ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
+                }
+                EventTypes.CONTRACT_COMPLETED -> {
+                    contractsCompleted++
+                }
+                EventTypes.EXECUTION_COMPLETED -> {
+                    executionCompleted = true
+                }
+                EventTypes.ASSEMBLY_VALIDATED -> {
+                    assemblyValidated = true
+                }
+                EventTypes.TASK_ASSIGNED -> {
+                    val taskId = event.payload["task_id"] as? String
+                    if (taskId != null) taskStates[taskId] = EventTypes.TASK_ASSIGNED
+                }
+                EventTypes.TASK_STARTED -> {
+                    val taskId = event.payload["task_id"] as? String
+                    if (taskId != null) taskStates[taskId] = EventTypes.TASK_STARTED
+                }
+                EventTypes.TASK_COMPLETED -> {
+                    val taskId = event.payload["task_id"] as? String
+                    if (taskId != null) taskStates[taskId] = EventTypes.TASK_COMPLETED
+                }
+                EventTypes.TASK_VALIDATED -> {
+                    val taskId = event.payload["task_id"] as? String
+                    if (taskId != null) taskStates[taskId] = EventTypes.TASK_VALIDATED
+                }
+            }
+        }
+
+        // ── Step 2: Derive structural sub-states ─────────────────────────────
+        val intentState = IntentStructuralState(
+            exists = intentExists,
+            objectiveDefined = intentObjective != null,
+            structurallyComplete = intentExists && intentObjective != null
+        )
+
+        val contractState = ContractStructuralState(
+            generated = contractsGenerated,
+            totalContracts = totalContracts,
+            valid = contractsGenerated && totalContracts > 0
+        )
+
+        val activeStates = setOf(
+            EventTypes.TASK_ASSIGNED,
+            EventTypes.TASK_STARTED,
+            EventTypes.TASK_COMPLETED,
+            EventTypes.TASK_VALIDATED
+        )
+        val assignedCount   = taskStates.count { it.value in activeStates }
+        val completedCount  = taskStates.count {
+            it.value == EventTypes.TASK_COMPLETED || it.value == EventTypes.TASK_VALIDATED
+        }
+        val validatedCount  = taskStates.count { it.value == EventTypes.TASK_VALIDATED }
+
+        val executionState = ExecutionStructuralState(
+            totalTasks     = taskStates.size,
+            assignedTasks  = assignedCount,
+            completedTasks = completedCount,
+            validatedTasks = validatedCount,
+            fullyExecuted  = executionCompleted
+        )
+
+        val contractsClosed = totalContracts > 0 && contractsCompleted >= totalContracts
+        val assemblyState = AssemblyStructuralState(
+            contractsClosed     = contractsClosed,
+            executionClosed     = executionCompleted,
+            structurallyComplete = contractsClosed && executionCompleted,
+            assemblyValid       = assemblyValidated
+        )
+
+        return ReplayStructuralState(
+            intent    = intentState,
+            contracts = contractState,
+            execution = executionState,
+            assembly  = assemblyState
+        )
+    }
+
+    // ── End structural-truth API ──────────────────────────────────────────────
 
     /** Gson deserialises all numbers as Double; this helper normalises to Int. */
     private fun resolveInt(value: Any?): Int? = when (value) {
