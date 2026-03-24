@@ -1,6 +1,5 @@
 package com.agoii.mobile.governor
 
-import com.agoii.mobile.assembly.AssemblyValidator
 import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
@@ -8,8 +7,6 @@ import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.decision.DecisionAction
 import com.agoii.mobile.decision.DecisionEngine
-import com.agoii.mobile.execution.ExecutionOrchestrator
-import com.agoii.mobile.execution.ValidationVerdict
 import com.agoii.mobile.governance.ContractDescriptor
 import com.agoii.mobile.governance.ContractSurfaceLayer
 import com.agoii.mobile.governance.Outcome
@@ -46,9 +43,8 @@ import com.agoii.mobile.tasks.TaskAssignmentStatus
  *     → assembly_completed
  */
 class Governor(
-    private val eventStore:   EventRepository,
-    private val registry:     ContractorRegistry    = ContractorRegistry(),
-    private val orchestrator: ExecutionOrchestrator = ExecutionOrchestrator()
+    private val eventStore: EventRepository,
+    private val registry:   ContractorRegistry = ContractorRegistry()
 ) {
 
     private val ssm = StateSurfaceMirror()
@@ -108,18 +104,25 @@ class Governor(
         val lastEvent = events.last()
         val lastType  = lastEvent.type
 
+        // ── Terminal states — return before structural checks ─────────────────
+        if (lastType == EventTypes.ASSEMBLY_COMPLETED) return GovernorResult.COMPLETED
+        if (lastType == EventTypes.CONTRACTS_READY)    return GovernorResult.WAITING_FOR_APPROVAL
+
+        // ── Structural truth — Replay is the sole decision authority ──────────
+        val replay = Replay(eventStore).replayStructuralState(projectId)
+
+        // Gate 1: Intent must be structurally complete
+        if (!replay.intent.structurallyComplete) return GovernorResult.NO_EVENT
+
+        // Gate 2: Contracts must be valid if generation has been attempted
+        if (replay.contracts.generated && !replay.contracts.valid) return GovernorResult.DRIFT
+
         return when {
-            // ── Approval gate — MUST stop; do not append anything ─────────────────
-            lastType == EventTypes.CONTRACTS_READY    -> GovernorResult.WAITING_FOR_APPROVAL
-
-            // ── Terminal state ────────────────────────────────────────────────────
-            lastType == EventTypes.ASSEMBLY_COMPLETED -> GovernorResult.COMPLETED
-
             // ── execution_started → start the first contract ──────────────────────
             // Reads total from replay so the value is ledger-derived, not inferred.
             lastType == EventTypes.EXECUTION_STARTED -> {
                 if (!canIssue(1)) return GovernorResult.DRIFT
-                val total = Replay(eventStore).replay(projectId).totalContracts
+                val total = replay.contracts.totalContracts
                 eventStore.appendEvent(
                     projectId, EventTypes.CONTRACT_STARTED,
                     mapOf(
@@ -169,87 +172,32 @@ class Governor(
                 GovernorResult.ADVANCED
             }
 
-            // ── task_started → execute via contractor ─────────────────────────────
-            // Step 3: Governor calls ExecutionOrchestrator (pure worker) and emits
-            // task_completed on success, task_failed on execution error.
+            // ── task_started → wait for external execution ────────────────────────
+            // Governor no longer drives task execution. Replay structural truth is
+            // the sole authority; Governor waits until execution_completed is seen.
             lastType == EventTypes.TASK_STARTED -> {
-                val contractId    = lastEvent.payload["contract_id"]  as? String ?: "unknown"
-                val contractorId  = lastEvent.payload["contractorId"] as? String ?: ""
-                val taskId        = lastEvent.payload["taskId"]       as? String
-                    ?: "$contractId-step1"
-                val position      = resolveInt(lastEvent.payload["position"]) ?: 1
-                val total         = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
-                val task          = taskForContract(contractId, position, taskId)
-                val contractor    = registry.allVerified().find { it.id == contractorId }
-                    ?: registry.findBestMatch(task.requiredCapabilities)
-                    ?: return GovernorResult.WAITING
-                val result = orchestrator.execute(task, contractor)
-                if (result.success) {
-                    eventStore.appendEvent(
-                        projectId, EventTypes.TASK_COMPLETED,
-                        mapOf(
-                            "taskId"       to task.taskId,
-                            "contractorId" to contractor.id,
-                            "contract_id"  to contractId,
-                            "position"     to position,
-                            "total"        to total
-                        )
-                    )
-                } else {
-                    eventStore.appendEvent(
-                        projectId, EventTypes.TASK_FAILED,
-                        mapOf(
-                            "taskId"       to task.taskId,
-                            "contractorId" to contractor.id,
-                            "contract_id"  to contractId,
-                            "position"     to position,
-                            "total"        to total,
-                            "reason"       to (result.error ?: "Execution error")
-                        )
-                    )
-                }
-                GovernorResult.ADVANCED
+                if (!replay.execution.fullyExecuted) return GovernorResult.WAITING
+                GovernorResult.WAITING
             }
 
-            // ── task_completed → validate the result ──────────────────────────────
-            // Step 4: Governor re-calls ExecutionOrchestrator (deterministic) to
-            // validate the artifact. Emits task_validated or task_failed.
+            // ── task_completed → advance to task_validated via replay truth ─────────
+            // ValidationVerdict removed; Governor emits task_validated based solely
+            // on Replay structural state — no execution module is consulted.
             lastType == EventTypes.TASK_COMPLETED -> {
-                val contractId   = lastEvent.payload["contract_id"]  as? String ?: "unknown"
-                val contractorId = lastEvent.payload["contractorId"] as? String ?: ""
-                val taskId       = lastEvent.payload["taskId"]       as? String
+                val contractId = lastEvent.payload["contract_id"]  as? String ?: "unknown"
+                val taskId     = lastEvent.payload["taskId"]       as? String
                     ?: "$contractId-step1"
-                val position     = resolveInt(lastEvent.payload["position"]) ?: 1
-                val total        = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
-                val task         = taskForContract(contractId, position, taskId)
-                val contractor   = registry.allVerified().find { it.id == contractorId }
-                    ?: registry.findBestMatch(task.requiredCapabilities)
-                    ?: return GovernorResult.WAITING
-                val result = orchestrator.execute(task, contractor)
-                if (result.validationResult.verdict == ValidationVerdict.VALIDATED) {
-                    eventStore.appendEvent(
-                        projectId, EventTypes.TASK_VALIDATED,
-                        mapOf(
-                            "taskId"      to task.taskId,
-                            "contract_id" to contractId,
-                            "position"    to position,
-                            "total"       to total
-                        )
+                val position   = resolveInt(lastEvent.payload["position"]) ?: 1
+                val total      = resolveInt(lastEvent.payload["total"])    ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
+                eventStore.appendEvent(
+                    projectId, EventTypes.TASK_VALIDATED,
+                    mapOf(
+                        "taskId"      to taskId,
+                        "contract_id" to contractId,
+                        "position"    to position,
+                        "total"       to total
                     )
-                } else {
-                    val reason = result.validationResult.failureReasons.joinToString("; ")
-                    eventStore.appendEvent(
-                        projectId, EventTypes.TASK_FAILED,
-                        mapOf(
-                            "taskId"       to task.taskId,
-                            "contractorId" to contractor.id,
-                            "contract_id"  to contractId,
-                            "position"     to position,
-                            "total"        to total,
-                            "reason"       to reason
-                        )
-                    )
-                }
+                )
                 GovernorResult.ADVANCED
             }
 
@@ -375,13 +323,11 @@ class Governor(
                 GovernorResult.ADVANCED
             }
 
-            // ── assembly_started → validate integrity before emitting assembly_validated ─
-            // AssemblyValidator is a pure, state-driven check — no mutation occurs.
-            // If validation fails, assembly_validated is blocked and NO_EVENT is returned.
+            // ── assembly_started → emit assembly_validated from replay truth ───────
+            // AssemblyValidator removed; structural completeness is derived from Replay.
+            // assembly_validated is emitted only when all contracts and execution are closed.
             lastType == EventTypes.ASSEMBLY_STARTED -> {
-                val replayState = Replay(eventStore).replay(projectId)
-                val assemblyResult = AssemblyValidator().validate(replayState)
-                if (!assemblyResult.isValid) return GovernorResult.NO_EVENT
+                if (!replay.assembly.structurallyComplete) return GovernorResult.NO_EVENT
                 eventStore.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap())
                 GovernorResult.ADVANCED
             }
