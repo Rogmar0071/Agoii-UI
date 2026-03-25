@@ -37,7 +37,7 @@ class InteractionFormatter {
             slice.assemblyCompleted  -> "assembly: complete"
             slice.assemblyValidated  -> "assembly: validated"
             slice.assemblyStarted    -> "assembly: started"
-            else                     -> "assembly: pending"
+            else                     -> "assembly: not started"
         }
         return "$executionLabel | $assemblyLabel"
     }
@@ -74,7 +74,7 @@ class InteractionFormatter {
             slice.assemblyStarted    -> "assembly_started"
             slice.executionCompleted -> "execution_completed"
             slice.executionStarted   -> "execution_started"
-            else                     -> "pending"
+            else                     -> "execution_not_started"
         }
         return "status=$status"
     }

@@ -3,15 +3,11 @@ package com.agoii.mobile.ui.core
 import com.agoii.mobile.core.ReplayStructuralState
 
 /**
- * Reads a [ReplayStructuralState] and exposes the ledger's current assembly state and
- * active task identifier.
+ * Reads a [ReplayStructuralState] and exposes the ledger's current assembly state.
  *
  * Responsibility: mapping only — no computation beyond reading [ReplayStructuralState].
  */
 class LedgerViewEngine(private val projection: StateProjection = StateProjection()) {
-
-    /** The task currently being processed, or null if none is active. */
-    val activeTask: String? get() = _uiState?.activeTaskId
 
     /** Whether the assembly phase has been started. */
     val assemblyStarted: Boolean get() = _uiState?.assemblyStarted ?: false

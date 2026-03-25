@@ -68,7 +68,6 @@ class UIArchitectureTest {
     @Test
     fun `StateProjection maps idle state correctly`() {
         val ui = StateProjection().project(idle())
-        assertNull(ui.activeTaskId)
         assertFalse(ui.isComplete)
         assertFalse(ui.assemblyStarted)
         assertFalse(ui.assemblyValidated)
@@ -97,7 +96,6 @@ class UIArchitectureTest {
     @Test
     fun `LedgerViewEngine returns defaults before any render`() {
         val engine = LedgerViewEngine()
-        assertNull(engine.activeTask)
         assertFalse(engine.assemblyStarted)
         assertFalse(engine.assemblyValidated)
         assertFalse(engine.assemblyCompleted)
@@ -206,24 +204,25 @@ class UIArchitectureTest {
     // ── ExecutionModuleUI ─────────────────────────────────────────────────────
 
     @Test
-    fun `ExecutionModuleUI idle state shows no task activity`() {
+    fun `ExecutionModuleUI idle state shows no assembly activity`() {
         val ui = StateProjection().project(idle())
         val result = ExecutionModuleUI().present(ui)
-        assertFalse(result.taskStarted)
-        assertFalse(result.taskCompleted)
-        assertFalse(result.taskFailed)
-        assertEquals(0, result.retryCount)
-        assertEquals("pending", result.validationStatus)
+        assertFalse(result.executionStarted)
+        assertFalse(result.executionCompleted)
+        assertFalse(result.assemblyStarted)
+        assertFalse(result.assemblyValidated)
+        assertFalse(result.assemblyCompleted)
     }
 
     @Test
-    fun `ExecutionModuleUI assembly completed state shows task activity`() {
+    fun `ExecutionModuleUI assembly completed state shows assembly activity`() {
         val ui = StateProjection().project(assemblyCompleted())
         val result = ExecutionModuleUI().present(ui)
-        assertTrue(result.taskStarted)
-        assertTrue(result.taskCompleted)
-        assertFalse(result.taskFailed)
-        assertEquals("validated", result.validationStatus)
+        assertFalse(result.executionStarted)
+        assertFalse(result.executionCompleted)
+        assertTrue(result.assemblyStarted)
+        assertTrue(result.assemblyValidated)
+        assertTrue(result.assemblyCompleted)
     }
 
     // ── UIModuleRegistry ──────────────────────────────────────────────────────
