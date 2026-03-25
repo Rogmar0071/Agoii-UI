@@ -2,6 +2,7 @@ package com.agoii.mobile.governor
 
 import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.core.Event
+import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.decision.DecisionAction
@@ -51,6 +52,7 @@ class Governor(
     private val orchestrator: ExecutionOrchestrator = ExecutionOrchestrator()
 ) {
 
+    private val eventLedger = EventLedger(eventStore)
     private val ssm = StateSurfaceMirror()
     private val csl = ContractSurfaceLayer()
     // DecisionEngine is the sole authority for task-failure branching decisions.
@@ -120,7 +122,7 @@ class Governor(
                 if (!canIssue(1)) return GovernorResult.DRIFT
                 val totalContracts = resolveInt(lastEvent.payload["total_contracts"])
                     ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
-                eventStore.appendEvent(
+                eventLedger.appendEvent(
                     projectId, EventTypes.CONTRACT_STARTED,
                     mapOf(
                         "contract_id" to "contract_1",
@@ -141,7 +143,7 @@ class Governor(
                 val task       = taskForContract(contractId, position)
                 val contractor = registry.findBestMatch(task.requiredCapabilities)
                     ?: return GovernorResult.WAITING
-                eventStore.appendEvent(
+                eventLedger.appendEvent(
                     projectId, EventTypes.TASK_ASSIGNED,
                     mapOf(
                         "taskId"       to task.taskId,
@@ -157,7 +159,7 @@ class Governor(
             // ── task_assigned → start the task ────────────────────────────────────
             // Step 2 of the task execution lifecycle.
             lastType == EventTypes.TASK_ASSIGNED -> {
-                eventStore.appendEvent(
+                eventLedger.appendEvent(
                     projectId, EventTypes.TASK_STARTED,
                     mapOf(
                         "taskId"       to (lastEvent.payload["taskId"]       ?: ""),
@@ -187,7 +189,7 @@ class Governor(
                     ?: return GovernorResult.WAITING
                 val result = orchestrator.execute(task, contractor)
                 if (result.success) {
-                    eventStore.appendEvent(
+                    eventLedger.appendEvent(
                         projectId, EventTypes.TASK_COMPLETED,
                         mapOf(
                             "taskId"       to task.taskId,
@@ -198,7 +200,7 @@ class Governor(
                         )
                     )
                 } else {
-                    eventStore.appendEvent(
+                    eventLedger.appendEvent(
                         projectId, EventTypes.TASK_FAILED,
                         mapOf(
                             "taskId"       to task.taskId,
@@ -230,7 +232,7 @@ class Governor(
                     ?: return GovernorResult.WAITING
                 val result = orchestrator.execute(task, contractor)
                 if (result.validationResult.verdict == ValidationVerdict.VALIDATED) {
-                    eventStore.appendEvent(
+                    eventLedger.appendEvent(
                         projectId, EventTypes.TASK_VALIDATED,
                         mapOf(
                             "taskId"      to task.taskId,
@@ -241,7 +243,7 @@ class Governor(
                     )
                 } else {
                     val reason = result.validationResult.failureReasons.joinToString("; ")
-                    eventStore.appendEvent(
+                    eventLedger.appendEvent(
                         projectId, EventTypes.TASK_FAILED,
                         mapOf(
                             "taskId"       to task.taskId,
@@ -263,7 +265,7 @@ class Governor(
                 val position   = resolveInt(lastEvent.payload["position"]) ?: 1
                 val total      = resolveInt(lastEvent.payload["total"])
                     ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
-                eventStore.appendEvent(
+                eventLedger.appendEvent(
                     projectId, EventTypes.CONTRACT_COMPLETED,
                     mapOf(
                         "contract_id" to contractId,
@@ -294,7 +296,7 @@ class Governor(
                 val outcome = decisionEngine.evaluate(task, contractor, failureCount)
                 when (outcome.action) {
                     DecisionAction.RETRY -> {
-                        eventStore.appendEvent(
+                        eventLedger.appendEvent(
                             projectId, EventTypes.TASK_ASSIGNED,
                             mapOf(
                                 "taskId"       to task.taskId,
@@ -308,7 +310,7 @@ class Governor(
                     }
                     DecisionAction.REASSIGN -> {
                         val newContractor = outcome.assignedContractor!!
-                        eventStore.appendEvent(
+                        eventLedger.appendEvent(
                             projectId, EventTypes.CONTRACTOR_REASSIGNED,
                             mapOf(
                                 "taskId"               to task.taskId,
@@ -322,7 +324,7 @@ class Governor(
                         GovernorResult.ADVANCED
                     }
                     DecisionAction.ESCALATE -> {
-                        eventStore.appendEvent(
+                        eventLedger.appendEvent(
                             projectId, EventTypes.CONTRACT_FAILED,
                             mapOf(
                                 "taskId"      to task.taskId,
@@ -343,7 +345,7 @@ class Governor(
                 val position        = resolveInt(lastEvent.payload["position"]) ?: 1
                 val total           = resolveInt(lastEvent.payload["total"])
                     ?: EventTypes.DEFAULT_TOTAL_CONTRACTS
-                eventStore.appendEvent(
+                eventLedger.appendEvent(
                     projectId, EventTypes.TASK_ASSIGNED,
                     mapOf(
                         "taskId"       to taskId,
@@ -368,7 +370,7 @@ class Governor(
                     val nextPosition   = position + 1
                     val nextContractId = "contract_$nextPosition"
                     if (!canIssue(nextPosition)) return GovernorResult.DRIFT
-                    eventStore.appendEvent(
+                    eventLedger.appendEvent(
                         projectId, EventTypes.CONTRACT_STARTED,
                         mapOf(
                             "contract_id" to nextContractId,
@@ -377,7 +379,7 @@ class Governor(
                         )
                     )
                 } else {
-                    eventStore.appendEvent(
+                    eventLedger.appendEvent(
                         projectId, EventTypes.EXECUTION_COMPLETED,
                         emptyMap()
                     )
@@ -392,7 +394,7 @@ class Governor(
                 val executionCompletedSeen =
                     events.any { it.type == EventTypes.EXECUTION_COMPLETED }
                 if (!executionCompletedSeen) return GovernorResult.NO_EVENT
-                eventStore.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap())
+                eventLedger.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap())
                 GovernorResult.ADVANCED
             }
 
@@ -400,7 +402,7 @@ class Governor(
             VALID_TRANSITIONS.containsKey(lastType) -> {
                 val nextType = VALID_TRANSITIONS[lastType]!!
                 val payload  = buildPayload(nextType, lastEvent)
-                eventStore.appendEvent(projectId, nextType, payload)
+                eventLedger.appendEvent(projectId, nextType, payload)
                 GovernorResult.ADVANCED
             }
 
@@ -482,7 +484,7 @@ class Governor(
      * Governor is the sole authority allowed to write to the event ledger.
      */
     fun submitIntent(projectId: String, objective: String) {
-        eventStore.appendEvent(
+        eventLedger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
             mapOf("objective" to objective)
@@ -494,6 +496,6 @@ class Governor(
      * Governor is the sole authority allowed to write to the event ledger.
      */
     fun approveContracts(projectId: String) {
-        eventStore.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
+        eventLedger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
     }
 }
