@@ -4,39 +4,160 @@ class LedgerValidationException(message: String) : RuntimeException(message)
 
 class ValidationLayer {
 
+    // ── Internal lifecycle enum ────────────────────────────────────────────────
+
+    private enum class TaskLifecycle { ASSIGNED, STARTED, COMPLETED, VALIDATED }
+
+    // ── Derived validation state (produced by a single pass over simulated) ───
+
+    private data class ValidationState(
+        /** Index of the first sequence-number violation in simulated; -1 if none. */
+        val firstSeqViolationAt: Int,
+        /** True when ASSEMBLY_COMPLETED already exists in currentEvents (pre-candidate). */
+        val terminalLocked: Boolean,
+        /** Total contracts declared by the first CONTRACT_STARTED, or null if none seen. */
+        val totalContracts: Int?,
+        /** Number of CONTRACT_COMPLETED events in simulated. */
+        val completedContracts: Int,
+        /** Number of open (started but not yet completed) contracts in simulated. */
+        val activeContractCount: Int,
+        /** Position of the open contract in simulated; null when none is open. */
+        val activeContractPosition: Int?,
+        /** Position of the open contract BEFORE the candidate was applied; null if none. */
+        val priorActiveContractPosition: Int?,
+        /** True when EXECUTION_COMPLETED is present in simulated. */
+        val hasExecutionCompleted: Boolean,
+        /** Highest task lifecycle level per taskId derived from currentEvents only. */
+        val priorTasks: Map<String, TaskLifecycle>,
+        /** Highest task lifecycle level per taskId derived from the full simulated ledger. */
+        val simulatedTasks: Map<String, TaskLifecycle>
+    )
+
+    // ── Public entry point ────────────────────────────────────────────────────
+
     fun validate(
         projectId: String,
         type: String,
         payload: Map<String, Any>,
         currentEvents: List<Event>
     ) {
-        checkStructural(projectId, type, currentEvents)
-        checkTransition(projectId, type, currentEvents)
-        checkPayload(projectId, type, payload, currentEvents)
-        checkInvariants(projectId, type, payload, currentEvents)
-    }
-
-    // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
-
-    private fun checkStructural(projectId: String, type: String, currentEvents: List<Event>) {
+        // Phase 0 — type must be known before the candidate can be safely constructed
         if (type !in EventTypes.ALL) {
             throw LedgerValidationException("Unknown event type '$type' for '$projectId'")
         }
-        if (currentEvents.isEmpty()) {
-            if (type != EventTypes.INTENT_SUBMITTED) {
-                throw LedgerValidationException(
-                    "First event must be '${EventTypes.INTENT_SUBMITTED}' for '$projectId'"
-                )
+
+        // Phase 1 — structural: first-event rule (cannot be derived from simulated)
+        if (currentEvents.isEmpty() && type != EventTypes.INTENT_SUBMITTED) {
+            throw LedgerValidationException(
+                "First event must be '${EventTypes.INTENT_SUBMITTED}' for '$projectId'"
+            )
+        }
+
+        // Phase 2 — construct simulated ledger and derive all shared state in one pass
+        val candidateSeq = if (currentEvents.isEmpty()) 0L
+                           else currentEvents.last().sequenceNumber + 1L
+        val simulated = currentEvents + Event(
+            type = type,
+            payload = payload,
+            sequenceNumber = candidateSeq
+        )
+        val state = deriveState(simulated)
+
+        // Phase 3 — transition check (reads only currentEvents.last(), no rescan)
+        checkTransition(projectId, type, currentEvents)
+
+        // Phase 4 — payload check (reads state, no ledger rescan)
+        checkPayload(projectId, type, payload, state)
+
+        // Phase 5 — invariants (reads state, no ledger rescan)
+        checkInvariants(projectId, type, payload, state)
+    }
+
+    // ── Single-pass state derivation ──────────────────────────────────────────
+
+    private fun deriveState(simulated: List<Event>): ValidationState {
+        var firstSeqViolationAt = -1
+        var terminalLocked = false
+        var totalContracts: Int? = null
+        val activeFreq = mutableMapOf<Int, Int>()
+        var completedContracts = 0
+        var hasExecutionCompleted = false
+        val taskState = mutableMapOf<String, TaskLifecycle>()
+
+        // Snapshots captured just before the candidate (last event) is processed
+        var priorTasks: Map<String, TaskLifecycle> = emptyMap()
+        var priorActiveContractPosition: Int? = null
+
+        for (i in simulated.indices) {
+            val ev = simulated[i]
+            val isCandidate = i == simulated.size - 1
+
+            // Snapshot state before the candidate is applied
+            if (isCandidate) {
+                priorTasks = taskState.toMap()
+                priorActiveContractPosition = activeFreq.entries.firstOrNull { it.value > 0 }?.key
             }
-        } else {
-            val expectedLast = (currentEvents.size - 1).toLong()
-            if (currentEvents.last().sequenceNumber != expectedLast) {
-                throw LedgerValidationException(
-                    "Sequence gap in '$projectId': expected last=$expectedLast, " +
-                        "got=${currentEvents.last().sequenceNumber}"
-                )
+
+            // Invariant 1: sequence continuity across simulated
+            if (firstSeqViolationAt == -1 && ev.sequenceNumber != i.toLong()) {
+                firstSeqViolationAt = i
+            }
+
+            // Invariant 6: terminal lock triggered by ASSEMBLY_COMPLETED in currentEvents
+            if (!isCandidate && ev.type == EventTypes.ASSEMBLY_COMPLETED) {
+                terminalLocked = true
+            }
+
+            // Contract tracking
+            when (ev.type) {
+                EventTypes.CONTRACT_STARTED -> {
+                    val pos   = ev.payload["position"]?.let { toInt(it) }
+                    val total = ev.payload["total"]?.let { toInt(it) }
+                    if (totalContracts == null && total != null) totalContracts = total
+                    if (pos != null) activeFreq[pos] = (activeFreq[pos] ?: 0) + 1
+                }
+                EventTypes.CONTRACT_COMPLETED -> {
+                    completedContracts++
+                    val pos = ev.payload["position"]?.let { toInt(it) }
+                    if (pos != null) {
+                        val cnt = activeFreq[pos] ?: 0
+                        if (cnt > 0) activeFreq[pos] = cnt - 1
+                    }
+                }
+                EventTypes.EXECUTION_COMPLETED -> hasExecutionCompleted = true
+            }
+
+            // Task lifecycle tracking — highest level reached per task
+            val taskId = ev.payload["taskId"]?.toString()
+            if (taskId != null) {
+                val level: TaskLifecycle? = when (ev.type) {
+                    EventTypes.TASK_ASSIGNED  -> TaskLifecycle.ASSIGNED
+                    EventTypes.TASK_STARTED   -> TaskLifecycle.STARTED
+                    EventTypes.TASK_COMPLETED -> TaskLifecycle.COMPLETED
+                    EventTypes.TASK_VALIDATED -> TaskLifecycle.VALIDATED
+                    else                       -> null
+                }
+                if (level != null) {
+                    val existing = taskState[taskId]
+                    if (existing == null || level.ordinal > existing.ordinal) {
+                        taskState[taskId] = level
+                    }
+                }
             }
         }
+
+        return ValidationState(
+            firstSeqViolationAt      = firstSeqViolationAt,
+            terminalLocked           = terminalLocked,
+            totalContracts           = totalContracts,
+            completedContracts       = completedContracts,
+            activeContractCount      = activeFreq.values.sum(),
+            activeContractPosition   = activeFreq.entries.firstOrNull { it.value > 0 }?.key,
+            priorActiveContractPosition = priorActiveContractPosition,
+            hasExecutionCompleted    = hasExecutionCompleted,
+            priorTasks               = priorTasks,
+            simulatedTasks           = taskState.toMap()
+        )
     }
 
     // ── 2. TRANSITION ─────────────────────────────────────────────────────────
@@ -57,18 +178,18 @@ class ValidationLayer {
         projectId: String,
         type: String,
         payload: Map<String, Any>,
-        currentEvents: List<Event>
+        state: ValidationState
     ) {
         checkGlobalPayload(projectId, type, payload)
         when (type) {
             EventTypes.CONTRACT_STARTED    -> checkContractStarted(projectId, payload)
             EventTypes.TASK_ASSIGNED       -> checkTaskAssigned(projectId, payload)
-            EventTypes.TASK_STARTED        -> checkTaskStarted(projectId, payload, currentEvents)
-            EventTypes.TASK_COMPLETED      -> checkTaskCompleted(projectId, payload, currentEvents)
-            EventTypes.TASK_VALIDATED      -> checkTaskValidated(projectId, payload, currentEvents)
-            EventTypes.CONTRACT_COMPLETED  -> checkContractCompleted(projectId, payload, currentEvents)
-            EventTypes.EXECUTION_COMPLETED -> checkExecutionCompleted(projectId, currentEvents)
-            EventTypes.ASSEMBLY_VALIDATED  -> checkAssemblyValidated(projectId, currentEvents)
+            EventTypes.TASK_STARTED        -> checkTaskStarted(projectId, payload, state)
+            EventTypes.TASK_COMPLETED      -> checkTaskCompleted(projectId, payload, state)
+            EventTypes.TASK_VALIDATED      -> checkTaskValidated(projectId, payload, state)
+            EventTypes.CONTRACT_COMPLETED  -> checkContractCompleted(projectId, payload, state)
+            EventTypes.EXECUTION_COMPLETED -> checkExecutionCompleted(projectId, state)
+            EventTypes.ASSEMBLY_VALIDATED  -> checkAssemblyValidated(projectId, state)
         }
     }
 
@@ -137,16 +258,13 @@ class ValidationLayer {
     private fun checkTaskStarted(
         projectId: String,
         payload: Map<String, Any>,
-        currentEvents: List<Event>
+        state: ValidationState
     ) {
         val taskId = payload["taskId"]?.toString()
             ?: throw LedgerValidationException(
                 "TASK_STARTED missing 'taskId' in '$projectId'"
             )
-        val assignedIds = currentEvents
-            .filter { it.type == EventTypes.TASK_ASSIGNED }
-            .mapNotNullTo(HashSet()) { it.payload["taskId"]?.toString() }
-        if (taskId !in assignedIds) {
+        if (state.priorTasks[taskId] == null) {
             throw LedgerValidationException(
                 "TASK_STARTED: taskId '$taskId' not found in TASK_ASSIGNED events in '$projectId'"
             )
@@ -156,16 +274,14 @@ class ValidationLayer {
     private fun checkTaskCompleted(
         projectId: String,
         payload: Map<String, Any>,
-        currentEvents: List<Event>
+        state: ValidationState
     ) {
         val taskId = payload["taskId"]?.toString()
             ?: throw LedgerValidationException(
                 "TASK_COMPLETED missing 'taskId' in '$projectId'"
             )
-        val startedIds = currentEvents
-            .filter { it.type == EventTypes.TASK_STARTED }
-            .mapNotNullTo(HashSet()) { it.payload["taskId"]?.toString() }
-        if (taskId !in startedIds) {
+        val priorLevel = state.priorTasks[taskId]
+        if (priorLevel == null || priorLevel.ordinal < TaskLifecycle.STARTED.ordinal) {
             throw LedgerValidationException(
                 "TASK_COMPLETED: taskId '$taskId' not found in TASK_STARTED events in '$projectId'"
             )
@@ -175,16 +291,14 @@ class ValidationLayer {
     private fun checkTaskValidated(
         projectId: String,
         payload: Map<String, Any>,
-        currentEvents: List<Event>
+        state: ValidationState
     ) {
         val taskId = payload["taskId"]?.toString()
             ?: throw LedgerValidationException(
                 "TASK_VALIDATED missing 'taskId' in '$projectId'"
             )
-        val completedIds = currentEvents
-            .filter { it.type == EventTypes.TASK_COMPLETED }
-            .mapNotNullTo(HashSet()) { it.payload["taskId"]?.toString() }
-        if (taskId !in completedIds) {
+        val priorLevel = state.priorTasks[taskId]
+        if (priorLevel == null || priorLevel.ordinal < TaskLifecycle.COMPLETED.ordinal) {
             throw LedgerValidationException(
                 "TASK_VALIDATED: taskId '$taskId' not found in TASK_COMPLETED events in '$projectId'"
             )
@@ -194,7 +308,7 @@ class ValidationLayer {
     private fun checkContractCompleted(
         projectId: String,
         payload: Map<String, Any>,
-        currentEvents: List<Event>
+        state: ValidationState
     ) {
         val posRaw = payload["position"]
             ?: throw LedgerValidationException(
@@ -217,48 +331,34 @@ class ValidationLayer {
                 "CONTRACT_COMPLETED 'position' ($position) exceeds 'total' ($total) in '$projectId'"
             )
         }
-        // Must match the currently active (unmatched) contract.
-        // Single-pass frequency map correctly handles any duplicate positions that may exist
-        // in a corrupted ledger before Invariant 2 runs later in the pipeline.
-        val activeFrequency = mutableMapOf<Int, Int>()
-        for (ev in currentEvents) {
-            val pos = ev.payload["position"]?.let { toInt(it) } ?: continue
-            when (ev.type) {
-                EventTypes.CONTRACT_STARTED   ->
-                    activeFrequency[pos] = (activeFrequency[pos] ?: 0) + 1
-                EventTypes.CONTRACT_COMPLETED -> {
-                    val count = activeFrequency[pos] ?: 0
-                    if (count > 0) activeFrequency[pos] = count - 1
-                }
-            }
-        }
-        if ((activeFrequency[position] ?: 0) == 0) {
+        // Must close the contract that was open before the candidate was applied
+        if (position != state.priorActiveContractPosition) {
             throw LedgerValidationException(
-                "CONTRACT_COMPLETED position $position does not match active contract in '$projectId'"
+                "CONTRACT_COMPLETED position $position does not match active contract " +
+                    "(active=${state.priorActiveContractPosition}) in '$projectId'"
             )
         }
     }
 
-    private fun checkExecutionCompleted(projectId: String, currentEvents: List<Event>) {
-        val firstContractStarted = currentEvents.firstOrNull { it.type == EventTypes.CONTRACT_STARTED }
+    private fun checkExecutionCompleted(projectId: String, state: ValidationState) {
+        val total = state.totalContracts
             ?: throw LedgerValidationException(
                 "EXECUTION_COMPLETED: no CONTRACT_STARTED found in '$projectId'"
             )
-        val total = firstContractStarted.payload["total"]?.let { toInt(it) }
-            ?: throw LedgerValidationException(
-                "EXECUTION_COMPLETED: CONTRACT_STARTED has no valid 'total' in '$projectId'"
-            )
-        val completedCount = currentEvents.count { it.type == EventTypes.CONTRACT_COMPLETED }
-        if (completedCount != total) {
+        // completedContracts is from simulated; candidate is EXECUTION_COMPLETED (not
+        // CONTRACT_COMPLETED), so this equals the count in currentEvents exactly.
+        if (state.completedContracts != total) {
             throw LedgerValidationException(
                 "EXECUTION_COMPLETED: expected $total CONTRACT_COMPLETED, " +
-                    "found $completedCount in '$projectId'"
+                    "found ${state.completedContracts} in '$projectId'"
             )
         }
     }
 
-    private fun checkAssemblyValidated(projectId: String, currentEvents: List<Event>) {
-        if (currentEvents.none { it.type == EventTypes.EXECUTION_COMPLETED }) {
+    private fun checkAssemblyValidated(projectId: String, state: ValidationState) {
+        // hasExecutionCompleted is derived from simulated; candidate is ASSEMBLY_VALIDATED,
+        // so this flag is true only if EXECUTION_COMPLETED is already in currentEvents.
+        if (!state.hasExecutionCompleted) {
             throw LedgerValidationException(
                 "ASSEMBLY_VALIDATED requires EXECUTION_COMPLETED in '$projectId'"
             )
@@ -271,84 +371,38 @@ class ValidationLayer {
         projectId: String,
         type: String,
         payload: Map<String, Any>,
-        currentEvents: List<Event>
+        state: ValidationState
     ) {
-        checkInv1SequentialIntegrity(projectId, currentEvents)
-        checkInv2SingleActiveContract(projectId, type, currentEvents)
-        checkInv3TaskLifecycle(projectId, type, payload, currentEvents)
-        // Invariant 4 (all contracts completed at EXECUTION_COMPLETED) is enforced by checkExecutionCompleted
-        // Invariant 5 (no skipped lifecycle) is enforced by checkTransition via LedgerAudit
-        checkInv6TerminalLock(projectId, currentEvents)
-    }
+        // Invariant 1 — Sequential Integrity: ∀ i in simulated: seq[i] == i
+        if (state.firstSeqViolationAt >= 0) {
+            throw LedgerValidationException(
+                "Invariant 1: sequence violation in '$projectId' at index ${state.firstSeqViolationAt}"
+            )
+        }
 
-    // Invariant 1: ∀ i: ledger[i].sequence == i
-    // checkStructural already validates the last element (O(1) fast-fail); this full O(n)
-    // scan is required by the contract to detect gaps anywhere inside the existing ledger.
-    private fun checkInv1SequentialIntegrity(projectId: String, currentEvents: List<Event>) {
-        for ((index, event) in currentEvents.withIndex()) {
-            if (event.sequenceNumber != index.toLong()) {
+        // Invariant 2 — Single Active Contract: at most 1 open contract in simulated
+        if (state.activeContractCount > 1) {
+            throw LedgerValidationException(
+                "Invariant 2: ${state.activeContractCount} active contracts in '$projectId' (max 1)"
+            )
+        }
+
+        // Invariant 3 — Task Lifecycle Completeness: validated task cannot re-enter
+        if (type in TASK_LIFECYCLE_TYPES) {
+            val taskId = payload["taskId"]?.toString()
+            if (taskId != null && state.priorTasks[taskId] == TaskLifecycle.VALIDATED) {
                 throw LedgerValidationException(
-                    "Invariant 1: sequence violation in '$projectId' at index $index: " +
-                        "expected=$index actual=${event.sequenceNumber}"
+                    "Invariant 3: task '$taskId' is already validated — " +
+                        "lifecycle is complete and cannot be re-entered in '$projectId'"
                 )
             }
         }
-    }
 
-    // Invariant 2: Only one CONTRACT_STARTED without a paired CONTRACT_COMPLETED
-    private fun checkInv2SingleActiveContract(
-        projectId: String,
-        type: String,
-        currentEvents: List<Event>
-    ) {
-        val started   = currentEvents.count { it.type == EventTypes.CONTRACT_STARTED }
-        val completed = currentEvents.count { it.type == EventTypes.CONTRACT_COMPLETED }
-        val active    = started - completed
-        if (active > 1) {
-            throw LedgerValidationException(
-                "Invariant 2: $active active contracts detected in '$projectId' (max 1 allowed)"
-            )
-        }
-        if (type == EventTypes.CONTRACT_STARTED && active > 0) {
-            // active > 0 guarantees at least one CONTRACT_STARTED exists; lastOrNull is defensive
-            val openPosition = currentEvents
-                .lastOrNull { it.type == EventTypes.CONTRACT_STARTED }
-                ?.payload?.get("position")
-            throw LedgerValidationException(
-                "Invariant 2: CONTRACT_STARTED rejected — contract at position " +
-                    "$openPosition is still open in '$projectId'"
-            )
-        }
-    }
+        // Invariant 4 — Contract Coverage: delegated to checkExecutionCompleted (payload layer)
+        // Invariant 5 — No Skipped Lifecycle: delegated to checkTransition via LedgerAudit
 
-    // Invariant 3: A task that has been VALIDATED cannot be re-entered.
-    // The filter runs only for the 4 task-lifecycle event types, keeping the hot path O(n).
-    private fun checkInv3TaskLifecycle(
-        projectId: String,
-        type: String,
-        payload: Map<String, Any>,
-        currentEvents: List<Event>
-    ) {
-        if (type !in setOf(
-                EventTypes.TASK_ASSIGNED, EventTypes.TASK_STARTED,
-                EventTypes.TASK_COMPLETED, EventTypes.TASK_VALIDATED
-            )
-        ) return
-        val taskId = payload["taskId"]?.toString() ?: return
-        val validatedIds = currentEvents
-            .filter { it.type == EventTypes.TASK_VALIDATED }
-            .mapNotNullTo(HashSet()) { it.payload["taskId"]?.toString() }
-        if (taskId in validatedIds) {
-            throw LedgerValidationException(
-                "Invariant 3: task '$taskId' is already validated — " +
-                    "lifecycle is complete and cannot be re-entered in '$projectId'"
-            )
-        }
-    }
-
-    // Invariant 6: After ASSEMBLY_COMPLETED, no further events are permitted
-    private fun checkInv6TerminalLock(projectId: String, currentEvents: List<Event>) {
-        if (currentEvents.any { it.type == EventTypes.ASSEMBLY_COMPLETED }) {
+        // Invariant 6 — Terminal Lock: no event after ASSEMBLY_COMPLETED
+        if (state.terminalLocked) {
             throw LedgerValidationException(
                 "Invariant 6: terminal state reached (ASSEMBLY_COMPLETED) — " +
                     "no further events are permitted in '$projectId'"
@@ -365,5 +419,14 @@ class ValidationLayer {
         is Float  -> if (value % 1.0f == 0.0f) value.toInt() else null
         is String -> value.toIntOrNull()
         else      -> null
+    }
+
+    companion object {
+        private val TASK_LIFECYCLE_TYPES = setOf(
+            EventTypes.TASK_ASSIGNED,
+            EventTypes.TASK_STARTED,
+            EventTypes.TASK_COMPLETED,
+            EventTypes.TASK_VALIDATED
+        )
     }
 }
