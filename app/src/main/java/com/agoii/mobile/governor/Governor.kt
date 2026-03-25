@@ -74,39 +74,30 @@ class Governor {
 
             // ── Execution spine ───────────────────────────────────────────────────
 
-            EventTypes.EXECUTION_STARTED ->
+            EventTypes.EXECUTION_STARTED -> {
+                val total = deriveTotal(events) ?: return null
                 Event(
                     type = EventTypes.CONTRACT_STARTED,
-                    payload = mapOf("contract_id" to "contract_1", "position" to 1)
+                    payload = mapOf("position" to 1, "total" to total, "contract_id" to "contract_1")
                 )
+            }
 
             EventTypes.CONTRACT_STARTED -> {
                 val contractId = last.payload["contract_id"] as? String ?: return null
-                val position   = resolveInt(last.payload["position"])   ?: return null
                 Event(
                     type = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
                         "taskId"       to "$contractId-task",
-                        "contractorId" to DEFAULT_CONTRACTOR,
-                        "contract_id"  to contractId,
-                        "position"     to position
+                        "contractorId" to DEFAULT_CONTRACTOR
                     )
                 )
             }
 
             EventTypes.TASK_ASSIGNED -> {
-                val taskId       = last.payload["taskId"]       as? String ?: return null
-                val contractorId = last.payload["contractorId"] as? String ?: return null
-                val contractId   = last.payload["contract_id"]  as? String ?: return null
-                val position     = resolveInt(last.payload["position"])    ?: return null
+                val taskId = last.payload["taskId"] as? String ?: return null
                 Event(
                     type = EventTypes.TASK_STARTED,
-                    payload = mapOf(
-                        "taskId"       to taskId,
-                        "contractorId" to contractorId,
-                        "contract_id"  to contractId,
-                        "position"     to position
-                    )
+                    payload = mapOf("taskId" to taskId)
                 )
             }
 
@@ -114,25 +105,20 @@ class Governor {
             EventTypes.TASK_STARTED -> null
 
             EventTypes.TASK_COMPLETED -> {
-                val taskId     = last.payload["taskId"]      as? String ?: return null
-                val contractId = last.payload["contract_id"] as? String ?: return null
-                val position   = resolveInt(last.payload["position"])   ?: return null
+                val taskId = last.payload["taskId"] as? String ?: return null
                 Event(
                     type = EventTypes.TASK_VALIDATED,
-                    payload = mapOf(
-                        "taskId"      to taskId,
-                        "contract_id" to contractId,
-                        "position"    to position
-                    )
+                    payload = mapOf("taskId" to taskId)
                 )
             }
 
             EventTypes.TASK_VALIDATED -> {
-                val contractId = last.payload["contract_id"] as? String ?: return null
-                val position   = resolveInt(last.payload["position"])   ?: return null
+                val position = events.lastOrNull { it.type == EventTypes.CONTRACT_STARTED }
+                    ?.payload?.let { resolveInt(it["position"]) } ?: return null
+                val total = deriveTotal(events) ?: return null
                 Event(
                     type = EventTypes.CONTRACT_COMPLETED,
-                    payload = mapOf("contract_id" to contractId, "position" to position)
+                    payload = mapOf("position" to position, "total" to total)
                 )
             }
 
@@ -142,26 +128,27 @@ class Governor {
             EventTypes.CONTRACTOR_REASSIGNED -> {
                 val taskId          = last.payload["taskId"]          as? String ?: return null
                 val newContractorId = last.payload["newContractorId"] as? String ?: return null
-                val contractId      = last.payload["contract_id"]     as? String ?: return null
-                val position        = resolveInt(last.payload["position"])        ?: return null
                 Event(
                     type = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
                         "taskId"       to taskId,
-                        "contractorId" to newContractorId,
-                        "contract_id"  to contractId,
-                        "position"     to position
+                        "contractorId" to newContractorId
                     )
                 )
             }
 
             EventTypes.CONTRACT_COMPLETED -> {
                 val position = resolveInt(last.payload["position"]) ?: return null
-                if (position < EventTypes.DEFAULT_TOTAL_CONTRACTS) {
+                val total    = deriveTotal(events) ?: return null
+                if (position < total) {
                     val next = position + 1
                     Event(
                         type = EventTypes.CONTRACT_STARTED,
-                        payload = mapOf("contract_id" to "contract_$next", "position" to next)
+                        payload = mapOf(
+                            "position"    to next,
+                            "total"       to total,
+                            "contract_id" to "contract_$next"
+                        )
                     )
                 } else {
                     Event(type = EventTypes.EXECUTION_COMPLETED, payload = emptyMap())
@@ -193,5 +180,17 @@ class Governor {
         is Long   -> value.toInt()
         is String -> value.toIntOrNull()
         else      -> null
+    }
+
+    /**
+     * Derives the total contract count from the first [EventTypes.CONTRACTS_GENERATED] event
+     * in the ledger. Returns null if no such event exists or the contracts list is absent.
+     */
+    private fun deriveTotal(events: List<Event>): Int? {
+        val contractsGen = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
+            ?: return null
+        val contracts = contractsGen.payload["contracts"] as? List<*>
+            ?: return null
+        return contracts.size.takeIf { it > 0 }
     }
 }
