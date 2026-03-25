@@ -218,7 +218,16 @@ class InteractionContractTest {
 
     @Test
     fun `SUMMARY output contains phase and contract counts`() {
-        val slice = sliceWith(phase = "contract_started", contractsCompleted = 2, totalContracts = 5)
+        val slice = sliceWith(
+            phase              = "contract_started",
+            contractsCompleted = 2,
+            totalContracts     = 5,
+            executionStarted   = false,
+            executionCompleted = false,
+            assemblyStarted    = false,
+            assemblyValidated  = false,
+            assemblyCompleted  = false
+        )
         val output = formatter.format(OutputType.SUMMARY, slice)
         assertTrue("SUMMARY must include phase",    output.contains("contract_started"))
         assertTrue("SUMMARY must include completed", output.contains("2"))
@@ -227,14 +236,28 @@ class InteractionContractTest {
 
     @Test
     fun `SUMMARY output includes objective when present`() {
-        val slice = sliceWith(objective = "do the work")
+        val slice = sliceWith(
+            objective          = "do the work",
+            executionStarted   = false,
+            executionCompleted = false,
+            assemblyStarted    = false,
+            assemblyValidated  = false,
+            assemblyCompleted  = false
+        )
         val output = formatter.format(OutputType.SUMMARY, slice)
         assertTrue(output.contains("do the work"))
     }
 
     @Test
     fun `SUMMARY output omits objective label when objective is null`() {
-        val slice = sliceWith(objective = null)
+        val slice = sliceWith(
+            objective          = null,
+            executionStarted   = false,
+            executionCompleted = false,
+            assemblyStarted    = false,
+            assemblyValidated  = false,
+            assemblyCompleted  = false
+        )
         val output = formatter.format(OutputType.SUMMARY, slice)
         assertFalse(output.contains("objective"))
     }
@@ -249,6 +272,7 @@ class InteractionContractTest {
             executionCompleted = false,
             assemblyStarted    = false,
             assemblyValidated  = false,
+            assemblyCompleted  = false,
             objective          = "ship it"
         )
         val output = formatter.format(OutputType.DETAILED, slice)
@@ -262,7 +286,15 @@ class InteractionContractTest {
 
     @Test
     fun `EXPLANATION describes execution in progress correctly`() {
-        val slice = sliceWith(executionStarted = true, contractsCompleted = 1, totalContracts = 3)
+        val slice = sliceWith(
+            executionStarted   = true,
+            executionCompleted = false,
+            contractsCompleted = 1,
+            totalContracts     = 3,
+            assemblyStarted    = false,
+            assemblyValidated  = false,
+            assemblyCompleted  = false
+        )
         val output = formatter.format(OutputType.EXPLANATION, slice)
         assertTrue("EXPLANATION must mention in progress", output.contains("in progress"))
         assertTrue("EXPLANATION must mention completed count", output.contains("1"))
@@ -271,7 +303,14 @@ class InteractionContractTest {
 
     @Test
     fun `EXPLANATION describes completed execution correctly`() {
-        val slice = sliceWith(executionCompleted = true, totalContracts = 3, assemblyValidated = true)
+        val slice = sliceWith(
+            executionStarted   = false,
+            executionCompleted = true,
+            totalContracts     = 3,
+            assemblyStarted    = false,
+            assemblyValidated  = true,
+            assemblyCompleted  = false
+        )
         val output = formatter.format(OutputType.EXPLANATION, slice)
         assertTrue("EXPLANATION must mention completed", output.contains("completed"))
         assertTrue("EXPLANATION must mention assembly validated", output.contains("validated"))
@@ -279,14 +318,28 @@ class InteractionContractTest {
 
     @Test
     fun `EXPLANATION describes idle state correctly`() {
-        val slice = sliceWith(phase = "idle")
+        val slice = sliceWith(
+            phase              = "idle",
+            executionStarted   = false,
+            executionCompleted = false,
+            assemblyStarted    = false,
+            assemblyValidated  = false,
+            assemblyCompleted  = false
+        )
         val output = formatter.format(OutputType.EXPLANATION, slice)
         assertTrue("EXPLANATION must include phase name", output.contains("idle"))
     }
 
     @Test
     fun `STATUS output is minimal and contains phase`() {
-        val slice = sliceWith(phase = "contracts_ready")
+        val slice = sliceWith(
+            phase              = "contracts_ready",
+            executionStarted   = false,
+            executionCompleted = false,
+            assemblyStarted    = false,
+            assemblyValidated  = false,
+            assemblyCompleted  = false
+        )
         val output = formatter.format(OutputType.STATUS, slice)
         assertTrue("STATUS must include phase", output.contains("contracts_ready"))
         assertTrue("STATUS must be short", output.length < 50)
@@ -294,7 +347,13 @@ class InteractionContractTest {
 
     @Test
     fun `all OutputType values produce non-blank content`() {
-        val slice = sliceWith()
+        val slice = sliceWith(
+            executionStarted   = false,
+            executionCompleted = false,
+            assemblyStarted    = false,
+            assemblyValidated  = false,
+            assemblyCompleted  = false
+        )
         for (type in OutputType.values()) {
             val output = formatter.format(type, slice)
             assertTrue("Output must not be blank for $type", output.isNotBlank())
@@ -308,11 +367,11 @@ class InteractionContractTest {
         objective: String? = null,
         contractsCompleted: Int = 0,
         totalContracts: Int = 3,
-        executionStarted: Boolean = false,
-        executionCompleted: Boolean = false,
-        assemblyStarted: Boolean = false,
-        assemblyValidated: Boolean = false,
-        assemblyCompleted: Boolean = false
+        executionStarted: Boolean,
+        executionCompleted: Boolean,
+        assemblyStarted: Boolean,
+        assemblyValidated: Boolean,
+        assemblyCompleted: Boolean
     ) = StateSlice(
         phase              = phase,
         objective          = objective,
