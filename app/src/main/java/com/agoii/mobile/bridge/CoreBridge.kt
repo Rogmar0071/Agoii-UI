@@ -60,7 +60,9 @@ class CoreBridge(context: Context) {
 
         if (lastEvent?.type == EventTypes.CONTRACT_STARTED) {
             val contractId   = lastEvent.payload["contract_id"]?.toString()
-                ?: throw IllegalStateException("contract_started event missing contract_id payload")
+                ?: throw IllegalStateException(
+                    "${EventTypes.CONTRACT_STARTED} event missing 'contract_id' payload"
+                )
             val contractName = resolveContractName(events, contractId)
             val passed       = buildExecutor.execute(contractName)
             if (!passed) {

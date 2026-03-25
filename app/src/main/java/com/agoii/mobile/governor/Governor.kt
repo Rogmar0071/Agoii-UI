@@ -134,6 +134,9 @@ class Governor(
                     ?: return GovernorResult.NO_EVENT
                 val position   = resolveInt(lastEvent.payload["position"])
                     ?: return GovernorResult.NO_EVENT
+                // taskId is constructed here — this is the origin point for a new task.
+                // All downstream branches (TASK_STARTED, TASK_COMPLETED, TASK_FAILED) read
+                // the taskId back from the ledger payload, so they always use the persisted value.
                 val task       = taskForContract(contractId, position, "$contractId-step1")
                 val contractor = registry.findBestMatch(task.requiredCapabilities)
                     ?: return GovernorResult.WAITING
@@ -200,6 +203,10 @@ class Governor(
                         )
                     )
                 } else {
+                    // Zero Substitution Law: no fallback for a missing error message.
+                    // If the executor returns success=false with a null error, it is a
+                    // contractor implementation bug. Fail-fast to surface the defect rather
+                    // than silently recording a TASK_FAILED with a synthetic reason.
                     val reason = result.error ?: return GovernorResult.NO_EVENT
                     eventStore.appendEvent(
                         projectId, EventTypes.TASK_FAILED,
@@ -353,8 +360,10 @@ class Governor(
 
             // ── contract_completed → start the next contract if one remains ────────
             // Governor is PASSIVE for lifecycle closure. ExecutionClosure already emitted
-            // EXECUTION_COMPLETED when the last contract completed, so this branch is only
-            // reached for intermediate contracts (positions < DEFAULT_TOTAL_CONTRACTS).
+            // EXECUTION_COMPLETED when the last contract completed (position == DEFAULT_TOTAL_CONTRACTS),
+            // so the ledger's last event at that point is EXECUTION_COMPLETED — not CONTRACT_COMPLETED.
+            // This branch is therefore only reached for intermediate positions (< DEFAULT_TOTAL_CONTRACTS),
+            // where nextPosition is a valid follow-on contract to start.
             lastType == EventTypes.CONTRACT_COMPLETED -> {
                 val position     = resolveInt(lastEvent.payload["position"])
                     ?: return GovernorResult.NO_EVENT
