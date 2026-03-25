@@ -14,9 +14,11 @@ data class ReplayVerification(
  * Cross-validates the ledger audit result against the derived structural replay state.
  *
  * Invariants checked:
- *  1. Execution is fully executed only when all tasks are completed and validated.
- *  2. Assembly is valid only when fully executed and all assembly phases completed.
- *  3. Ledger audit must pass (no illegal transitions).
+ *  1. assignedTasks == totalTasks (totalTasks is always derived from TASK_ASSIGNED).
+ *  2. completedTasks <= assignedTasks.
+ *  3. validatedTasks <= completedTasks.
+ *  4. Assembly is valid only when fully executed and all assembly phases completed.
+ *  5. Ledger audit must pass (no illegal transitions).
  */
 class ReplayTest(private val eventStore: EventRepository) {
 
@@ -25,17 +27,31 @@ class ReplayTest(private val eventStore: EventRepository) {
         val auditResult = LedgerAudit(eventStore).auditLedger(projectId)
         val invariantErrors = mutableListOf<String>()
 
-        // Invariant 1: fullyExecuted requires tasks assigned == total
-        if (state.execution.fullyExecuted &&
-            state.execution.assignedTasks != state.execution.totalTasks
-        ) {
+        // Invariant 1: totalTasks is derived from TASK_ASSIGNED, so they must always match
+        if (state.execution.assignedTasks != state.execution.totalTasks) {
             invariantErrors.add(
-                "Invariant: fullyExecuted=true but assignedTasks " +
-                        "(${state.execution.assignedTasks}) != totalTasks (${state.execution.totalTasks})"
+                "Invariant: assignedTasks (${state.execution.assignedTasks}) " +
+                        "!= totalTasks (${state.execution.totalTasks})"
             )
         }
 
-        // Invariant 2: assemblyValid requires fullyExecuted
+        // Invariant 2: completedTasks cannot exceed assignedTasks
+        if (state.execution.completedTasks > state.execution.assignedTasks) {
+            invariantErrors.add(
+                "Invariant: completedTasks (${state.execution.completedTasks}) " +
+                        "> assignedTasks (${state.execution.assignedTasks})"
+            )
+        }
+
+        // Invariant 3: validatedTasks cannot exceed completedTasks
+        if (state.execution.validatedTasks > state.execution.completedTasks) {
+            invariantErrors.add(
+                "Invariant: validatedTasks (${state.execution.validatedTasks}) " +
+                        "> completedTasks (${state.execution.completedTasks})"
+            )
+        }
+
+        // Invariant 4: assemblyValid requires fullyExecuted
         if (state.assembly.assemblyValid && !state.execution.fullyExecuted) {
             invariantErrors.add(
                 "Invariant: assemblyValid=true but fullyExecuted=false"

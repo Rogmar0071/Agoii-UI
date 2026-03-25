@@ -41,12 +41,10 @@ class Replay(private val eventStore: EventRepository) {
     fun deriveStructuralState(events: List<Event>): ReplayStructuralState {
         var intentSubmitted = false
         var contractsGenerated = false
-        var executionCompleted = false
         var assemblyStarted = false
         var assemblyValidated = false
         var assemblyCompleted = false
 
-        var totalTasks = 0
         var assignedTasks = 0
         var completedTasks = 0
         var validatedTasks = 0
@@ -55,18 +53,17 @@ class Replay(private val eventStore: EventRepository) {
             when (event.type) {
                 EventTypes.INTENT_SUBMITTED    -> intentSubmitted = true
                 EventTypes.CONTRACTS_GENERATED -> contractsGenerated = true
-                EventTypes.TASK_CREATED        -> totalTasks++
                 EventTypes.TASK_ASSIGNED       -> assignedTasks++
                 EventTypes.TASK_COMPLETED      -> completedTasks++
                 EventTypes.TASK_VALIDATED      -> validatedTasks++
-                EventTypes.EXECUTION_COMPLETED -> executionCompleted = true
                 EventTypes.ASSEMBLY_STARTED    -> assemblyStarted = true
                 EventTypes.ASSEMBLY_VALIDATED  -> assemblyValidated = true
                 EventTypes.ASSEMBLY_COMPLETED  -> assemblyCompleted = true
             }
         }
 
-        val fullyExecuted = executionCompleted
+        val totalTasks = assignedTasks
+        val fullyExecuted = totalTasks > 0 && validatedTasks == totalTasks
 
         val assemblyValid = assemblyStarted &&
             assemblyValidated &&
