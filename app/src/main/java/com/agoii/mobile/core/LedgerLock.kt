@@ -22,7 +22,7 @@ class LedgerLock {
      * The lock is always released when [block] completes, even on exception.
      */
     fun <T> withLock(projectId: String, block: () -> T): T {
-        val lock = locks.getOrPut(projectId) { ReentrantLock() }
+        val lock = locks.computeIfAbsent(projectId) { ReentrantLock() }
         return lock.withLock(block)
     }
 }

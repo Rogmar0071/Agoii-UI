@@ -13,9 +13,9 @@ import java.util.UUID
  * Write pipeline (System Laws 1–7):
  *  1. Acquire the exclusive per-project lock ([LedgerLock]).
  *  2. Load current events from [store] (pre-write read; eliminates TOCTOU).
- *  3. Run [ValidationLayer.validate] — reject unknown type or illegal transition.
+ *  3. Run [ValidationLayer.validate] — reject unknown type, blank payload keys, or illegal transition.
  *  4. Construct the full [Event] here: UUID id, monotonic sequenceNumber, wall-clock timestamp.
- *  5. Delegate to [EventStore.appendEvent] — pure persistence, no logic, atomic file write.
+ *  5. Delegate to [EventStore.appendEvent] — pure persistence, no internal reads, atomic file write.
  *  6. Reload persisted events from [store] (post-commit truth) and run [LedgerIntegrity.verify].
  *  7. Release the lock.
  *
@@ -42,7 +42,7 @@ class EventLedger(private val store: EventStore) : EventRepository {
     override fun appendEvent(projectId: String, type: String, payload: Map<String, Any>) {
         lock.withLock(projectId) {
             val currentEvents = store.loadEvents(projectId)
-            validation.validate(projectId, type, currentEvents)
+            validation.validate(projectId, type, payload, currentEvents)
             val nextSequence = if (currentEvents.isEmpty()) 0L
                                else currentEvents.last().sequenceNumber + 1L
             val newEvent = Event(
@@ -52,7 +52,7 @@ class EventLedger(private val store: EventStore) : EventRepository {
                 sequenceNumber = nextSequence,
                 timestamp      = System.currentTimeMillis()
             )
-            store.appendEvent(projectId, newEvent)
+            store.appendEvent(projectId, newEvent, currentEvents)
             val persisted = store.loadEvents(projectId)
             integrity.verify(projectId, persisted)
         }

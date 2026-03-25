@@ -12,8 +12,9 @@ class LedgerValidationException(message: String) : RuntimeException(message)
  *
  * Rules enforced on every [validate] call:
  *  1. [type] must be a member of [EventTypes.ALL] (known event type).
- *  2. If the ledger is empty, [type] must be [EventTypes.INTENT_SUBMITTED] (first-event rule).
- *  3. If the ledger is non-empty, the transition from the current last event's type to [type]
+ *  2. Every key in [payload] must be non-blank.
+ *  3. If the ledger is empty, [type] must be [EventTypes.INTENT_SUBMITTED] (first-event rule).
+ *  4. If the ledger is non-empty, the transition from the current last event's type to [type]
  *     must be legal according to the shared Agoii transition table
  *     (delegated to [LedgerAudit.isLegalTransition] — single source of truth).
  *
@@ -22,14 +23,15 @@ class LedgerValidationException(message: String) : RuntimeException(message)
 class ValidationLayer {
 
     /**
-     * Validate that appending an event of [type] to [currentEvents] is legal.
+     * Validate that appending an event of [type] with [payload] to [currentEvents] is legal.
      *
      * @param projectId     Used only in error messages for traceability.
      * @param type          The event type being proposed for append.
+     * @param payload       The key-value data attached to the event; all keys must be non-blank.
      * @param currentEvents The ordered list of events already in the ledger.
      * @throws LedgerValidationException on any violation.
      */
-    fun validate(projectId: String, type: String, currentEvents: List<Event>) {
+    fun validate(projectId: String, type: String, payload: Map<String, Any>, currentEvents: List<Event>) {
         // Rule 1: type must be a known event type
         if (type !in EventTypes.ALL) {
             throw LedgerValidationException(
@@ -38,8 +40,18 @@ class ValidationLayer {
             )
         }
 
+        // Rule 2: all payload keys must be non-blank
+        for (key in payload.keys) {
+            if (key.isBlank()) {
+                throw LedgerValidationException(
+                    "Blank payload key rejected for event '$type' in project '$projectId'. " +
+                        "All payload keys must be non-blank."
+                )
+            }
+        }
+
         if (currentEvents.isEmpty()) {
-            // Rule 2: empty ledger — only intent_submitted is a valid first event
+            // Rule 3: empty ledger — only intent_submitted is a valid first event
             if (type != EventTypes.INTENT_SUBMITTED) {
                 throw LedgerValidationException(
                     "Illegal first event '$type' for project '$projectId'. " +
@@ -47,7 +59,7 @@ class ValidationLayer {
                 )
             }
         } else {
-            // Rule 3: transition from last event must be legal
+            // Rule 4: transition from last event must be legal
             val lastType = currentEvents.last().type
             if (!LedgerAudit.isLegalTransition(lastType, type)) {
                 throw LedgerValidationException(
