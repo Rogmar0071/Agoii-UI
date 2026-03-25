@@ -1,6 +1,6 @@
 package com.agoii.mobile.ui.orchestration
 
-import com.agoii.mobile.core.ReplayState
+import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.ui.core.StateProjection
 import com.agoii.mobile.ui.core.UIState
 
@@ -18,7 +18,7 @@ data class CombinedViewState(
 /**
  * Orchestrates the full UI rendering pipeline:
  *
- *   [ReplayState]
+ *   [ReplayStructuralState]
  *     → [StateProjection.project] → [UIState]
  *     → each [UIModule.render] (in registry order) → [CombinedViewState]
  *
@@ -38,7 +38,7 @@ class UIViewOrchestrator(
      * Runs the full projection + rendering pipeline for the given [replayState].
      * Returns an immutable [CombinedViewState].
      */
-    fun orchestrate(replayState: ReplayState): CombinedViewState {
+    fun orchestrate(replayState: ReplayStructuralState): CombinedViewState {
         val uiState = projection.project(replayState)
         val moduleOutputs = buildModuleOutputs(uiState)
         return CombinedViewState(core = uiState, modules = moduleOutputs)

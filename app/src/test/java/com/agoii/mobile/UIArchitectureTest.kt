@@ -1,16 +1,18 @@
 package com.agoii.mobile
 
+import com.agoii.mobile.core.AssemblyStructuralState
+import com.agoii.mobile.core.ContractStructuralState
 import com.agoii.mobile.core.Event
-import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
-import com.agoii.mobile.core.ReplayState
+import com.agoii.mobile.core.ExecutionStructuralState
+import com.agoii.mobile.core.IntentStructuralState
+import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.ui.core.ActionGate
 import com.agoii.mobile.ui.core.EventTimelineRenderer
 import com.agoii.mobile.ui.core.LedgerViewEngine
 import com.agoii.mobile.ui.core.StateProjection
 import com.agoii.mobile.ui.modules.ContractModuleUI
 import com.agoii.mobile.ui.modules.ExecutionModuleUI
-import com.agoii.mobile.ui.modules.TaskLifecycleState
 import com.agoii.mobile.ui.modules.TaskModuleUI
 import com.agoii.mobile.ui.orchestration.UIModuleRegistry
 import com.agoii.mobile.ui.orchestration.UIViewOrchestrator
@@ -26,50 +28,39 @@ class UIArchitectureTest {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    private fun idle() = ReplayState(
-        phase = "idle",
-        contractsCompleted = 0,
-        totalContracts = 0,
-        executionStarted = false,
-        executionCompleted = false,
-        assemblyStarted = false,
-        assemblyValidated = false,
-        objective = null
+    private fun idle() = ReplayStructuralState(
+        intent    = IntentStructuralState(structurallyComplete = false),
+        contracts = ContractStructuralState(generated = false, valid = false),
+        execution = ExecutionStructuralState(0, 0, 0, 0, false),
+        assembly  = AssemblyStructuralState(false, false, false, false)
     )
 
-    private fun ready() = idle().copy(
-        phase = EventTypes.CONTRACTS_READY,
-        totalContracts = 3
+    private fun contractsValid() = ReplayStructuralState(
+        intent    = IntentStructuralState(structurallyComplete = true),
+        contracts = ContractStructuralState(generated = true, valid = true),
+        execution = ExecutionStructuralState(0, 0, 0, 0, false),
+        assembly  = AssemblyStructuralState(false, false, false, false)
     )
 
-    private fun approved() = ready().copy(
-        phase = EventTypes.CONTRACTS_APPROVED
+    private fun executionStarted() = ReplayStructuralState(
+        intent    = IntentStructuralState(structurallyComplete = true),
+        contracts = ContractStructuralState(generated = true, valid = true),
+        execution = ExecutionStructuralState(3, 1, 0, 0, false),
+        assembly  = AssemblyStructuralState(false, false, false, false)
     )
 
-    private fun executionStarted() = approved().copy(
-        phase = EventTypes.EXECUTION_STARTED,
-        executionStarted = true
+    private fun executionCompleted() = ReplayStructuralState(
+        intent    = IntentStructuralState(structurallyComplete = true),
+        contracts = ContractStructuralState(generated = true, valid = true),
+        execution = ExecutionStructuralState(3, 3, 3, 3, true),
+        assembly  = AssemblyStructuralState(false, false, false, false)
     )
 
-    private fun contractStarted(completed: Int = 0) = executionStarted().copy(
-        phase = EventTypes.CONTRACT_STARTED,
-        contractsCompleted = completed
-    )
-
-    private fun contractCompleted(completed: Int = 1) = contractStarted(completed - 1).copy(
-        phase = EventTypes.CONTRACT_COMPLETED,
-        contractsCompleted = completed
-    )
-
-    private fun executionCompleted() = contractCompleted(3).copy(
-        phase = EventTypes.EXECUTION_COMPLETED,
-        executionCompleted = true
-    )
-
-    private fun assemblyCompleted() = executionCompleted().copy(
-        phase = EventTypes.ASSEMBLY_COMPLETED,
-        assemblyStarted = true,
-        assemblyValidated = true
+    private fun assemblyCompleted() = ReplayStructuralState(
+        intent    = IntentStructuralState(structurallyComplete = true),
+        contracts = ContractStructuralState(generated = true, valid = true),
+        execution = ExecutionStructuralState(3, 3, 3, 3, true),
+        assembly  = AssemblyStructuralState(true, true, true, true)
     )
 
     // ── StateProjection ───────────────────────────────────────────────────────
@@ -77,44 +68,37 @@ class UIArchitectureTest {
     @Test
     fun `StateProjection maps idle state correctly`() {
         val ui = StateProjection().project(idle())
-        assertEquals("idle", ui.phase)
-        assertNull(ui.activeContractId)
-        assertNull(ui.activeTaskId)
-        assertEquals(0f, ui.progress, 0.001f)
         assertFalse(ui.isComplete)
-    }
-
-    @Test
-    fun `StateProjection progress is fraction of completed over total`() {
-        val state = contractCompleted(1).copy(totalContracts = 3)
-        val ui = StateProjection().project(state)
-        assertEquals(1f / 3f, ui.progress, 0.001f)
-        assertFalse(ui.isComplete)
+        assertFalse(ui.assemblyStarted)
+        assertFalse(ui.assemblyValidated)
+        assertFalse(ui.assemblyCompleted)
     }
 
     @Test
     fun `StateProjection marks isComplete on assembly_completed`() {
         val ui = StateProjection().project(assemblyCompleted())
         assertTrue(ui.isComplete)
-        assertEquals(1f, ui.progress, 0.001f)
+        assertTrue(ui.assemblyStarted)
+        assertTrue(ui.assemblyValidated)
+        assertTrue(ui.assemblyCompleted)
     }
 
     @Test
-    fun `StateProjection progress clamped to 0-1`() {
-        val state = idle().copy(totalContracts = 0, contractsCompleted = 0)
-        val ui = StateProjection().project(state)
-        assertEquals(0f, ui.progress, 0.001f)
+    fun `StateProjection assembly flags false for idle state`() {
+        val ui = StateProjection().project(idle())
+        assertFalse(ui.assemblyStarted)
+        assertFalse(ui.assemblyValidated)
+        assertFalse(ui.assemblyCompleted)
     }
 
     // ── LedgerViewEngine ──────────────────────────────────────────────────────
 
     @Test
-    fun `LedgerViewEngine returns idle defaults before any render`() {
+    fun `LedgerViewEngine returns defaults before any render`() {
         val engine = LedgerViewEngine()
-        assertEquals("idle", engine.currentPhase)
-        assertNull(engine.activeContract)
-        assertNull(engine.activeTask)
-        assertEquals(0f, engine.executionProgress, 0.001f)
+        assertFalse(engine.assemblyStarted)
+        assertFalse(engine.assemblyValidated)
+        assertFalse(engine.assemblyCompleted)
         assertNull(engine.currentUIState())
     }
 
@@ -122,16 +106,16 @@ class UIArchitectureTest {
     fun `LedgerViewEngine render updates all exposed properties`() {
         val engine = LedgerViewEngine()
         engine.render(executionStarted())
-        assertEquals(EventTypes.EXECUTION_STARTED, engine.currentPhase)
         assertNotNull(engine.currentUIState())
     }
 
     @Test
-    fun `LedgerViewEngine executionProgress reflects StateProjection progress`() {
+    fun `LedgerViewEngine assembly properties reflect structural state after render`() {
         val engine = LedgerViewEngine()
-        val state = contractCompleted(2).copy(totalContracts = 3)
-        engine.render(state)
-        assertEquals(2f / 3f, engine.executionProgress, 0.001f)
+        engine.render(assemblyCompleted())
+        assertTrue(engine.assemblyStarted)
+        assertTrue(engine.assemblyValidated)
+        assertTrue(engine.assemblyCompleted)
     }
 
     // ── EventTimelineRenderer ─────────────────────────────────────────────────
@@ -188,15 +172,9 @@ class UIArchitectureTest {
     }
 
     @Test
-    fun `ActionGate canApproveContracts true only when contracts_ready`() {
-        assertTrue(ActionGate().evaluate(ready()).canApproveContracts)
-        assertFalse(ActionGate().evaluate(approved()).canApproveContracts)
-    }
-
-    @Test
-    fun `ActionGate canStartExecution true only when approved and not started`() {
-        assertTrue(ActionGate().evaluate(approved()).canStartExecution)
-        assertFalse(ActionGate().evaluate(executionStarted()).canStartExecution)
+    fun `ActionGate canApproveContracts true when contracts valid and execution not started`() {
+        assertTrue(ActionGate().evaluate(contractsValid()).canApproveContracts)
+        assertFalse(ActionGate().evaluate(idle()).canApproveContracts)
     }
 
     @Test
@@ -208,7 +186,7 @@ class UIArchitectureTest {
     // ── ContractModuleUI ──────────────────────────────────────────────────────
 
     @Test
-    fun `ContractModuleUI returns empty list when no contracts`() {
+    fun `ContractModuleUI returns empty list`() {
         val ui = StateProjection().project(idle())
         val result = ContractModuleUI().present(ui)
         assertTrue(result.contracts.isEmpty())
@@ -223,80 +201,28 @@ class UIArchitectureTest {
         assertTrue(result.tasks.isEmpty())
     }
 
-    @Test
-    fun `TaskModuleUI derives lifecycle state from phase`() {
-        val uiState = StateProjection().project(idle()).copy(
-            phase = "task_started",
-            activeTaskId = "task-1"
-        )
-        val result = TaskModuleUI().present(uiState)
-        assertEquals(1, result.tasks.size)
-        assertEquals(TaskLifecycleState.STARTED, result.tasks[0].lifecycleState)
-        assertEquals("assigned", result.tasks[0].assignmentStatus)
-    }
-
-    @Test
-    fun `TaskModuleUI reports failed lifecycle state`() {
-        val uiState = StateProjection().project(idle()).copy(
-            phase = "task_failed",
-            activeTaskId = "task-2"
-        )
-        val result = TaskModuleUI().present(uiState)
-        assertEquals(TaskLifecycleState.FAILED, result.tasks[0].lifecycleState)
-        assertEquals("failed", result.tasks[0].assignmentStatus)
-    }
-
     // ── ExecutionModuleUI ─────────────────────────────────────────────────────
 
     @Test
-    fun `ExecutionModuleUI idle state shows no task activity`() {
+    fun `ExecutionModuleUI idle state shows no assembly activity`() {
         val ui = StateProjection().project(idle())
         val result = ExecutionModuleUI().present(ui)
-        assertFalse(result.taskStarted)
-        assertFalse(result.taskCompleted)
-        assertFalse(result.taskFailed)
-        assertEquals(0, result.retryCount)
-        assertEquals("pending", result.validationStatus)
+        assertFalse(result.executionStarted)
+        assertFalse(result.executionCompleted)
+        assertFalse(result.assemblyStarted)
+        assertFalse(result.assemblyValidated)
+        assertFalse(result.assemblyCompleted)
     }
 
     @Test
-    fun `ExecutionModuleUI task_started phase sets taskStarted`() {
-        val uiState = StateProjection().project(idle()).copy(phase = "task_started")
-        val result = ExecutionModuleUI().present(uiState)
-        assertTrue(result.taskStarted)
-        assertFalse(result.taskCompleted)
-        assertFalse(result.taskFailed)
-    }
-
-    @Test
-    fun `ExecutionModuleUI task_completed phase sets taskStarted and taskCompleted`() {
-        val uiState = StateProjection().project(idle()).copy(phase = "task_completed")
-        val result = ExecutionModuleUI().present(uiState)
-        assertTrue(result.taskStarted)
-        assertTrue(result.taskCompleted)
-        assertFalse(result.taskFailed)
-    }
-
-    @Test
-    fun `ExecutionModuleUI task_failed phase sets taskFailed`() {
-        val uiState = StateProjection().project(idle()).copy(phase = "task_failed")
-        val result = ExecutionModuleUI().present(uiState)
-        assertTrue(result.taskFailed)
-        assertEquals("failed", result.validationStatus)
-    }
-
-    @Test
-    fun `ExecutionModuleUI task_validated shows validated status`() {
-        val uiState = StateProjection().project(idle()).copy(phase = "task_validated")
-        val result = ExecutionModuleUI().present(uiState)
-        assertEquals("validated", result.validationStatus)
-    }
-
-    @Test
-    fun `ExecutionModuleUI contractor_reassigned increments retry count`() {
-        val uiState = StateProjection().project(idle()).copy(phase = "contractor_reassigned")
-        val result = ExecutionModuleUI().present(uiState)
-        assertEquals(1, result.retryCount)
+    fun `ExecutionModuleUI assembly completed state shows assembly activity`() {
+        val ui = StateProjection().project(assemblyCompleted())
+        val result = ExecutionModuleUI().present(ui)
+        assertTrue(result.executionStarted)
+        assertTrue(result.executionCompleted)
+        assertTrue(result.assemblyStarted)
+        assertTrue(result.assemblyValidated)
+        assertTrue(result.assemblyCompleted)
     }
 
     // ── UIModuleRegistry ──────────────────────────────────────────────────────
@@ -328,7 +254,7 @@ class UIArchitectureTest {
     @Test
     fun `UIViewOrchestrator produces CombinedViewState with core and module outputs`() {
         val combined = UIViewOrchestrator().orchestrate(idle())
-        assertEquals("idle", combined.core.phase)
+        assertNotNull(combined.core)
         assertTrue(combined.modules.containsKey("contract"))
         assertTrue(combined.modules.containsKey("task"))
         assertTrue(combined.modules.containsKey("execution"))
@@ -344,7 +270,7 @@ class UIArchitectureTest {
 
     @Test
     fun `UIViewOrchestrator is deterministic same input same output`() {
-        val state = contractCompleted(2)
+        val state = assemblyCompleted()
         val orchestrator = UIViewOrchestrator()
         val first = orchestrator.orchestrate(state)
         val second = orchestrator.orchestrate(state)

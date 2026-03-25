@@ -3,82 +3,25 @@ package com.agoii.mobile.ui.modules
 import com.agoii.mobile.ui.core.UIState
 
 /**
- * Task lifecycle states as displayable labels.
- */
-enum class TaskLifecycleState {
-    IDLE,
-    ASSIGNED,
-    STARTED,
-    COMPLETED,
-    VALIDATED,
-    FAILED
-}
-
-/**
- * Immutable presentation model for a single task.
- *
- * @property taskId            Identifier of the task.
- * @property assignmentStatus  Whether the task has been assigned.
- * @property contractorId      Identifier of the assigned contractor, or null if unassigned.
- * @property lifecycleState    Current lifecycle state of the task.
- */
-data class TaskEntry(
-    val taskId: String,
-    val assignmentStatus: String,
-    val contractorId: String?,
-    val lifecycleState: TaskLifecycleState
-)
-
-/**
  * Presentation model produced by [TaskModuleUI].
  *
- * @property tasks   Active task entries derived from the current [UIState].
+ * The task list is always empty: structural state does not carry sufficient
+ * information to assert any task lifecycle, assignment status, or identity.
+ * No fake task states are introduced.
  */
 data class TaskModuleState(
-    val tasks: List<TaskEntry>
+    val tasks: List<Nothing>
 )
 
 /**
  * Data presenter for the task module.
  *
- * Responsibility: map [UIState] into a [TaskModuleState]. No mutations,
- * no event emission, no business logic.
+ * Responsibility: map [UIState] into a [TaskModuleState]. Because the
+ * available structural state cannot represent task lifecycle or assignment,
+ * this module produces no-op output (empty task list) rather than asserting
+ * any fake lifecycle. No mutations, no event emission, no business logic.
  */
 class TaskModuleUI {
 
-    fun present(state: UIState): TaskModuleState {
-        val taskId = state.activeTaskId
-        if (taskId == null) {
-            return TaskModuleState(tasks = emptyList())
-        }
-
-        val entry = TaskEntry(
-            taskId           = taskId,
-            assignmentStatus = deriveAssignmentStatus(state),
-            contractorId     = null,
-            lifecycleState   = deriveLifecycleState(state)
-        )
-
-        return TaskModuleState(tasks = listOf(entry))
-    }
-
-    // ── private helpers ───────────────────────────────────────────────────────
-
-    private fun deriveAssignmentStatus(state: UIState): String = when (state.phase) {
-        "task_assigned",
-        "task_started",
-        "task_completed",
-        "task_validated" -> "assigned"
-        "task_failed"    -> "failed"
-        else             -> "unassigned"
-    }
-
-    private fun deriveLifecycleState(state: UIState): TaskLifecycleState = when (state.phase) {
-        "task_assigned"  -> TaskLifecycleState.ASSIGNED
-        "task_started"   -> TaskLifecycleState.STARTED
-        "task_completed" -> TaskLifecycleState.COMPLETED
-        "task_validated" -> TaskLifecycleState.VALIDATED
-        "task_failed"    -> TaskLifecycleState.FAILED
-        else             -> TaskLifecycleState.IDLE
-    }
+    fun present(state: UIState): TaskModuleState = TaskModuleState(tasks = emptyList())
 }

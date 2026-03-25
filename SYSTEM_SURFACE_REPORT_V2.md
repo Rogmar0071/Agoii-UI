@@ -72,8 +72,8 @@ No raw state is rendered directly. No formatting occurs inside the UI layer. No 
 | `contracts` | `core` (via governance models) |
 | `contractor` | `core` |
 | `tasks` | `core` |
-| `simulation` | `core` (ReplayState only) |
-| `interaction` | `core` (ReplayState), `simulation` (SimulationView) |
+| `simulation` | `core` (ReplayStructuralState only) |
+| `interaction` | `core` (ReplayStructuralState), `simulation` (SimulationView) |
 | `ingress` | none (pure model layer) |
 | `irs` | `core`, `irs` sub-packages |
 | `governance` | `core` |
@@ -107,7 +107,7 @@ UI (ProjectScreen)
   → CoreBridge.runGovernorStep / submitIntent / approveContracts
     → Governor.runGovernor / submitIntent / approveContracts
       → eventStore.appendEvent (ledger write)
-      → Replay.replay (read) → ReplayState
+      → Replay.replayStructuralState (read) → ReplayStructuralState
         → InteractionEngine.execute
           → InteractionMapper.extract → StateSlice
           → InteractionFormatter.format → String
@@ -119,7 +119,7 @@ UI (ProjectScreen)
 ### SIMULATION FLOW
 
 ```
-SimulationEngine.simulate(ReplayState, SimulationContract)
+SimulationEngine.simulate(ReplayStructuralState, SimulationContract)
   → SimulationMapper.map → SimulationSnapshot
   → SimulationAnalyzer.analyze → SimulationResult
   → SimulationEngine.toView → SimulationView
@@ -171,7 +171,7 @@ No UI duplication of formatting. No parallel output pipelines. No multiple mappe
 
 | Rule | Compliant? | Notes |
 |---|---|---|
-| Reads `ReplayState` | ✅ | Via `bridge.replayState()` |
+| Reads `ReplayStructuralState` | ✅ | Via `bridge.replayState()` |
 | Uses `InteractionResult` | ✅ | Passes `InteractionResult.content` to composable |
 | Triggers contracts via bridge | ✅ | All actions delegate to `CoreBridge` |
 | No compute logic | ✅ | No arithmetic or state derivation |

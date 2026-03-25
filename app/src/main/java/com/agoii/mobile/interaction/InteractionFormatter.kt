@@ -6,6 +6,9 @@ package com.agoii.mobile.interaction
  *
  * Responsibility: formatting only — no business logic, no data extraction.
  * Every method is a pure function of its input.
+ *
+ * Source of truth: [StateSlice] structural boolean fields only.
+ * No [com.agoii.mobile.core.ReplayState] or synthetic data is used.
  */
 class InteractionFormatter {
 
@@ -25,33 +28,54 @@ class InteractionFormatter {
     // ── private formatting helpers ────────────────────────────────────────────
 
     private fun buildSummary(slice: StateSlice): String {
-        val objectivePart = slice.objective?.let { " | objective: $it" } ?: ""
-        return "phase=${slice.phase}$objectivePart | contracts=${slice.contractsCompleted}/${slice.totalContracts}"
+        val executionLabel = when {
+            slice.executionCompleted -> "execution: complete"
+            slice.executionStarted   -> "execution: in progress"
+            else                     -> "execution: not started"
+        }
+        val assemblyLabel = when {
+            slice.assemblyCompleted  -> "assembly: complete"
+            slice.assemblyValidated  -> "assembly: validated"
+            slice.assemblyStarted    -> "assembly: started"
+            else                     -> "assembly: not started"
+        }
+        return "$executionLabel | $assemblyLabel"
     }
 
     private fun buildDetailed(slice: StateSlice): String = buildString {
-        appendLine("Phase: ${slice.phase}")
-        slice.objective?.let { appendLine("Objective: $it") }
-        appendLine("Contracts: ${slice.contractsCompleted} of ${slice.totalContracts} completed")
-        appendLine("Execution started: ${slice.executionStarted}")
-        appendLine("Execution completed: ${slice.executionCompleted}")
-        appendLine("Assembly started: ${slice.assemblyStarted}")
-        appendLine("Assembly validated: ${slice.assemblyValidated}")
-        append("Assembly completed: ${slice.assemblyCompleted}")
+        appendLine("Execution started:    ${slice.executionStarted}")
+        appendLine("Execution completed:  ${slice.executionCompleted}")
+        appendLine("Assembly started:     ${slice.assemblyStarted}")
+        appendLine("Assembly validated:   ${slice.assemblyValidated}")
+        append("Assembly completed:   ${slice.assemblyCompleted}")
     }
 
     private fun buildExplanation(slice: StateSlice): String = when {
+        slice.assemblyCompleted ->
+            "The system lifecycle is complete. Assembly has been validated and closed."
+        slice.assemblyValidated ->
+            "Execution is complete and assembly validation has passed. " +
+            "Awaiting assembly closure."
+        slice.assemblyStarted ->
+            "Execution is complete. Assembly has been initiated and is " +
+            "awaiting validation."
         slice.executionCompleted ->
-            "All ${slice.totalContracts} contracts have completed execution. " +
-            "Assembly phase is ${if (slice.assemblyValidated) "validated" else "in progress"}."
+            "Execution is complete. The system is ready to begin assembly."
         slice.executionStarted ->
-            "Execution is in progress. ${slice.contractsCompleted} of " +
-            "${slice.totalContracts} contracts have been completed."
-        else -> {
-            val obj = slice.objective?.let { " Objective: $it." } ?: ""
-            "System is in phase '${slice.phase}'.$obj"
-        }
+            "Execution is in progress. Awaiting task completion and validation."
+        else ->
+            "The system is awaiting execution. No tasks have been started."
     }
 
-    private fun buildStatus(slice: StateSlice): String = "status=${slice.phase}"
+    private fun buildStatus(slice: StateSlice): String {
+        val status = when {
+            slice.assemblyCompleted  -> "assembly_completed"
+            slice.assemblyValidated  -> "assembly_validated"
+            slice.assemblyStarted    -> "assembly_started"
+            slice.executionCompleted -> "execution_completed"
+            slice.executionStarted   -> "execution_started"
+            else                     -> "execution_not_started"
+        }
+        return "status=$status"
+    }
 }

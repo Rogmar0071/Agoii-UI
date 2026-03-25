@@ -12,7 +12,7 @@ package com.agoii.mobile.interaction
  *
  * @param contractId   Identifies this interaction (typically the project id).
  * @param query        Human-readable description of what is being asked.
- * @param scope        Which slice of [com.agoii.mobile.core.ReplayState] to expose.
+ * @param scope        Which slice of [com.agoii.mobile.core.ReplayStructuralState] to expose.
  * @param outputType   How the response should be formatted.
  * @param sourceType   Declares the input source for this contract.
  * @param simulationId Optional binding to a specific simulation run.

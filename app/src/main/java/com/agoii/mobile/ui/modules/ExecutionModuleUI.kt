@@ -5,60 +5,37 @@ import com.agoii.mobile.ui.core.UIState
 /**
  * Immutable presentation model produced by [ExecutionModuleUI].
  *
- * @property taskStarted        Whether a task_started event has been observed in this phase.
- * @property taskCompleted      Whether a task_completed event has been observed.
- * @property taskFailed         Whether a task_failed event has been observed.
- * @property retryCount         Number of retry cycles inferred from the current phase.
- * @property validationStatus   Presentable validation label ("pending", "validated", "failed").
+ * Every field is a truthful reflection of structural state.
+ * No task lifecycle, retry counts, or string-based status signals are present.
+ *
+ * @property executionStarted   Derived from structural execution state via [UIState.executionStarted].
+ * @property executionCompleted Derived from structural execution state via [UIState.executionCompleted].
+ * @property assemblyStarted    Whether the assembly phase has been started.
+ * @property assemblyValidated  Whether assembly validation has passed.
+ * @property assemblyCompleted  Whether the assembly phase has fully completed.
  */
 data class ExecutionModuleState(
-    val taskStarted: Boolean,
-    val taskCompleted: Boolean,
-    val taskFailed: Boolean,
-    val retryCount: Int,
-    val validationStatus: String
+    val executionStarted: Boolean,
+    val executionCompleted: Boolean,
+    val assemblyStarted: Boolean,
+    val assemblyValidated: Boolean,
+    val assemblyCompleted: Boolean
 )
 
 /**
  * Data presenter for the execution module.
  *
- * Responsibility: map [UIState] into an [ExecutionModuleState]. Displays
- * task_started / task_completed / task_failed phase transitions, retry count, and
- * validation status. No mutations, no event emission, no business logic.
+ * Responsibility: map [UIState] into an [ExecutionModuleState] using only
+ * structural signals. No task lifecycle simulation, no placeholders,
+ * no inferred progress. Every field reflects structural truth available in [UIState].
  */
 class ExecutionModuleUI {
 
     fun present(state: UIState): ExecutionModuleState = ExecutionModuleState(
-        taskStarted      = isTaskStarted(state),
-        taskCompleted    = isTaskCompleted(state),
-        taskFailed       = isTaskFailed(state),
-        retryCount       = deriveRetryCount(state),
-        validationStatus = deriveValidationStatus(state)
+        executionStarted   = state.executionStarted,
+        executionCompleted = state.executionCompleted,
+        assemblyStarted    = state.assemblyStarted,
+        assemblyValidated  = state.assemblyValidated,
+        assemblyCompleted  = state.assemblyCompleted
     )
-
-    // ── private helpers ───────────────────────────────────────────────────────
-
-    private fun isTaskStarted(state: UIState): Boolean = state.phase in setOf(
-        "task_started", "task_completed", "task_validated", "task_failed",
-        "execution_completed", "assembly_started", "assembly_validated", "assembly_completed"
-    )
-
-    private fun isTaskCompleted(state: UIState): Boolean = state.phase in setOf(
-        "task_completed", "task_validated",
-        "execution_completed", "assembly_started", "assembly_validated", "assembly_completed"
-    )
-
-    private fun isTaskFailed(state: UIState): Boolean = state.phase == "task_failed"
-
-    private fun deriveRetryCount(state: UIState): Int = when (state.phase) {
-        "contractor_reassigned" -> 1
-        else                    -> 0
-    }
-
-    private fun deriveValidationStatus(state: UIState): String = when (state.phase) {
-        "task_validated"    -> "validated"
-        "task_failed"       -> "failed"
-        "assembly_validated" -> "validated"
-        else                -> "pending"
-    }
 }

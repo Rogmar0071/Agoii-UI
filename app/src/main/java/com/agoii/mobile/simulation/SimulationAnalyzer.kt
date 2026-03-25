@@ -30,15 +30,9 @@ internal class SimulationAnalyzer {
     private fun analyzeUnderstand(snapshot: SimulationSnapshot): SimulationAnalysisResult {
         val findings = mutableListOf<String>()
 
-        findings += "current phase: ${snapshot.phase}"
-
-        if (snapshot.objective != null) {
-            findings += "objective: ${snapshot.objective}"
-        } else {
-            findings += "no objective defined"
+        if (!snapshot.executionStarted && !snapshot.assemblyCompleted) {
+            findings += "system is awaiting execution"
         }
-
-        findings += "contract progress: ${(snapshot.contractProgress * 100).toInt()}%"
 
         if (snapshot.executionStarted)   findings += "execution has been initiated"
         if (snapshot.executionCompleted) findings += "execution phase is complete"
@@ -46,7 +40,12 @@ internal class SimulationAnalyzer {
         if (snapshot.assemblyValidated)  findings += "assembly has been validated"
         if (snapshot.assemblyCompleted)  findings += "assembly is complete"
 
-        val confidence = if (snapshot.objective != null) 0.8 else 0.5
+        val confidence = when {
+            snapshot.assemblyCompleted  -> 0.95
+            snapshot.executionCompleted -> 0.85
+            snapshot.executionStarted   -> 0.7
+            else                        -> 0.5
+        }
 
         return SimulationAnalysisResult(
             findings      = findings,
@@ -63,17 +62,12 @@ internal class SimulationAnalyzer {
      * Evaluates whether execution can proceed from the current state.
      *
      * Blocking conditions (any one makes [SimulationAnalysisResult.feasible] = false):
-     *  1. No objective defined.
-     *  2. Execution phase already completed — cannot re-execute without replay reset.
-     *  3. Assembly phase already completed — system lifecycle is closed.
+     *  1. Execution phase already completed — cannot re-execute without replay reset.
+     *  2. Assembly phase already completed — system lifecycle is closed.
      */
     private fun analyzeFeasibility(snapshot: SimulationSnapshot): SimulationAnalysisResult {
         val findings      = mutableListOf<String>()
         val failurePoints = mutableListOf<String>()
-
-        if (snapshot.objective.isNullOrBlank()) {
-            failurePoints += "no objective defined — execution requires a stated intent"
-        }
 
         if (snapshot.executionCompleted) {
             failurePoints += "execution already completed — cannot re-execute without replay reset"
@@ -83,25 +77,15 @@ internal class SimulationAnalyzer {
             failurePoints += "assembly already completed — system lifecycle is closed"
         }
 
-        if (snapshot.contractProgress == 0.0 &&
-            !snapshot.executionStarted &&
-            snapshot.objective != null
-        ) {
-            findings += "contracts not yet generated — feasibility conditional on contract phase"
-        }
-
-        if (snapshot.contractProgress > 0.0) {
-            findings += "contract progress ${(snapshot.contractProgress * 100).toInt()}%" +
-                " — partial execution is possible"
+        if (!snapshot.executionStarted && !snapshot.executionCompleted) {
+            findings += "execution not yet started — feasibility conditional on execution phase"
         }
 
         val feasible   = failurePoints.isEmpty()
         val confidence = when {
-            !feasible                         -> 0.2
-            snapshot.contractProgress >= 1.0  -> 0.95
-            snapshot.contractProgress > 0.0   -> 0.7
-            snapshot.objective != null        -> 0.6
-            else                              -> 0.4
+            !feasible                    -> 0.2
+            snapshot.executionStarted    -> 0.7
+            else                         -> 0.5
         }
 
         return SimulationAnalysisResult(
@@ -150,15 +134,14 @@ internal class SimulationAnalyzer {
             scenarios += "no alternative scenarios available from current state"
         }
 
-        val feasible = snapshot.objective != null
+        val feasible = !snapshot.assemblyCompleted
 
         return SimulationAnalysisResult(
             findings = listOf(
-                "phase: ${snapshot.phase}",
                 "scenarios generated: ${scenarios.size}"
             ),
             failurePoints = if (feasible) emptyList()
-                           else listOf("no objective — scenarios are speculative"),
+                           else listOf("lifecycle is closed — scenarios are not applicable"),
             scenarios     = scenarios,
             feasible      = feasible,
             confidence    = if (feasible) 0.75 else 0.3
