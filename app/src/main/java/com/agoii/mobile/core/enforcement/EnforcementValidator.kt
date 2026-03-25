@@ -5,14 +5,18 @@ import com.agoii.mobile.core.contract.ContractGraph
 // ─── Enforcement Validator ────────────────────────────────────────────────────
 
 /**
- * EnforcementValidator — implements the four mandatory enforcement steps.
+ * EnforcementValidator — implements all eight mandatory enforcement steps.
  *
- * Step 1: Structural Surface Scan  — map all fields, references, and dependencies;
- *                                    detect missing fields, invalid references, type mismatches.
- * Step 2: Field Validity Check     — every declared field must belong to ReplayStructuralState.
- * Step 3: Data Class Alignment     — no non-structural or placeholder fields permitted.
- * Step 4: Derivation Validation    — only `executionStarted = state.execution.assignedTasks > 0`
- *                                    is an allowed derivation.
+ * Step 1: Structural Surface Scan    — map files, data classes, field usage, and dependencies;
+ *                                      detect missing references, type mismatches, invalid links.
+ * Step 2: Field Validity Check       — every declared field must belong to ReplayStructuralState.
+ * Step 3: Data Class Alignment       — no field without a structural source; no default or
+ *                                      placeholder values in derived fields.
+ * Step 4: Derivation Validation      — only the two permitted derivations are accepted.
+ * Step 5: Substitution Detection     — scan for substitution values in expressions.
+ * Step 6: Flow Integrity Check       — no legacy ReplayState references; all dependencies resolve.
+ * Step 7: Mutation Scope Lock        — derived field keys confined to the allowed derivation set.
+ * Step 8: Execution Authorization    — computed by [EnforcementPipeline] from the violation list.
  */
 internal class EnforcementValidator {
 
@@ -33,20 +37,32 @@ internal class EnforcementValidator {
             "assembly.assemblyValid"
         )
 
-        /** The single field name permitted under Derivation Law. */
-        private const val ALLOWED_DERIVATION_FIELD = "executionStarted"
+        /**
+         * The complete set of derivations permitted under Derivation Law.
+         * Key = derived field name; Value = required derivation expression (exact match after trim).
+         */
+        private val ALLOWED_DERIVATIONS: Map<String, String> = mapOf(
+            "executionStarted"   to "state.execution.assignedTasks > 0",
+            "executionCompleted" to "state.execution.fullyExecuted"
+        )
 
-        /** The single derivation expression permitted under Derivation Law. */
-        private const val ALLOWED_DERIVATION_EXPR = "state.execution.assignedTasks > 0"
+        /** Literal substitution tokens that are forbidden in any derivation expression. */
+        private val SUBSTITUTION_TOKENS: List<String> = listOf(
+            "\"\"", "?:", "default"
+        )
+
+        /** Substitution literal values (exact match after trim). */
+        private val SUBSTITUTION_LITERALS: Set<String> = setOf("null", "false", "0", "")
+
+        /** Forbidden legacy state type reference; signals a broken migration. */
+        private const val LEGACY_STATE_REFERENCE = "ReplayState"
     }
 
     // ── Step 1: Structural Surface Scan ──────────────────────────────────────
 
     /**
      * Maps all referenced fields and dependencies from [graph] into a [SurfaceMap]
-     * and detects fields absent from the structural field set.
-     *
-     * @return Pair of the produced [SurfaceMap] and any Step-1 [Violation]s.
+     * and detects surface-level invalid references (fields absent from the structural set).
      */
     fun scanSurface(graph: ContractGraph): Pair<SurfaceMap, List<Violation>> {
         val violations = mutableListOf<Violation>()
@@ -91,19 +107,101 @@ internal class EnforcementValidator {
     // ── Step 3: Data Class Alignment Check ───────────────────────────────────
 
     /**
-     * Ensures no non-structural fields exist and that no default value or placeholder
-     * is present in any declared or derived field.
-     * Violations produce [ViolationType.DATA_CLASS_MISMATCH].
+     * Detects blank, null, or literal-default derivation expressions — these indicate
+     * a field with no structural source.  Violations produce [ViolationType.DATA_CLASS_MISMATCH].
      */
     fun checkDataClassAlignment(graph: ContractGraph): List<Violation> {
+        return graph.derivedFields.mapNotNull { (field, expr) ->
+            if (expr.trim() in SUBSTITUTION_LITERALS) {
+                Violation(
+                    type    = ViolationType.DATA_CLASS_MISMATCH,
+                    field   = field,
+                    message = "Derived field '$field' has no structural source — expression is '$expr'"
+                )
+            } else {
+                null
+            }
+        }
+    }
+
+    // ── Step 4: Derivation Validation ────────────────────────────────────────
+
+    /**
+     * Enforces Derivation Law: only the two permitted derivations are accepted.
+     * Any other derivation produces [ViolationType.ILLEGAL_DERIVATION].
+     */
+    fun validateDerivations(graph: ContractGraph): List<Violation> {
+        return graph.derivedFields.mapNotNull { (field, expr) ->
+            val allowedExpr = ALLOWED_DERIVATIONS[field]
+            if (allowedExpr == null || expr.trim() != allowedExpr) {
+                Violation(
+                    type    = ViolationType.ILLEGAL_DERIVATION,
+                    field   = field,
+                    message = "Derivation '$field = $expr' is not permitted; " +
+                              "allowed: ${ALLOWED_DERIVATIONS.entries.joinToString { "${it.key} = ${it.value}" }}"
+                )
+            } else {
+                null
+            }
+        }
+    }
+
+    // ── Step 5: Substitution Detection ───────────────────────────────────────
+
+    /**
+     * Scans derivation expressions for substitution patterns:
+     * empty string, 0, false, null, ?:, default values, fallback assignments.
+     * Any detected pattern produces [ViolationType.SUBSTITUTION_DETECTED].
+     */
+    fun detectSubstitutions(graph: ContractGraph): List<Violation> {
+        return graph.derivedFields.mapNotNull { (field, expr) ->
+            val trimmed = expr.trim()
+            val hasSubstitutionLiteral = trimmed in SUBSTITUTION_LITERALS
+            val hasSubstitutionToken   = SUBSTITUTION_TOKENS.any { token -> trimmed.contains(token) }
+            if (hasSubstitutionLiteral || hasSubstitutionToken) {
+                Violation(
+                    type    = ViolationType.SUBSTITUTION_DETECTED,
+                    field   = field,
+                    message = "Substitution detected in derived field '$field': expression '$expr' " +
+                              "contains a forbidden literal, fallback, or default pattern"
+                )
+            } else {
+                null
+            }
+        }
+    }
+
+    // ── Step 6: Flow Integrity Check ─────────────────────────────────────────
+
+    /**
+     * Verifies that no derivation expression references the legacy [ReplayState] type,
+     * and that all graph dependencies resolve to [ReplayStructuralState].
+     * Violations produce [ViolationType.FLOW_BREAK].
+     */
+    fun checkFlowIntegrity(graph: ContractGraph): List<Violation> {
         val violations = mutableListOf<Violation>()
 
         for ((field, expr) in graph.derivedFields) {
-            if (expr.isBlank() || expr == "null" || expr == "default") {
+            // Strip valid "ReplayStructuralState" occurrences first, then check for
+            // bare legacy "ReplayState" references in the remainder.
+            val stripped = expr.replace("ReplayStructuralState", "")
+            if (stripped.contains(LEGACY_STATE_REFERENCE)) {
                 violations += Violation(
-                    type    = ViolationType.DATA_CLASS_MISMATCH,
+                    type    = ViolationType.FLOW_BREAK,
                     field   = field,
-                    message = "Placeholder or default value detected in derived field '$field'"
+                    message = "Derived field '$field' references legacy '$LEGACY_STATE_REFERENCE'; " +
+                              "must use replayStructuralState()"
+                )
+            }
+        }
+
+        for (dep in graph.declaredFields) {
+            val stripped = dep.replace("ReplayStructuralState", "")
+            if (stripped.contains(LEGACY_STATE_REFERENCE)) {
+                violations += Violation(
+                    type    = ViolationType.FLOW_BREAK,
+                    field   = dep,
+                    message = "Declared field '$dep' contains a legacy '$LEGACY_STATE_REFERENCE' reference"
                 )
             }
         }
@@ -111,27 +209,23 @@ internal class EnforcementValidator {
         return violations
     }
 
-    // ── Step 4: Derivation Validation ────────────────────────────────────────
+    // ── Step 7: Mutation Scope Lock ───────────────────────────────────────────
 
     /**
-     * Enforces Derivation Law: the only permitted derivation is
-     * `executionStarted = state.execution.assignedTasks > 0`.
-     * Any other derivation produces [ViolationType.INVALID_DERIVATION].
+     * Verifies that all derived field keys are confined to the allowed derivation set.
+     * Any key outside this set represents scope drift.
+     * Violations produce [ViolationType.SCOPE_DRIFT].
      */
-    fun validateDerivations(graph: ContractGraph): List<Violation> {
-        return graph.derivedFields.mapNotNull { (field, expr) ->
-            val isAllowed = field == ALLOWED_DERIVATION_FIELD &&
-                expr.trim() == ALLOWED_DERIVATION_EXPR
-            if (!isAllowed) {
+    fun checkMutationScope(graph: ContractGraph): List<Violation> {
+        return graph.derivedFields.keys
+            .filter { it !in ALLOWED_DERIVATIONS }
+            .map { field ->
                 Violation(
-                    type    = ViolationType.INVALID_DERIVATION,
+                    type    = ViolationType.SCOPE_DRIFT,
                     field   = field,
-                    message = "Derivation '$field = $expr' is not permitted; " +
-                              "only '$ALLOWED_DERIVATION_FIELD = $ALLOWED_DERIVATION_EXPR' is allowed"
+                    message = "Derived field '$field' is outside the declared mutation scope; " +
+                              "only ${ALLOWED_DERIVATIONS.keys} are permitted"
                 )
-            } else {
-                null
             }
-        }
     }
 }

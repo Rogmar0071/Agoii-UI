@@ -7,13 +7,18 @@ import com.agoii.mobile.core.contract.ContractGraph
 /**
  * EnforcementPipeline — mandatory execution gate for all contracts.
  *
- * No contract may proceed to execution without passing all four steps:
+ * No contract may proceed to execution without passing all eight steps:
  *
- *   Step 1: Structural Surface Scan  — map fields, references, and dependencies;
- *                                      detect missing fields, invalid references, type mismatches.
- *   Step 2: Field Validity Check     — all fields must belong to ReplayStructuralState.
- *   Step 3: Data Class Alignment     — no non-structural or placeholder fields permitted.
- *   Step 4: Derivation Validation    — only the permitted derivation is accepted.
+ *   Step 1: Structural Surface Scan    — map fields, references, and dependencies;
+ *                                        detect invalid references and type mismatches.
+ *   Step 2: Field Validity Check       — all fields must belong to ReplayStructuralState.
+ *   Step 3: Data Class Alignment       — no field without a structural source;
+ *                                        no default or placeholder expressions.
+ *   Step 4: Derivation Validation      — only the two permitted derivations are accepted.
+ *   Step 5: Substitution Detection     — scan for substitution patterns in expressions.
+ *   Step 6: Flow Integrity Check       — no legacy ReplayState references; dependencies resolve.
+ *   Step 7: Mutation Scope Lock        — derived keys confined to the allowed derivation set.
+ *   Step 8: Execution Authorization    — approved = violations.isEmpty(); blocks on any violation.
  *
  * Forbidden:
  *  - Skipping any step
@@ -21,6 +26,7 @@ import com.agoii.mobile.core.contract.ContractGraph
  *  - Silent failure handling
  *  - Fallback execution
  *  - Synthetic approval states
+ *  - Exception-based control flow
  *
  * The pipeline is stateless; every [run] call is independent.
  */
@@ -29,12 +35,13 @@ class EnforcementPipeline(
 ) {
 
     /**
-     * Run all four enforcement steps against [graph].
+     * Run all eight enforcement steps against [graph].
      *
      * All steps are executed unconditionally so the full violation trace is always produced.
      *
      * @param graph The [ContractGraph] to validate.
-     * @return [EnforcementResult] with APPROVED verdict only when all steps pass with zero violations.
+     * @return [EnforcementResult] with [EnforcementResult.approved] = true only when all
+     *         steps produce zero violations.
      */
     fun run(graph: ContractGraph): EnforcementResult {
         val allViolations = mutableListOf<Violation>()
@@ -52,16 +59,22 @@ class EnforcementPipeline(
         // Step 4: Derivation Validation
         allViolations += validator.validateDerivations(graph)
 
-        val verdict = if (allViolations.isEmpty()) {
-            EnforcementVerdict.APPROVED
-        } else {
-            EnforcementVerdict.REJECTED
-        }
+        // Step 5: Substitution Detection
+        allViolations += validator.detectSubstitutions(graph)
+
+        // Step 6: Flow Integrity Check
+        allViolations += validator.checkFlowIntegrity(graph)
+
+        // Step 7: Mutation Scope Lock
+        allViolations += validator.checkMutationScope(graph)
+
+        // Step 8: Execution Authorization — approved only when no violations
+        val approved = allViolations.isEmpty()
 
         return EnforcementResult(
-            verdict    = verdict,
-            surfaceMap = surfaceMap,
-            violations = allViolations
+            approved         = approved,
+            violations       = allViolations,
+            validatedSurface = surfaceMap
         )
     }
 }

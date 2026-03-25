@@ -4,16 +4,15 @@ package com.agoii.mobile.core.enforcement
 
 /** Classification of a structural enforcement violation. */
 enum class ViolationType {
-    MISSING_FIELD,
     INVALID_REFERENCE,
     TYPE_MISMATCH,
     INVALID_FIELD,
     DATA_CLASS_MISMATCH,
-    INVALID_DERIVATION
+    ILLEGAL_DERIVATION,
+    SUBSTITUTION_DETECTED,
+    FLOW_BREAK,
+    SCOPE_DRIFT
 }
-
-/** Terminal verdict of the enforcement pipeline. */
-enum class EnforcementVerdict { APPROVED, REJECTED }
 
 /**
  * Structural surface produced by Step 1 of the enforcement pipeline.
@@ -44,12 +43,12 @@ data class Violation(
 /**
  * Terminal result of the [EnforcementPipeline].
  *
- * @property verdict    APPROVED when all steps pass; REJECTED otherwise.
- * @property surfaceMap Structural surface produced in Step 1.
- * @property violations All detected violations across all steps (empty when APPROVED).
+ * @property approved        true only when all 8 enforcement steps pass with zero violations.
+ * @property violations      All detected violations across all steps (empty when approved).
+ * @property validatedSurface Structural surface produced in Step 1.
  */
 data class EnforcementResult(
-    val verdict:    EnforcementVerdict,
-    val surfaceMap: SurfaceMap,
-    val violations: List<Violation>
+    val approved:         Boolean,
+    val violations:       List<Violation>,
+    val validatedSurface: SurfaceMap
 )

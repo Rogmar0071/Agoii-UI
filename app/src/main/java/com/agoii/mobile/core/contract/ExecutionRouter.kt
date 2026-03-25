@@ -1,35 +1,26 @@
 package com.agoii.mobile.core.contract
 
-import com.agoii.mobile.core.enforcement.EnforcementResult
-import com.agoii.mobile.core.enforcement.EnforcementVerdict
-
 // ─── Execution Router ─────────────────────────────────────────────────────────
 
 /**
- * ExecutionRouter — terminal routing authority for approved contracts.
+ * ExecutionRouter — terminal routing authority for pre-approved contracts.
  *
- * Contracts MUST arrive with an APPROVED [EnforcementResult]. Any non-approved
- * contract causes an [IllegalStateException]; there is no fallback execution path.
+ * Enforcement is centralized in [ContractModule]. Contracts arrive here only
+ * after the [EnforcementPipeline] has confirmed approval; no secondary approval
+ * check or exception-based blocking is performed here.
  *
- * [route] is the sole entry point. It verifies the enforcement verdict and
- * returns [RouteDecision.PROCEED] for the approved contract.
+ * [route] is the sole entry point. It accepts the approved [ContractGraph]
+ * and returns [RouteDecision.PROCEED].
  */
 class ExecutionRouter {
 
     /**
-     * Route an approved contract to execution.
+     * Route a pre-approved contract to execution.
      *
-     * @param graph             The [ContractGraph] to route.
-     * @param enforcementResult The [EnforcementResult] for this graph — MUST be APPROVED.
-     * @return [RouteDecision.PROCEED] unconditionally when the contract is approved.
-     * @throws IllegalStateException if [enforcementResult] verdict is not APPROVED.
+     * @param graph The [ContractGraph] approved by the enforcement gate in [ContractModule].
+     * @return [RouteDecision.PROCEED] unconditionally.
      */
-    fun route(graph: ContractGraph, enforcementResult: EnforcementResult): RouteDecision {
-        check(enforcementResult.verdict == EnforcementVerdict.APPROVED) {
-            "Contract '${graph.contractId}' cannot be routed: " +
-            "enforcement verdict is ${enforcementResult.verdict} " +
-            "with ${enforcementResult.violations.size} violation(s)"
-        }
+    fun route(graph: ContractGraph): RouteDecision {
         return RouteDecision.PROCEED
     }
 }

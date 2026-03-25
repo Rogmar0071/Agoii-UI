@@ -1,53 +1,32 @@
 package com.agoii.mobile.core.contract
 
-import com.agoii.mobile.core.enforcement.EnforcementPipeline
-import com.agoii.mobile.core.enforcement.EnforcementResult
-import com.agoii.mobile.core.enforcement.EnforcementVerdict
-
 // ─── Contract Engine ──────────────────────────────────────────────────────────
 
 /**
- * ContractEngine — routes contract execution through the mandatory enforcement gate.
+ * ContractEngine — routes pre-approved contracts to execution.
  *
- * Execution flow:
- *   1. Receive [ContractGraph].
- *   2. Run [EnforcementPipeline] — produces [EnforcementResult].
- *   3. Gate: if verdict is not APPROVED → halt; return result with no routing.
- *   4. Route approved contract through [ExecutionRouter].
+ * Enforcement is centralized exclusively in [ContractModule]. ContractEngine
+ * receives only contracts that have already passed the enforcement gate and
+ * delegates routing to [ExecutionRouter] without performing any additional
+ * enforcement or approval checks.
  *
- * Non-negotiable principles:
- *  - No contract executes without an APPROVED enforcement verdict.
- *  - No fallback execution path exists.
- *  - The engine is stateless; every [execute] call is independent.
+ * The engine is stateless; every [execute] call is independent.
  */
 class ContractEngine(
-    private val enforcementPipeline: EnforcementPipeline = EnforcementPipeline(),
-    private val executionRouter:     ExecutionRouter      = ExecutionRouter()
+    private val executionRouter: ExecutionRouter = ExecutionRouter()
 ) {
 
     /**
-     * Execute [graph] through the enforcement gate and routing layer.
+     * Route [graph] to execution via [ExecutionRouter].
      *
-     * @param graph The [ContractGraph] to process.
-     * @return [ContractExecutionResult] carrying the enforcement result and route decision.
+     * @param graph The [ContractGraph] already approved by [ContractModule].
+     * @return [ContractExecutionResult] carrying the route decision.
      */
     fun execute(graph: ContractGraph): ContractExecutionResult {
-        val enforcementResult = enforcementPipeline.run(graph)
-
-        if (enforcementResult.verdict != EnforcementVerdict.APPROVED) {
-            return ContractExecutionResult(
-                graph             = graph,
-                enforcementResult = enforcementResult,
-                routeDecision     = null
-            )
-        }
-
-        val routeDecision = executionRouter.route(graph, enforcementResult)
-
+        val routeDecision = executionRouter.route(graph)
         return ContractExecutionResult(
-            graph             = graph,
-            enforcementResult = enforcementResult,
-            routeDecision     = routeDecision
+            graph         = graph,
+            routeDecision = routeDecision
         )
     }
 }
@@ -55,15 +34,13 @@ class ContractEngine(
 /**
  * Result of [ContractEngine.execute].
  *
- * @property graph             The input [ContractGraph].
- * @property enforcementResult Outcome of the enforcement pipeline.
- * @property routeDecision     [RouteDecision.PROCEED] when approved; null when rejected.
+ * @property graph         The input [ContractGraph].
+ * @property routeDecision [RouteDecision.PROCEED] when the contract was routed.
  */
 data class ContractExecutionResult(
-    val graph:             ContractGraph,
-    val enforcementResult: EnforcementResult,
-    val routeDecision:     RouteDecision?
+    val graph:         ContractGraph,
+    val routeDecision: RouteDecision
 ) {
-    /** true only when enforcement passed and routing was assigned. */
+    /** true when routing was assigned. */
     val proceeded: Boolean get() = routeDecision == RouteDecision.PROCEED
 }
