@@ -8,7 +8,7 @@ package com.agoii.mobile.interaction
  * Every method is a pure function of its input.
  *
  * Source of truth: [StateSlice] structural boolean fields only.
- * No [com.agoii.mobile.core.ReplayState] or synthetic data is used.
+ * No legacy state or synthetic data is used.
  */
 class InteractionFormatter {
 

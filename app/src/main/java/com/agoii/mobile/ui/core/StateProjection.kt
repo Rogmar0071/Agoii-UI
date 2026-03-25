@@ -8,12 +8,11 @@ import com.agoii.mobile.core.ReplayStructuralState
  * No logic lives here — this is a pure data carrier.
  */
 data class UIState(
-    val isComplete: Boolean,
-    val executionStarted: Boolean = false,
-    val executionCompleted: Boolean = false,
-    val assemblyStarted: Boolean = false,
-    val assemblyValidated: Boolean = false,
-    val assemblyCompleted: Boolean = false
+    val executionStarted: Boolean,
+    val executionCompleted: Boolean,
+    val assemblyStarted: Boolean,
+    val assemblyValidated: Boolean,
+    val assemblyCompleted: Boolean
 )
 
 /**
@@ -24,7 +23,6 @@ class StateProjection {
 
     fun project(state: ReplayStructuralState): UIState {
         return UIState(
-            isComplete         = state.assembly.assemblyCompleted,
             executionStarted   = state.execution.assignedTasks > 0,
             executionCompleted = state.execution.fullyExecuted,
             assemblyStarted    = state.assembly.assemblyStarted,

@@ -3,11 +3,17 @@ package com.agoii.mobile.ui.core
 import com.agoii.mobile.core.ReplayStructuralState
 
 /**
- * Reads a [ReplayStructuralState] and exposes the ledger's current assembly state.
+ * Reads a [ReplayStructuralState] and exposes the ledger's current structural state.
  *
  * Responsibility: mapping only — no computation beyond reading [ReplayStructuralState].
  */
 class LedgerViewEngine(private val projection: StateProjection = StateProjection()) {
+
+    /** Whether execution has been initiated. */
+    val executionStarted: Boolean get() = _uiState?.executionStarted ?: throw IllegalStateException("UIState not initialized")
+
+    /** Whether all execution tasks have completed. */
+    val executionCompleted: Boolean get() = _uiState?.executionCompleted ?: throw IllegalStateException("UIState not initialized")
 
     /** Whether the assembly phase has been started. */
     val assemblyStarted: Boolean get() = _uiState?.assemblyStarted ?: throw IllegalStateException("UIState not initialized")
