@@ -34,7 +34,7 @@ class InteractionFormatter {
             slice.assemblyStarted    -> "assembly started"
             slice.executionCompleted -> "execution completed"
             slice.executionStarted   -> "execution started"
-            else                     -> ""
+            else                     -> throw IllegalStateException("No structural state active")
         }
     }
 
@@ -45,7 +45,7 @@ class InteractionFormatter {
             slice.assemblyStarted    -> "Assembly has started."
             slice.executionCompleted -> "Execution has completed."
             slice.executionStarted   -> "Execution is in progress."
-            else                     -> ""
+            else                     -> throw IllegalStateException("No structural state active")
         }
     }
 
@@ -56,7 +56,7 @@ class InteractionFormatter {
             slice.assemblyStarted    -> "Assembly process has begun."
             slice.executionCompleted -> "All execution tasks have completed."
             slice.executionStarted   -> "Execution tasks are currently running."
-            else                     -> ""
+            else                     -> throw IllegalStateException("No structural state active")
         }
     }
 
@@ -67,7 +67,7 @@ class InteractionFormatter {
             slice.assemblyStarted    -> "status=assembly_started"
             slice.executionCompleted -> "status=execution_completed"
             slice.executionStarted   -> "status=execution_started"
-            else                     -> ""
+            else                     -> throw IllegalStateException("No structural state active")
         }
     }
 }

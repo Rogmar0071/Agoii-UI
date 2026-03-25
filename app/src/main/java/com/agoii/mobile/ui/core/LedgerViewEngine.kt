@@ -18,9 +18,6 @@ class LedgerViewEngine(private val projection: StateProjection = StateProjection
     /** Whether the assembly phase has fully completed. */
     val assemblyCompleted: Boolean get() = _uiState?.assemblyCompleted ?: throw IllegalStateException("UIState not initialized")
 
-    /** Whether the full lifecycle is complete. */
-    val isComplete: Boolean get() = _uiState?.isComplete ?: throw IllegalStateException("UIState not initialized")
-
     private var _uiState: UIState? = null
 
     /**
