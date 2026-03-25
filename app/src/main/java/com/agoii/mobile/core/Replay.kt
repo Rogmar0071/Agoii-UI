@@ -66,10 +66,7 @@ class Replay(private val eventStore: EventRepository) {
             }
         }
 
-        val fullyExecuted = totalTasks > 0 &&
-            completedTasks == totalTasks &&
-            validatedTasks == totalTasks &&
-            executionCompleted
+        val fullyExecuted = executionCompleted
 
         val assemblyValid = assemblyStarted &&
             assemblyValidated &&

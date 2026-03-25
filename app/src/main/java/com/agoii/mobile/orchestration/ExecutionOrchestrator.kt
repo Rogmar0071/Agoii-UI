@@ -1,35 +1,48 @@
 package com.agoii.mobile.orchestration
 
-import com.agoii.mobile.governance.ContractDescriptor
-import com.agoii.mobile.governance.ContractGate
-import com.agoii.mobile.governance.SurfaceType
+import com.agoii.mobile.core.EventRepository
+import com.agoii.mobile.core.EventTypes
 
-// ─── Orchestrator — Execution Sequencing Authority ────────────────────────────
+// ─── ExecutionOrchestrator — Closure Authority ────────────────────────────────
 
 /**
- * ExecutionOrchestrator — controls execution sequencing and delegates
- * approval decisions to the governance gate.
+ * ExecutionOrchestrator — sole authority for contract closure events.
  *
  * Responsibilities:
- *  - Owns the decision of whether a given execution position may proceed.
- *  - Calls [ContractGate.approve] for each position; never evaluates CSL directly.
- *  - Does NOT write events, iterate contracts, or call the Governor.
+ *  - Emit CONTRACT_COMPLETED for every contract closure.
+ *  - Emit EXECUTION_COMPLETED when the final contract closes
+ *    (position == DEFAULT_TOTAL_CONTRACTS).
+ *
+ * Rules:
+ *  - MUST NOT emit CONTRACT_STARTED.
+ *  - MUST NOT control contract sequencing beyond closure decision.
+ *  - MUST NOT infer completion from any source other than position.
  */
 class ExecutionOrchestrator(
-    private val gate: ContractGate
+    private val eventStore: EventRepository
 ) {
-    fun canExecute(position: Int): Boolean {
-        return gate.approve(
-            ContractDescriptor(
-                surface = SurfaceType.LG,
-                executionCount = position,
-                conditionCount = 0,
-                validationCapacity = VC
+
+    /**
+     * Close a contract at the given position.
+     *
+     * Always emits CONTRACT_COMPLETED.
+     * Emits EXECUTION_COMPLETED only when position == DEFAULT_TOTAL_CONTRACTS.
+     *
+     * @param projectId  The project ledger to write to.
+     * @param contractId The identifier of the contract being closed.
+     * @param position   The 1-based position of the contract in the execution sequence.
+     */
+    fun closeContract(projectId: String, contractId: String, position: Int) {
+        eventStore.appendEvent(
+            projectId,
+            EventTypes.CONTRACT_COMPLETED,
+            mapOf(
+                "contract_id" to contractId,
+                "position"    to position
             )
         )
-    }
-
-    companion object {
-        private const val VC = 5
+        if (position == EventTypes.DEFAULT_TOTAL_CONTRACTS) {
+            eventStore.appendEvent(projectId, EventTypes.EXECUTION_COMPLETED, emptyMap())
+        }
     }
 }
