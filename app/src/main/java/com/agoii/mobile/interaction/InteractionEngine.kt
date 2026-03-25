@@ -1,22 +1,15 @@
 package com.agoii.mobile.interaction
 
 import com.agoii.mobile.core.ReplayStructuralState
-import com.agoii.mobile.simulation.SimulationView
 
 /**
- * Polymorphic input supplied to [InteractionEngine.execute].
+ * Single, non-polymorphic input supplied to [InteractionEngine.execute].
  *
- * Exactly one subtype is active per invocation:
- *  - [LedgerInput]     → state extracted from the event ledger via [ReplayStructuralState].
- *  - [SimulationInput] → view produced by the Simulation layer via [SimulationView].
+ * [ReplayStructuralState] is the ONLY authority — no alternative input paths exist.
  */
-sealed class InteractionInput {
-    /** Input sourced from the event ledger. */
-    data class LedgerInput(val state: ReplayStructuralState) : InteractionInput()
-
-    /** Input sourced from a completed simulation. */
-    data class SimulationInput(val view: SimulationView) : InteractionInput()
-}
+data class InteractionInput(
+    val state: ReplayStructuralState
+)
 
 /**
  * Executes an [InteractionContract] against an [InteractionInput] and returns a
@@ -28,9 +21,9 @@ sealed class InteractionInput {
  *  - Output is deterministic: the same contract and input always produce the
  *    same result.
  *  - No caching, no hidden state.
- *  - ONE execution pipeline: a single [execute] entry point handles all input types.
+ *  - Single execution path — no branching on input type.
  *
- * The engine delegates scope extraction to [InteractionMapper] and text
+ * The engine delegates state extraction to [InteractionMapper] and text
  * formatting to [InteractionFormatter] so each responsibility is isolated.
  */
 class InteractionEngine(
@@ -42,27 +35,29 @@ class InteractionEngine(
      * Execute [contract] against [input] and return a fully-formed result.
      *
      * Flow:
-     *   LedgerInput     → [InteractionMapper.extract]                → [StateSlice]
-     *   SimulationInput → [InteractionMapper.extractFromSimulationView] → [StateSlice]
+     *   [InteractionInput.state] → [InteractionMapper.extract] → [StateSlice]
      *   contract.outputType → [InteractionFormatter.format] → content string
      *
      * @param contract Describes what to query and how to format it.
-     * @param input    Immutable source of truth — either ledger state or simulation view.
+     * @param input    Immutable structural source of truth.
      * @return         [InteractionResult] whose [InteractionResult.content] is
      *                 ready for direct UI rendering.
      */
     fun execute(contract: InteractionContract, input: InteractionInput): InteractionResult {
-        val slice = when (input) {
-            is InteractionInput.LedgerInput     -> mapper.extract(contract.scope, input.state)
-            is InteractionInput.SimulationInput -> mapper.extractFromSimulationView(input.view)
-        }
+        val slice = mapper.extract(input.state)
 
         val content = formatter.format(contract.outputType, slice)
 
         return InteractionResult(
             contractId = contract.contractId,
             content    = content,
-            references = slice.references
+            references = listOf(
+                "executionStarted",
+                "executionCompleted",
+                "assemblyStarted",
+                "assemblyValidated",
+                "assemblyCompleted"
+            )
         )
     }
 }
