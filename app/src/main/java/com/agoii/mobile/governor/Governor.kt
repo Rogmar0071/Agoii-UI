@@ -11,11 +11,11 @@ import com.agoii.mobile.core.EventTypes
  *  - It is pure: no side effects, no I/O, no external dependencies.
  *  - All decisions are derived exclusively from the supplied [events] list
  *    (last event + ledger history).
- *  - Returns exactly one [Event] per call, or null for terminal state, external-event wait states, or true drift.
+ *  - Returns exactly one [Event] per call, or null for terminal state, approval/execution wait states, or true drift.
  *  - The caller is responsible for persisting the returned event.
  *
  * Lifecycle (each arrow = one nextEvent call; [external] = null, awaits external event; [terminal] = null):
- *   intent_submitted → contracts_generated → contracts_ready → contracts_approved
+ *   intent_submitted → contracts_generated → contracts_ready [external — contracts_approved written by approveContracts()]
  *     → execution_started → contract_started(1)
  *     → task_assigned → task_started [external — task_completed or task_failed written externally]
  *     → task_completed → task_validated
@@ -33,8 +33,8 @@ class Governor {
     /**
      * Given the full ordered ledger [events], returns the next [Event] to append,
      * or null when the ledger contains no Governor-owned transition: terminal state
-     * ([EventTypes.ASSEMBLY_COMPLETED]), external-event wait states ([EventTypes.TASK_STARTED],
-     * [EventTypes.TASK_FAILED]), or true drift (unknown type).
+     * ([EventTypes.ASSEMBLY_COMPLETED]), approval/execution wait states ([EventTypes.CONTRACTS_READY],
+     * [EventTypes.TASK_STARTED], [EventTypes.TASK_FAILED]), or true drift (unknown type).
      *
      * This function has no side effects. The caller is responsible for persisting
      * the returned event via [com.agoii.mobile.core.EventRepository].
@@ -66,8 +66,8 @@ class Governor {
             EventTypes.CONTRACTS_GENERATED ->
                 Event(type = EventTypes.CONTRACTS_READY, payload = emptyMap())
 
-            EventTypes.CONTRACTS_READY ->
-                Event(type = EventTypes.CONTRACTS_APPROVED, payload = emptyMap())
+            // No Governor-generated transition: approval is an explicit external governance action.
+            EventTypes.CONTRACTS_READY -> null
 
             EventTypes.CONTRACTS_APPROVED ->
                 Event(type = EventTypes.EXECUTION_STARTED, payload = emptyMap())
