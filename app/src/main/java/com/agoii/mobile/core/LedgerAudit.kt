@@ -22,20 +22,6 @@ data class AuditResult(
  */
 class LedgerAudit(private val eventStore: EventRepository) {
 
-    /**
-     * Fixed single-step transitions driven automatically by the governor.
-     * Defined here using core-only [EventTypes] constants so that [LedgerAudit]
-     * remains independent of the governor package.
-     */
-    private val validTransitions: Map<String, String> = mapOf(
-        EventTypes.INTENT_SUBMITTED    to EventTypes.CONTRACTS_GENERATED,
-        EventTypes.CONTRACTS_GENERATED to EventTypes.CONTRACTS_READY,
-        EventTypes.CONTRACTS_APPROVED  to EventTypes.EXECUTION_STARTED,
-        EventTypes.EXECUTION_COMPLETED to EventTypes.ASSEMBLY_STARTED,
-        EventTypes.ASSEMBLY_STARTED    to EventTypes.ASSEMBLY_VALIDATED,
-        EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED
-    )
-
     fun auditLedger(projectId: String): AuditResult {
         val events = eventStore.loadEvents(projectId)
         if (events.isEmpty()) {
@@ -74,41 +60,62 @@ class LedgerAudit(private val eventStore: EventRepository) {
         )
     }
 
-    private fun isLegalTransition(from: String, to: String): Boolean {
-        // Standard governor-driven single-step transitions (includes assembly pipeline)
-        if (validTransitions[from] == to) return true
-        // User-driven: approval after contracts are ready
-        if (from == EventTypes.CONTRACTS_READY && to == EventTypes.CONTRACTS_APPROVED) return true
-        // Governor: execution begins — start the first contract
-        if (from == EventTypes.EXECUTION_STARTED && to == EventTypes.CONTRACT_STARTED) return true
-        // Governor: task lifecycle — contract_started initiates task assignment
-        if (from == EventTypes.CONTRACT_STARTED && to == EventTypes.TASK_ASSIGNED) return true
-        // Backward-compatible direct path (pre-task-lifecycle ledgers remain auditable)
-        if (from == EventTypes.CONTRACT_STARTED && to == EventTypes.CONTRACT_COMPLETED) return true
-        // Governor: task lifecycle — assignment leads to execution start
-        if (from == EventTypes.TASK_ASSIGNED && to == EventTypes.TASK_STARTED) return true
-        // Governor: task lifecycle — execution produces a completion event
-        if (from == EventTypes.TASK_STARTED && to == EventTypes.TASK_COMPLETED) return true
-        // Governor: task lifecycle — execution failure
-        if (from == EventTypes.TASK_STARTED && to == EventTypes.TASK_FAILED) return true
-        // Governor: task lifecycle — validation of completed task
-        if (from == EventTypes.TASK_COMPLETED && to == EventTypes.TASK_VALIDATED) return true
-        // Governor: task lifecycle — validation failure
-        if (from == EventTypes.TASK_COMPLETED && to == EventTypes.TASK_FAILED) return true
-        // Governor: task validated → contract can now be completed (critical rule)
-        if (from == EventTypes.TASK_VALIDATED && to == EventTypes.CONTRACT_COMPLETED) return true
-        // Governor: task failed → retry with same or reassigned contractor
-        if (from == EventTypes.TASK_FAILED && to == EventTypes.TASK_ASSIGNED) return true
-        // Governor: task failed → reassign contractor
-        if (from == EventTypes.TASK_FAILED && to == EventTypes.CONTRACTOR_REASSIGNED) return true
-        // Governor: task failed → escalate (all retries exhausted)
-        if (from == EventTypes.TASK_FAILED && to == EventTypes.CONTRACT_FAILED) return true
-        // Governor: reassignment leads to new task assignment
-        if (from == EventTypes.CONTRACTOR_REASSIGNED && to == EventTypes.TASK_ASSIGNED) return true
-        // Governor: completed contract leads to the next one
-        if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.CONTRACT_STARTED) return true
-        // Governor: all contracts completed — close the execution phase
-        if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.EXECUTION_COMPLETED) return true
-        return false
+    companion object {
+        /**
+         * Fixed single-step transitions driven automatically by the governor.
+         * Defined using core-only [EventTypes] constants so that [LedgerAudit]
+         * and [ValidationLayer] remain independent of the governor package.
+         */
+        private val validTransitions: Map<String, String> = mapOf(
+            EventTypes.INTENT_SUBMITTED    to EventTypes.CONTRACTS_GENERATED,
+            EventTypes.CONTRACTS_GENERATED to EventTypes.CONTRACTS_READY,
+            EventTypes.CONTRACTS_APPROVED  to EventTypes.EXECUTION_STARTED,
+            EventTypes.EXECUTION_COMPLETED to EventTypes.ASSEMBLY_STARTED,
+            EventTypes.ASSEMBLY_STARTED    to EventTypes.ASSEMBLY_VALIDATED,
+            EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED
+        )
+
+        /**
+         * Returns true when transitioning [from] → [to] is a legal step in the Agoii
+         * lifecycle.  Shared by [LedgerAudit] (post-hoc audit) and [ValidationLayer]
+         * (pre-write gate) to guarantee a single source of truth for the transition table.
+         */
+        internal fun isLegalTransition(from: String, to: String): Boolean {
+            // Standard governor-driven single-step transitions (includes assembly pipeline)
+            if (validTransitions[from] == to) return true
+            // User-driven: approval after contracts are ready
+            if (from == EventTypes.CONTRACTS_READY && to == EventTypes.CONTRACTS_APPROVED) return true
+            // Governor: execution begins — start the first contract
+            if (from == EventTypes.EXECUTION_STARTED && to == EventTypes.CONTRACT_STARTED) return true
+            // Governor: task lifecycle — contract_started initiates task assignment
+            if (from == EventTypes.CONTRACT_STARTED && to == EventTypes.TASK_ASSIGNED) return true
+            // Backward-compatible direct path (pre-task-lifecycle ledgers remain auditable)
+            if (from == EventTypes.CONTRACT_STARTED && to == EventTypes.CONTRACT_COMPLETED) return true
+            // Governor: task lifecycle — assignment leads to execution start
+            if (from == EventTypes.TASK_ASSIGNED && to == EventTypes.TASK_STARTED) return true
+            // Governor: task lifecycle — execution produces a completion event
+            if (from == EventTypes.TASK_STARTED && to == EventTypes.TASK_COMPLETED) return true
+            // Governor: task lifecycle — execution failure
+            if (from == EventTypes.TASK_STARTED && to == EventTypes.TASK_FAILED) return true
+            // Governor: task lifecycle — validation of completed task
+            if (from == EventTypes.TASK_COMPLETED && to == EventTypes.TASK_VALIDATED) return true
+            // Governor: task lifecycle — validation failure
+            if (from == EventTypes.TASK_COMPLETED && to == EventTypes.TASK_FAILED) return true
+            // Governor: task validated → contract can now be completed (critical rule)
+            if (from == EventTypes.TASK_VALIDATED && to == EventTypes.CONTRACT_COMPLETED) return true
+            // Governor: task failed → retry with same or reassigned contractor
+            if (from == EventTypes.TASK_FAILED && to == EventTypes.TASK_ASSIGNED) return true
+            // Governor: task failed → reassign contractor
+            if (from == EventTypes.TASK_FAILED && to == EventTypes.CONTRACTOR_REASSIGNED) return true
+            // Governor: task failed → escalate (all retries exhausted)
+            if (from == EventTypes.TASK_FAILED && to == EventTypes.CONTRACT_FAILED) return true
+            // Governor: reassignment leads to new task assignment
+            if (from == EventTypes.CONTRACTOR_REASSIGNED && to == EventTypes.TASK_ASSIGNED) return true
+            // Governor: completed contract leads to the next one
+            if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.CONTRACT_STARTED) return true
+            // Governor: all contracts completed — close the execution phase
+            if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.EXECUTION_COMPLETED) return true
+            return false
+        }
     }
 }

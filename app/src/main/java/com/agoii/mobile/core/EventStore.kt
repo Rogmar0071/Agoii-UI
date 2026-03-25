@@ -1,7 +1,6 @@
 package com.agoii.mobile.core
 
 import android.content.Context
-import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
 import com.google.gson.reflect.TypeToken
@@ -9,16 +8,33 @@ import java.io.File
 import java.io.IOException
 
 /**
- * Append-only event store backed by per-project JSON files on the local filesystem.
+ * Thrown when a physical write to the ledger file fails.
  *
- * Invariants:
- *  - Events are NEVER deleted or modified.
- *  - Each write rewrites the complete list atomically via a temp-file swap.
- *  - loadEvents always returns events in insertion order.
+ * System Law 6 — Atomic Commit: either full write or nothing.
  */
-class EventStore(private val context: Context) : EventRepository {
+class LedgerWriteException(message: String, cause: Throwable? = null) :
+    RuntimeException(message, cause)
 
-    private val gson = Gson()
+/**
+ * Pure persistence layer for the Agoii event ledger.
+ *
+ * [EventStore] is exclusively responsible for reading and writing ledger files.
+ * It contains ZERO sequencing logic, ZERO UUID generation, ZERO timestamp assignment,
+ * and ZERO validation. All of that belongs to [EventLedger].
+ *
+ * Responsibilities:
+ *  - [loadEvents]   — deserialise the project ledger file and verify structural integrity.
+ *  - [appendEvent]  — accept a fully-constructed [Event] from [EventLedger] and persist
+ *                     it atomically via a temp-file rename. Does NOT call [loadEvents].
+ *
+ * System Law 6 — Atomic Commit: temp-file swap guarantees all-or-nothing writes.
+ * System Law 7 — Fail-Fast Integrity: [loadEvents] raises [LedgerCorruptionException]
+ *                on any structural violation.
+ */
+class EventStore(private val context: Context) {
+
+    private val gson      = Gson()
+    private val integrity = LedgerIntegrity()
 
     private fun ledgerFile(projectId: String): File {
         val dir = File(context.filesDir, "ledgers")
@@ -26,38 +42,92 @@ class EventStore(private val context: Context) : EventRepository {
         return File(dir, "$projectId.json")
     }
 
-    /** Append a single event to the ledger. This is the ONLY write path. */
-    override fun appendEvent(projectId: String, type: String, payload: Map<String, Any>) {
-        val events = loadEvents(projectId).toMutableList()
-        events.add(Event(type, payload))
-        val file = ledgerFile(projectId)
-        val tmp = File(file.parent, "${file.name}.tmp")
-        tmp.writeText(gson.toJson(events))
-        tmp.renameTo(file)
+    /**
+     * Persist a single pre-constructed [event] to [projectId]'s ledger.
+     *
+     * The [event] is appended to the raw list already on disk and the result is committed
+     * atomically via a temp-file rename. This method does NOT call [loadEvents] —
+     * the caller ([EventLedger]) has already read the current list under the project lock.
+     *
+     * @throws LedgerWriteException if the atomic commit cannot be completed.
+     */
+    fun appendEvent(projectId: String, event: Event) {
+        val existing = readRaw(projectId)
+        persist(projectId, existing + event)
     }
 
-    /** Load all events in insertion order. Returns empty list if ledger does not exist. */
-    override fun loadEvents(projectId: String): List<Event> {
+    /**
+     * Load all events in insertion order and verify structural integrity.
+     *
+     * Returns an empty list when no ledger file exists yet.
+     *
+     * @throws LedgerCorruptionException if the file contains invalid JSON or fails
+     *         the [LedgerIntegrity] monotonicity / uniqueness checks.
+     */
+    fun loadEvents(projectId: String): List<Event> {
+        val file = ledgerFile(projectId)
+        if (!file.exists()) return emptyList()
+        val events: List<Event> = try {
+            val listType = object : TypeToken<List<Event>>() {}.type
+            gson.fromJson<List<Event>>(file.readText(), listType) ?: emptyList()
+        } catch (e: JsonSyntaxException) {
+            throw LedgerCorruptionException(
+                "Ledger for '$projectId' contains invalid JSON: ${e.message}", e
+            )
+        } catch (e: IOException) {
+            throw LedgerCorruptionException(
+                "Cannot read ledger for '$projectId': ${e.message}", e
+            )
+        }
+        integrity.verify(projectId, events)
+        return events
+    }
+
+    /**
+     * Read the raw event list from disk without running an integrity check.
+     * Used only inside [appendEvent] to build the write payload.
+     */
+    private fun readRaw(projectId: String): List<Event> {
         val file = ledgerFile(projectId)
         if (!file.exists()) return emptyList()
         return try {
-            val type = object : TypeToken<List<Event>>() {}.type
-            gson.fromJson<List<Event>>(file.readText(), type) ?: emptyList()
-        } catch (e: JsonSyntaxException) {
-            Log.e(TAG, "Ledger for '$projectId' is corrupted: ${e.message}")
-            emptyList()
+            val listType = object : TypeToken<List<Event>>() {}.type
+            gson.fromJson<List<Event>>(file.readText(), listType) ?: emptyList()
         } catch (e: IOException) {
-            Log.e(TAG, "Failed to read ledger for '$projectId': ${e.message}")
-            emptyList()
+            throw LedgerWriteException(
+                "Cannot read ledger for '$projectId' during write: ${e.message}", e
+            )
         }
     }
 
-    /** Remove the ledger for a project. Used in tests only. */
-    fun clearLedger(projectId: String) {
-        ledgerFile(projectId).delete()
+    /**
+     * Atomically write [events] to [projectId]'s ledger file via a temp-file rename.
+     *
+     * @throws LedgerWriteException if the write or rename fails.
+     */
+    private fun persist(projectId: String, events: List<Event>) {
+        val file = ledgerFile(projectId)
+        val tmp  = File(file.parent, "${file.name}.tmp")
+        try {
+            tmp.writeText(gson.toJson(events))
+            if (!tmp.renameTo(file)) {
+                tmp.delete()
+                throw LedgerWriteException(
+                    "Atomic rename failed for ledger '$projectId'. Temp file deleted."
+                )
+            }
+        } catch (e: IOException) {
+            tmp.delete()
+            throw LedgerWriteException("Write failed for ledger '$projectId': ${e.message}", e)
+        }
     }
 
-    companion object {
-        private const val TAG = "EventStore"
+    /**
+     * Delete the entire ledger file for [projectId].
+     *
+     * For test use only. Production code must never call this method.
+     */
+    internal fun clearLedger(projectId: String) {
+        ledgerFile(projectId).delete()
     }
 }
