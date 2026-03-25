@@ -42,33 +42,37 @@ class InteractionEngine(
      * Execute [contract] against [input] and return a fully-formed result.
      *
      * Flow:
-     *   LedgerInput     → [InteractionMapper.extract]                → [StateSlice]
-     *   SimulationInput → [InteractionMapper.extractFromSimulationView] → [StateSlice]
-     *   contract.outputType → [InteractionFormatter.format] → content string
+     *   LedgerInput     → [InteractionMapper.extract] → [StateSlice]
+     *                   → [InteractionFormatter.format] → content string
+     *   SimulationInput → [InteractionResult] constructed directly from [SimulationView]
+     *                   — does NOT pass through [InteractionMapper] or produce a [StateSlice]
      *
      * @param contract Describes what to query and how to format it.
      * @param input    Immutable source of truth — either ledger state or simulation view.
      * @return         [InteractionResult] whose [InteractionResult.content] is
      *                 ready for direct UI rendering.
      */
-    fun execute(contract: InteractionContract, input: InteractionInput): InteractionResult {
-        val slice = when (input) {
-            is InteractionInput.LedgerInput     -> mapper.extract(contract.scope, input.state)
-            is InteractionInput.SimulationInput -> mapper.extractFromSimulationView(input.view)
-        }
-
-        val content = formatter.format(contract.outputType, slice)
-
-        return InteractionResult(
-            contractId = contract.contractId,
-            content    = content,
-            references = listOf(
-                "executionStarted",
-                "executionCompleted",
-                "assemblyStarted",
-                "assemblyValidated",
-                "assemblyCompleted"
+    fun execute(contract: InteractionContract, input: InteractionInput): InteractionResult =
+        when (input) {
+            is InteractionInput.LedgerInput -> {
+                val slice   = mapper.extract(contract.scope, input.state)
+                val content = formatter.format(contract.outputType, slice)
+                InteractionResult(
+                    contractId = contract.contractId,
+                    content    = content,
+                    references = listOf(
+                        "executionStarted",
+                        "executionCompleted",
+                        "assemblyStarted",
+                        "assemblyValidated",
+                        "assemblyCompleted"
+                    )
+                )
+            }
+            is InteractionInput.SimulationInput -> InteractionResult(
+                contractId = contract.contractId,
+                content    = input.view.summary,
+                references = listOf("simulation")
             )
-        )
-    }
+        }
 }

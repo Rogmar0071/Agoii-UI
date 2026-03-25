@@ -1,11 +1,9 @@
 package com.agoii.mobile.interaction
 
 import com.agoii.mobile.core.ReplayStructuralState
-import com.agoii.mobile.simulation.SimulationView
 
 /**
- * Maps a [ReplayStructuralState] into a [StateSlice] for downstream formatting,
- * and maps a [SimulationView] directly into a [StateSlice] for the simulation path.
+ * Maps a [ReplayStructuralState] into a [StateSlice] for downstream formatting.
  *
  * Responsibility: mapping only — no formatting, no business logic.
  * Every field in the returned [StateSlice] is derived from [ReplayStructuralState] only.
@@ -29,22 +27,6 @@ class InteractionMapper {
         assemblyStarted    = state.assembly.assemblyStarted,
         assemblyValidated  = state.assembly.assemblyValidated,
         assemblyCompleted  = state.assembly.assemblyCompleted
-    )
-
-    /**
-     * Map a [SimulationView] directly into a [StateSlice].
-     *
-     * Rules:
-     *  - Direct field mapping ONLY from available [SimulationView] signals.
-     *  - Must not depend on [ReplayStructuralState].
-     *  - No literal placeholder values. No conditional suppression.
-     */
-    fun extractFromSimulationView(view: SimulationView): StateSlice = StateSlice(
-        executionStarted   = view.confidence > 0.0,
-        executionCompleted = view.confidence == 1.0,
-        assemblyStarted    = view.confidence > 0.0,
-        assemblyValidated  = view.confidence >= 0.9,
-        assemblyCompleted  = view.confidence == 1.0
     )
 }
 
