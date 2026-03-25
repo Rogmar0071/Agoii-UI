@@ -389,9 +389,8 @@ class Governor(
             // Checks that execution_completed is present in the ledger.
             // If not present, blocks assembly_validated and returns NO_EVENT.
             lastType == EventTypes.ASSEMBLY_STARTED -> {
-                val allEvents = eventStore.loadEvents(projectId)
                 val executionCompletedSeen =
-                    allEvents.any { it.type == EventTypes.EXECUTION_COMPLETED }
+                    events.any { it.type == EventTypes.EXECUTION_COMPLETED }
                 if (!executionCompletedSeen) return GovernorResult.NO_EVENT
                 eventStore.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap())
                 GovernorResult.ADVANCED
