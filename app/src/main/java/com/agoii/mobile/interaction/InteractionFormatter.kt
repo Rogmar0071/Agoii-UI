@@ -28,54 +28,46 @@ class InteractionFormatter {
     // ── private formatting helpers ────────────────────────────────────────────
 
     private fun buildSummary(slice: StateSlice): String {
-        val executionLabel = when {
-            slice.executionCompleted -> "execution: complete"
-            slice.executionStarted   -> "execution: in progress"
-            else                     -> "execution: not started"
+        return when {
+            slice.assemblyCompleted  -> "assembly completed"
+            slice.assemblyValidated  -> "assembly validated"
+            slice.assemblyStarted    -> "assembly started"
+            slice.executionCompleted -> "execution completed"
+            slice.executionStarted   -> "execution started"
+            else                     -> throw IllegalStateException("No structural state active")
         }
-        val assemblyLabel = when {
-            slice.assemblyCompleted  -> "assembly: complete"
-            slice.assemblyValidated  -> "assembly: validated"
-            slice.assemblyStarted    -> "assembly: started"
-            else                     -> "assembly: not started"
-        }
-        return "$executionLabel | $assemblyLabel"
     }
 
-    private fun buildDetailed(slice: StateSlice): String = buildString {
-        appendLine("Execution started:    ${slice.executionStarted}")
-        appendLine("Execution completed:  ${slice.executionCompleted}")
-        appendLine("Assembly started:     ${slice.assemblyStarted}")
-        appendLine("Assembly validated:   ${slice.assemblyValidated}")
-        append("Assembly completed:   ${slice.assemblyCompleted}")
+    private fun buildDetailed(slice: StateSlice): String {
+        return when {
+            slice.assemblyCompleted  -> "Assembly has been completed."
+            slice.assemblyValidated  -> "Assembly has been validated."
+            slice.assemblyStarted    -> "Assembly has started."
+            slice.executionCompleted -> "Execution has completed."
+            slice.executionStarted   -> "Execution is in progress."
+            else                     -> throw IllegalStateException("No structural state active")
+        }
     }
 
-    private fun buildExplanation(slice: StateSlice): String = when {
-        slice.assemblyCompleted ->
-            "The system lifecycle is complete. Assembly has been validated and closed."
-        slice.assemblyValidated ->
-            "Execution is complete and assembly validation has passed. " +
-            "Awaiting assembly closure."
-        slice.assemblyStarted ->
-            "Execution is complete. Assembly has been initiated and is " +
-            "awaiting validation."
-        slice.executionCompleted ->
-            "Execution is complete. The system is ready to begin assembly."
-        slice.executionStarted ->
-            "Execution is in progress. Awaiting task completion and validation."
-        else ->
-            "The system is awaiting execution. No tasks have been started."
+    private fun buildExplanation(slice: StateSlice): String {
+        return when {
+            slice.assemblyCompleted  -> "All assembly steps are complete."
+            slice.assemblyValidated  -> "Assembly has passed validation."
+            slice.assemblyStarted    -> "Assembly process has begun."
+            slice.executionCompleted -> "All execution tasks have completed."
+            slice.executionStarted   -> "Execution tasks are currently running."
+            else                     -> throw IllegalStateException("No structural state active")
+        }
     }
 
     private fun buildStatus(slice: StateSlice): String {
-        val status = when {
-            slice.assemblyCompleted  -> "assembly_completed"
-            slice.assemblyValidated  -> "assembly_validated"
-            slice.assemblyStarted    -> "assembly_started"
-            slice.executionCompleted -> "execution_completed"
-            slice.executionStarted   -> "execution_started"
-            else                     -> "execution_not_started"
+        return when {
+            slice.assemblyCompleted  -> "status=assembly_completed"
+            slice.assemblyValidated  -> "status=assembly_validated"
+            slice.assemblyStarted    -> "status=assembly_started"
+            slice.executionCompleted -> "status=execution_completed"
+            slice.executionStarted   -> "status=execution_started"
+            else                     -> throw IllegalStateException("No structural state active")
         }
-        return "status=$status"
     }
 }
