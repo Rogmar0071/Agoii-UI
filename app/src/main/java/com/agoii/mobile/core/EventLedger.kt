@@ -12,11 +12,11 @@ import java.util.UUID
  *
  * Write pipeline (System Laws 1–7):
  *  1. Acquire the exclusive per-project lock ([LedgerLock]).
- *  2. Load current events from [store] — the ONLY read in the write path.
+ *  2. Load current events from [store] (pre-write read; eliminates TOCTOU).
  *  3. Run [ValidationLayer.validate] — reject unknown type or illegal transition.
  *  4. Construct the full [Event] here: UUID id, monotonic sequenceNumber, wall-clock timestamp.
  *  5. Delegate to [EventStore.appendEvent] — pure persistence, no logic, atomic file write.
- *  6. Run [LedgerIntegrity.verify] on the committed list — fail-fast on corruption.
+ *  6. Reload persisted events from [store] (post-commit truth) and run [LedgerIntegrity.verify].
  *  7. Release the lock.
  *
  * Read path: [loadEvents] is a transparent delegation to [store].
@@ -53,7 +53,8 @@ class EventLedger(private val store: EventStore) : EventRepository {
                 timestamp      = System.currentTimeMillis()
             )
             store.appendEvent(projectId, newEvent)
-            integrity.verify(projectId, currentEvents + newEvent)
+            val persisted = store.loadEvents(projectId)
+            integrity.verify(projectId, persisted)
         }
     }
 
