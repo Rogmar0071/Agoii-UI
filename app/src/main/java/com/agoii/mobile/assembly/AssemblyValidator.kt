@@ -31,9 +31,13 @@ class AssemblyValidator {
         val missingElements = mutableListOf<String>()
         val failedChecks    = mutableListOf<String>()
 
+        val executionStarted   = replayState.execution.assignedTasks > 0
         val executionCompleted = replayState.execution.fullyExecuted
 
         // B. Execution Closure
+        if (!executionStarted) {
+            failedChecks.add("execution not started")
+        }
         if (!executionCompleted) {
             failedChecks.add("execution_completed not found in ledger")
         }

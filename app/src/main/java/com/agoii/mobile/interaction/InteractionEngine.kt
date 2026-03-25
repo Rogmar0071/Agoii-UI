@@ -1,15 +1,21 @@
 package com.agoii.mobile.interaction
 
 import com.agoii.mobile.core.ReplayStructuralState
+import com.agoii.mobile.simulation.SimulationView
 
 /**
  * Polymorphic input supplied to [InteractionEngine.execute].
  *
- * The sole active subtype is [LedgerInput], sourced from [ReplayStructuralState].
+ * Exactly one subtype is active per invocation:
+ *  - [LedgerInput]     → state extracted from the event ledger via [ReplayStructuralState].
+ *  - [SimulationInput] → view produced by the Simulation layer via [SimulationView].
  */
 sealed class InteractionInput {
     /** Input sourced from the event ledger. */
     data class LedgerInput(val state: ReplayStructuralState) : InteractionInput()
+
+    /** Input sourced from a completed simulation. Passive — carries no derivation logic. */
+    data class SimulationInput(val view: SimulationView) : InteractionInput()
 }
 
 /**
@@ -36,17 +42,19 @@ class InteractionEngine(
      * Execute [contract] against [input] and return a fully-formed result.
      *
      * Flow:
-     *   LedgerInput → [InteractionMapper.extract] → [StateSlice]
+     *   LedgerInput     → [InteractionMapper.extract]                → [StateSlice]
+     *   SimulationInput → [InteractionMapper.extractFromSimulationView] → [StateSlice]
      *   contract.outputType → [InteractionFormatter.format] → content string
      *
      * @param contract Describes what to query and how to format it.
-     * @param input    Immutable source of truth — ledger state.
+     * @param input    Immutable source of truth — either ledger state or simulation view.
      * @return         [InteractionResult] whose [InteractionResult.content] is
      *                 ready for direct UI rendering.
      */
     fun execute(contract: InteractionContract, input: InteractionInput): InteractionResult {
         val slice = when (input) {
-            is InteractionInput.LedgerInput -> mapper.extract(input.state)
+            is InteractionInput.LedgerInput     -> mapper.extract(contract.scope, input.state)
+            is InteractionInput.SimulationInput -> mapper.extractFromSimulationView(input.view)
         }
 
         val content = formatter.format(contract.outputType, slice)
