@@ -92,9 +92,9 @@ class CoreBridge(context: Context) {
         return match?.get("name")?.toString() ?: contractId
     }
 
-    /** Append a contracts_approved event via Governor (sole mutation authority). */
+    /** Append a contracts_approved event directly to the ledger (explicit governance gate). */
     fun approveContracts(projectId: String) {
-        governor.approveContracts(projectId)
+        ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
     }
 
     /** Load all events from the ledger (read-only). */
