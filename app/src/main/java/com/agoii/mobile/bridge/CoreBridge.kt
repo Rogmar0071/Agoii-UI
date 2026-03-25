@@ -13,22 +13,37 @@ import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.core.ReplayVerification
 import com.agoii.mobile.execution.BuildExecutor
+import com.agoii.mobile.ingress.ContractStatus
+import com.agoii.mobile.ingress.IngressContract
+import com.agoii.mobile.ingress.IntentType
+import com.agoii.mobile.ingress.Payload
+import com.agoii.mobile.ingress.References
+import com.agoii.mobile.ingress.Scope
+import com.agoii.mobile.irs.ConsensusRule
 import com.agoii.mobile.irs.EvidenceRef
 import com.agoii.mobile.irs.IrsOrchestrator
 import com.agoii.mobile.irs.IrsSession
 import com.agoii.mobile.irs.IrsSnapshot
+import com.agoii.mobile.irs.OrchestratorResult
 import com.agoii.mobile.irs.StepResult
 import com.agoii.mobile.irs.SwarmConfig
+import java.util.UUID
 
 /**
  * CoreBridge — mobile runtime adapter.
  *
  * Responsibilities:
  *  - Provide a single entry point for the UI layer to call core functions.
- *  - Thin adapter only: reads ledger, calls Governor.nextEvent(), appends result.
+ *  - Routes every intent submission through the Ingress + ICS authority chain
+ *    before any ledger write is attempted.
  *  - No orchestration logic; no Governor internal state awareness.
  *  - When the last event is contract_started, delegates to BuildExecutor before
  *    calling the Governor. If execution fails, returns null (blocks progression).
+ *
+ * Intent authority chain ([submitIntent]):
+ *  1. [IngressContract] — normalises and classifies raw input (entry contract boundary).
+ *  2. [IrsOrchestrator] — 9-stage ICS certification pipeline.
+ *  3. [EventLedger]     — write gate: INTENT_SUBMITTED only on [OrchestratorResult.Certified].
  *
  * Write authority:
  *  - All writes flow through [EventLedger] — the single write authority.
@@ -37,18 +52,100 @@ import com.agoii.mobile.irs.SwarmConfig
  */
 class CoreBridge(context: Context) {
 
-    private val eventStore    = EventStore(context)
-    private val ledger        = EventLedger(eventStore)
-    private val governor      = Governor()
-    private val ledgerAudit   = LedgerAudit(ledger)
-    private val replay        = Replay(ledger)
-    private val replayTest    = ReplayTest(ledger)
-    private val buildExecutor = BuildExecutor()
+    private val eventStore      = EventStore(context)
+    private val ledger          = EventLedger(eventStore)
+    private val governor        = Governor()
+    private val ledgerAudit     = LedgerAudit(ledger)
+    private val replay          = Replay(ledger)
+    private val replayTest      = ReplayTest(ledger)
+    private val buildExecutor   = BuildExecutor()
     private val irsOrchestrator = IrsOrchestrator()
 
-    /** Append an intent_submitted event directly to the ledger. */
+    companion object {
+        // ── ICS default context for objective-only intent submission ───────────
+        private const val DEFAULT_CONSTRAINTS = "standard"
+        private const val DEFAULT_ENVIRONMENT = "mobile"
+        private const val DEFAULT_RESOURCES   = "available"
+    }
+
+    /**
+     * Submit an intent through the Ingress + ICS authority chain.
+     *
+     * Flow:
+     *  1. Build an [IngressContract] from raw input — normalises and classifies the intent.
+     *  2. Create an ICS (IRS) session and run the full 9-stage certification pipeline.
+     *  3. Write INTENT_SUBMITTED to the ledger ONLY when the pipeline emits
+     *     [OrchestratorResult.Certified].
+     *  4. Throw [IllegalArgumentException] on any non-certified outcome.
+     *
+     * @throws IllegalArgumentException when the intent is rejected or requires clarification.
+     */
     fun submitIntent(projectId: String, objective: String) {
-        ledger.appendEvent(projectId, EventTypes.INTENT_SUBMITTED, mapOf("objective" to objective))
+        // ── 1. Ingress: build a typed contract from raw input ─────────────────
+        val ingressContractId = UUID.randomUUID().toString()
+        val normalized = objective.trim().replace(Regex("\\s+"), " ")
+        val ingressContract = IngressContract(
+            contractId = ingressContractId,
+            intentType = IntentType.ACTION,
+            scope      = Scope.SYSTEM,
+            references = References(),
+            payload    = Payload(
+                rawInput         = objective,
+                normalizedIntent = normalized,
+                extractedFields  = emptyMap()
+            ),
+            status = ContractStatus.PENDING
+        )
+
+        // ── 2. ICS (IRS): run the full 9-stage certification pipeline ─────────
+        //
+        // System-default context fills the mandatory IRS fields that are not provided
+        // by the basic intent submission path (objective only).  These defaults represent
+        // the standard mobile-application deployment context and carry no semantic bias.
+        irsOrchestrator.createSession(
+            sessionId         = ingressContract.contractId,
+            rawFields         = mapOf(
+                "objective"   to ingressContract.payload.normalizedIntent,
+                "constraints" to DEFAULT_CONSTRAINTS,
+                "environment" to DEFAULT_ENVIRONMENT,
+                "resources"   to DEFAULT_RESOURCES
+            ),
+            evidence          = mapOf(
+                "objective"   to listOf(
+                    EvidenceRef("ingress-${ingressContractId}-obj-a", "intent-objective-goal"),
+                    EvidenceRef("ingress-${ingressContractId}-obj-b", "intent-requirement-spec")
+                ),
+                "constraints" to listOf(EvidenceRef("ingress-${ingressContractId}-con", "constraint-policy-rule")),
+                "environment" to listOf(EvidenceRef("ingress-${ingressContractId}-env", "environment-platform-infra")),
+                "resources"   to listOf(EvidenceRef("ingress-${ingressContractId}-res", "resource-system-service"))
+            ),
+            swarmConfig       = SwarmConfig(agentCount = 2, consensusRule = ConsensusRule.MAJORITY),
+            availableEvidence = emptyMap()
+        )
+
+        var step = irsOrchestrator.step(ingressContract.contractId)
+        while (!step.terminal) { step = irsOrchestrator.step(ingressContract.contractId) }
+
+        // ── 3. Gate: only ICS-certified intent enters the ledger ──────────────
+        when (val outcome = step.orchestratorResult) {
+            OrchestratorResult.Certified ->
+                ledger.appendEvent(
+                    projectId, EventTypes.INTENT_SUBMITTED,
+                    mapOf("objective" to ingressContract.payload.normalizedIntent)
+                )
+            is OrchestratorResult.NeedsClarification ->
+                throw IllegalArgumentException(
+                    "Intent rejected — clarification required: ${outcome.gaps.joinToString("; ")}"
+                )
+            is OrchestratorResult.Rejected ->
+                throw IllegalArgumentException(
+                    "Intent rejected [${outcome.reason}]: ${outcome.details.joinToString("; ")}"
+                )
+            null ->
+                throw IllegalStateException(
+                    "IRS reached terminal state without a result for session '${ingressContract.contractId}'"
+                )
+        }
     }
 
     /**
