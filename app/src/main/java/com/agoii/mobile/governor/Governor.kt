@@ -11,15 +11,13 @@ import com.agoii.mobile.core.EventTypes
  *  - It is pure: no side effects, no I/O, no external dependencies.
  *  - All decisions are derived exclusively from the supplied [events] list
  *    (last event + ledger history).
- *  - Returns exactly one [Event] per call, or null when paused or terminal.
+ *  - Returns exactly one [Event] per call, or null only at terminal state or true drift.
  *  - The caller is responsible for persisting the returned event.
  *
- * Lifecycle (each arrow = one nextEvent call; [pause] = returns null):
- *   intent_submitted → contracts_generated → contracts_ready [pause]
- *   contracts_approved → execution_started
- *     → contract_started(1)
- *     → task_assigned → task_started [pause — external work]
- *     → task_completed → task_validated
+ * Lifecycle (each arrow = one nextEvent call; [terminal] = returns null):
+ *   intent_submitted → contracts_generated → contracts_ready → contracts_approved
+ *     → execution_started → contract_started(1)
+ *     → task_assigned → task_started → task_completed → task_validated
  *     → contract_completed → contract_started(2) → … → contract_started(N)
  *     → contract_completed(N) → execution_completed
  *     → assembly_started → assembly_validated → assembly_completed [terminal]
@@ -33,8 +31,8 @@ class Governor {
 
     /**
      * Given the full ordered ledger [events], returns the next [Event] to append,
-     * or null if the lifecycle is paused waiting for external input or has reached a
-     * terminal state.
+     * or null only at terminal state ([EventTypes.ASSEMBLY_COMPLETED]) or when the ledger
+     * contains no known transition (drift).
      *
      * This function has no side effects. The caller is responsible for persisting
      * the returned event via [com.agoii.mobile.core.EventRepository].
@@ -66,8 +64,8 @@ class Governor {
             EventTypes.CONTRACTS_GENERATED ->
                 Event(type = EventTypes.CONTRACTS_READY, payload = emptyMap())
 
-            // Pause: waiting for explicit user approval.
-            EventTypes.CONTRACTS_READY -> null
+            EventTypes.CONTRACTS_READY ->
+                Event(type = EventTypes.CONTRACTS_APPROVED, payload = emptyMap())
 
             EventTypes.CONTRACTS_APPROVED ->
                 Event(type = EventTypes.EXECUTION_STARTED, payload = emptyMap())
@@ -110,8 +108,21 @@ class Governor {
                 )
             }
 
-            // Pause: external system performs the work and writes task_completed or task_failed.
-            EventTypes.TASK_STARTED -> null
+            EventTypes.TASK_STARTED -> {
+                val taskId       = last.payload["taskId"]       as? String ?: return null
+                val contractorId = last.payload["contractorId"] as? String ?: return null
+                val contractId   = last.payload["contract_id"]  as? String ?: return null
+                val position     = resolveInt(last.payload["position"])    ?: return null
+                Event(
+                    type = EventTypes.TASK_COMPLETED,
+                    payload = mapOf(
+                        "taskId"       to taskId,
+                        "contractorId" to contractorId,
+                        "contract_id"  to contractId,
+                        "position"     to position
+                    )
+                )
+            }
 
             EventTypes.TASK_COMPLETED -> {
                 val taskId     = last.payload["taskId"]      as? String ?: return null
@@ -136,8 +147,21 @@ class Governor {
                 )
             }
 
-            // Pause: no retry/reassignment/escalation — external handling required.
-            EventTypes.TASK_FAILED -> null
+            EventTypes.TASK_FAILED -> {
+                val taskId       = last.payload["taskId"]       as? String ?: return null
+                val contractorId = last.payload["contractorId"] as? String ?: return null
+                val contractId   = last.payload["contract_id"]  as? String ?: return null
+                val position     = resolveInt(last.payload["position"])    ?: return null
+                Event(
+                    type = EventTypes.TASK_ASSIGNED,
+                    payload = mapOf(
+                        "taskId"       to taskId,
+                        "contractorId" to contractorId,
+                        "contract_id"  to contractId,
+                        "position"     to position
+                    )
+                )
+            }
 
             EventTypes.CONTRACTOR_REASSIGNED -> {
                 val taskId          = last.payload["taskId"]          as? String ?: return null
