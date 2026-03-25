@@ -3,6 +3,7 @@ package com.agoii.mobile.bridge
 import android.content.Context
 import com.agoii.mobile.core.AuditResult
 import com.agoii.mobile.core.Event
+import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventStore
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.governor.Governor
@@ -29,14 +30,20 @@ import com.agoii.mobile.irs.SwarmConfig
  *  - When the last event is contract_started, delegates to BuildExecutor before
  *    allowing the Governor to emit contract_completed. If execution fails, blocks
  *    progression (does not call the Governor).
+ *
+ * Write authority:
+ *  - All writes flow through [EventLedger] — the single write authority.
+ *  - [EventStore] is the backing persistence layer; [EventLedger] wraps it with
+ *    per-project locking, pre-write validation, and fail-fast integrity checks.
  */
 class CoreBridge(context: Context) {
 
     private val eventStore    = EventStore(context)
-    private val governor      = Governor(eventStore)
-    private val ledgerAudit   = LedgerAudit(eventStore)
-    private val replay        = Replay(eventStore)
-    private val replayTest    = ReplayTest(eventStore)
+    private val ledger        = EventLedger(eventStore)
+    private val governor      = Governor(ledger)
+    private val ledgerAudit   = LedgerAudit(ledger)
+    private val replay        = Replay(ledger)
+    private val replayTest    = ReplayTest(ledger)
     private val buildExecutor = BuildExecutor()
     private val irsOrchestrator = IrsOrchestrator()
 
@@ -55,7 +62,7 @@ class CoreBridge(context: Context) {
      *  4. If execution passes → lets the Governor proceed naturally.
      */
     fun runGovernorStep(projectId: String): Governor.GovernorResult {
-        val events    = eventStore.loadEvents(projectId)
+        val events    = ledger.loadEvents(projectId)
         val lastEvent = events.lastOrNull()
 
         if (lastEvent?.type == EventTypes.CONTRACT_STARTED) {
@@ -92,7 +99,7 @@ class CoreBridge(context: Context) {
 
     /** Load all events from the ledger (read-only). */
     fun loadEvents(projectId: String): List<Event> =
-        eventStore.loadEvents(projectId)
+        ledger.loadEvents(projectId)
 
     /** Derive current state by replaying the ledger (read-only). */
     fun replayState(projectId: String): ReplayStructuralState =
