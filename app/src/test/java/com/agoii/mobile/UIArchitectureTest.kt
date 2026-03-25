@@ -218,8 +218,8 @@ class UIArchitectureTest {
     fun `ExecutionModuleUI assembly completed state shows assembly activity`() {
         val ui = StateProjection().project(assemblyCompleted())
         val result = ExecutionModuleUI().present(ui)
-        assertFalse(result.executionStarted)
-        assertFalse(result.executionCompleted)
+        assertTrue(result.executionStarted)
+        assertTrue(result.executionCompleted)
         assertTrue(result.assemblyStarted)
         assertTrue(result.assemblyValidated)
         assertTrue(result.assemblyCompleted)
