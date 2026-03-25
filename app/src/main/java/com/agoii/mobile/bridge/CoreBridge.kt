@@ -8,7 +8,7 @@ import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.core.LedgerAudit
 import com.agoii.mobile.core.Replay
-import com.agoii.mobile.core.ReplayState
+import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.core.ReplayVerification
 import com.agoii.mobile.execution.BuildExecutor
@@ -95,8 +95,8 @@ class CoreBridge(context: Context) {
         eventStore.loadEvents(projectId)
 
     /** Derive current state by replaying the ledger (read-only). */
-    fun replayState(projectId: String): ReplayState =
-        replay.replay(projectId)
+    fun replayState(projectId: String): ReplayStructuralState =
+        replay.replayStructuralState(projectId)
 
     /** Run the ledger audit (read-only). */
     fun auditLedger(projectId: String): AuditResult =

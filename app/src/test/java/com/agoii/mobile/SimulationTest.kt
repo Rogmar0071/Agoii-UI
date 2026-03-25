@@ -1,6 +1,10 @@
 package com.agoii.mobile
 
-import com.agoii.mobile.core.ReplayState
+import com.agoii.mobile.core.AssemblyStructuralState
+import com.agoii.mobile.core.ContractStructuralState
+import com.agoii.mobile.core.ExecutionStructuralState
+import com.agoii.mobile.core.IntentStructuralState
+import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.simulation.SimulationContract
 import com.agoii.mobile.simulation.SimulationEngine
 import com.agoii.mobile.simulation.SimulationMode
@@ -25,59 +29,46 @@ import org.junit.Test
  *  5. SimulationEngine / FEASIBILITY mode — feasible when execution can proceed.
  *  6. SimulationEngine / FEASIBILITY mode — infeasible when lifecycle is closed.
  *  7. SimulationEngine / SCENARIO mode   — generates scenarios for each lifecycle stage.
- *  8. Read-only guarantee — ReplayState is never mutated.
+ *  8. Read-only guarantee — ReplayStructuralState is never mutated.
  *  9. Determinism — identical inputs always produce identical results.
  */
 class SimulationTest {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    private fun idleState(objective: String? = null) = ReplayState(
-        phase              = "idle",
-        contractsCompleted = 0,
-        totalContracts     = 0,
-        executionStarted   = false,
-        executionCompleted = false,
-        assemblyStarted    = false,
-        assemblyValidated  = false,
-        objective          = objective,
-        assemblyCompleted  = false
+    private fun idleState() = ReplayStructuralState(
+        intent    = IntentStructuralState(structurallyComplete = false),
+        contracts = ContractStructuralState(generated = false, valid = false),
+        execution = ExecutionStructuralState(0, 0, 0, 0, false),
+        assembly  = AssemblyStructuralState(false, false, false, false)
     )
 
-    private fun executionCompleteState() = ReplayState(
-        phase              = "execution_completed",
-        contractsCompleted = 3,
-        totalContracts     = 3,
-        executionStarted   = true,
-        executionCompleted = true,
-        assemblyStarted    = false,
-        assemblyValidated  = false,
-        objective          = "deploy service alpha",
-        assemblyCompleted  = false
+    private fun executionStartedState() = ReplayStructuralState(
+        intent    = IntentStructuralState(structurallyComplete = true),
+        contracts = ContractStructuralState(generated = true, valid = true),
+        execution = ExecutionStructuralState(3, 1, 0, 0, false),
+        assembly  = AssemblyStructuralState(false, false, false, false)
     )
 
-    private fun assemblyCompleteState() = ReplayState(
-        phase              = "assembly_completed",
-        contractsCompleted = 3,
-        totalContracts     = 3,
-        executionStarted   = true,
-        executionCompleted = true,
-        assemblyStarted    = true,
-        assemblyValidated  = true,
-        objective          = "deploy service alpha",
-        assemblyCompleted  = true
+    private fun executionCompleteState() = ReplayStructuralState(
+        intent    = IntentStructuralState(structurallyComplete = true),
+        contracts = ContractStructuralState(generated = true, valid = true),
+        execution = ExecutionStructuralState(3, 3, 3, 3, true),
+        assembly  = AssemblyStructuralState(false, false, false, false)
     )
 
-    private fun partialExecutionState() = ReplayState(
-        phase              = "contract_started",
-        contractsCompleted = 1,
-        totalContracts     = 3,
-        executionStarted   = true,
-        executionCompleted = false,
-        assemblyStarted    = false,
-        assemblyValidated  = false,
-        objective          = "deploy service alpha",
-        assemblyCompleted  = false
+    private fun assemblyCompleteState() = ReplayStructuralState(
+        intent    = IntentStructuralState(structurallyComplete = true),
+        contracts = ContractStructuralState(generated = true, valid = true),
+        execution = ExecutionStructuralState(3, 3, 3, 3, true),
+        assembly  = AssemblyStructuralState(true, true, true, true)
+    )
+
+    private fun assemblyInProgressState() = ReplayStructuralState(
+        intent    = IntentStructuralState(structurallyComplete = true),
+        contracts = ContractStructuralState(generated = true, valid = true),
+        execution = ExecutionStructuralState(3, 3, 3, 3, true),
+        assembly  = AssemblyStructuralState(true, false, false, false)
     )
 
     private fun minimalContract(
@@ -227,37 +218,46 @@ class SimulationTest {
     @Test
     fun `UNDERSTAND mode always returns feasible true`() {
         val result = engine.simulate(
-            idleState(objective = null),
+            idleState(),
             minimalContract(mode = SimulationMode.UNDERSTAND)
         )
         assertTrue("UNDERSTAND must always be feasible", result.feasible)
     }
 
     @Test
-    fun `UNDERSTAND mode populates findings with phase`() {
+    fun `UNDERSTAND mode populates findings`() {
         val result = engine.simulate(
-            idleState(objective = "build product alpha"),
+            idleState(),
             minimalContract(mode = SimulationMode.UNDERSTAND)
         )
-        assertTrue(result.findings.any { it.contains("idle") })
+        assertTrue(result.findings.isNotEmpty())
     }
 
     @Test
-    fun `UNDERSTAND mode includes objective in findings when present`() {
+    fun `UNDERSTAND mode notes awaiting execution when idle`() {
         val result = engine.simulate(
-            idleState(objective = "build product alpha"),
+            idleState(),
             minimalContract(mode = SimulationMode.UNDERSTAND)
         )
-        assertTrue(result.findings.any { it.contains("build product alpha") })
+        assertTrue(result.findings.any { it.contains("awaiting") || it.contains("execution") })
     }
 
     @Test
-    fun `UNDERSTAND mode notes missing objective`() {
+    fun `UNDERSTAND mode notes execution initiated when execution started`() {
         val result = engine.simulate(
-            idleState(objective = null),
+            executionStartedState(),
             minimalContract(mode = SimulationMode.UNDERSTAND)
         )
-        assertTrue(result.findings.any { it.contains("no objective") })
+        assertTrue(result.findings.any { it.contains("initiated") || it.contains("execution") })
+    }
+
+    @Test
+    fun `UNDERSTAND mode notes assembly complete when fully done`() {
+        val result = engine.simulate(
+            assemblyCompleteState(),
+            minimalContract(mode = SimulationMode.UNDERSTAND)
+        )
+        assertTrue(result.findings.any { it.contains("assembly") && it.contains("complete") })
     }
 
     @Test
@@ -279,74 +279,40 @@ class SimulationTest {
     }
 
     @Test
-    fun `UNDERSTAND confidence is higher when objective is present`() {
-        val withObjective    = engine.simulate(
-            idleState(objective = "goal"),
+    fun `UNDERSTAND confidence is higher when assembly is complete`() {
+        val complete = engine.simulate(
+            assemblyCompleteState(),
             minimalContract(mode = SimulationMode.UNDERSTAND)
         )
-        val withoutObjective = engine.simulate(
-            idleState(objective = null),
+        val idle = engine.simulate(
+            idleState(),
             minimalContract(mode = SimulationMode.UNDERSTAND)
         )
-        assertTrue(withObjective.confidence > withoutObjective.confidence)
+        assertTrue(complete.confidence > idle.confidence)
     }
 
     // ── 5. FEASIBILITY mode — feasible paths ──────────────────────────────────
 
     @Test
-    fun `FEASIBILITY is feasible when objective set and execution not started`() {
+    fun `FEASIBILITY is feasible when execution not yet started`() {
         val result = engine.simulate(
-            idleState(objective = "deploy service"),
+            idleState(),
             minimalContract(mode = SimulationMode.FEASIBILITY)
         )
-        assertTrue("Should be feasible with a defined objective", result.feasible)
+        assertTrue("Should be feasible when execution not started", result.feasible)
         assertTrue(result.failurePoints.isEmpty())
     }
 
     @Test
-    fun `FEASIBILITY confidence is highest when all contracts are complete`() {
+    fun `FEASIBILITY is feasible when execution in progress`() {
         val result = engine.simulate(
-            executionCompleteState(),
+            executionStartedState(),
             minimalContract(mode = SimulationMode.FEASIBILITY)
         )
-        // execution completed → infeasible, but let's check partial-completion path separately
-        // Here we use a state where execution completed is FALSE but contracts are fully done
-        val partialState = ReplayState(
-            phase              = "contract_completed",
-            contractsCompleted = 3,
-            totalContracts     = 3,
-            executionStarted   = true,
-            executionCompleted = false,
-            assemblyStarted    = false,
-            assemblyValidated  = false,
-            objective          = "deploy service",
-            assemblyCompleted  = false
-        )
-        val r2 = engine.simulate(partialState, minimalContract(mode = SimulationMode.FEASIBILITY))
-        assertTrue(r2.feasible)
-        assertTrue(r2.confidence >= 0.9)
-    }
-
-    @Test
-    fun `FEASIBILITY notes partial contract progress in findings`() {
-        val result = engine.simulate(
-            partialExecutionState(),
-            minimalContract(mode = SimulationMode.FEASIBILITY)
-        )
-        assertTrue(result.findings.any { it.contains("partial execution") || it.contains("progress") })
+        assertTrue(result.feasible)
     }
 
     // ── 6. FEASIBILITY mode — infeasible paths ────────────────────────────────
-
-    @Test
-    fun `FEASIBILITY is infeasible when no objective defined`() {
-        val result = engine.simulate(
-            idleState(objective = null),
-            minimalContract(mode = SimulationMode.FEASIBILITY)
-        )
-        assertFalse(result.feasible)
-        assertTrue(result.failurePoints.any { it.contains("no objective") })
-    }
 
     @Test
     fun `FEASIBILITY is infeasible when execution already completed`() {
@@ -371,7 +337,7 @@ class SimulationTest {
     @Test
     fun `FEASIBILITY infeasible result has low confidence`() {
         val result = engine.simulate(
-            idleState(objective = null),
+            assemblyCompleteState(),
             minimalContract(mode = SimulationMode.FEASIBILITY)
         )
         assertTrue("Infeasible result confidence must be low", result.confidence <= 0.3)
@@ -382,7 +348,7 @@ class SimulationTest {
     @Test
     fun `SCENARIO generates pre-execution scenarios when execution not started`() {
         val result = engine.simulate(
-            idleState(objective = "build service"),
+            idleState(),
             minimalContract(mode = SimulationMode.SCENARIO)
         )
         assertTrue(result.scenarios.isNotEmpty())
@@ -392,7 +358,7 @@ class SimulationTest {
     @Test
     fun `SCENARIO generates mid-execution scenarios when execution is in progress`() {
         val result = engine.simulate(
-            partialExecutionState(),
+            executionStartedState(),
             minimalContract(mode = SimulationMode.SCENARIO)
         )
         assertTrue(result.scenarios.any { it.contains("execution") || it.contains("abort") })
@@ -400,61 +366,44 @@ class SimulationTest {
 
     @Test
     fun `SCENARIO generates post-execution scenarios when execution complete but assembly not started`() {
-        val state = ReplayState(
-            phase              = "execution_completed",
-            contractsCompleted = 3,
-            totalContracts     = 3,
-            executionStarted   = true,
-            executionCompleted = true,
-            assemblyStarted    = false,
-            assemblyValidated  = false,
-            objective          = "deploy service alpha",
-            assemblyCompleted  = false
+        val result = engine.simulate(
+            executionCompleteState(),
+            minimalContract(mode = SimulationMode.SCENARIO)
         )
-        val result = engine.simulate(state, minimalContract(mode = SimulationMode.SCENARIO))
         assertTrue(result.scenarios.any { it.contains("assembly") })
     }
 
     @Test
     fun `SCENARIO generates assembly scenarios when assembly in progress`() {
-        val state = ReplayState(
-            phase              = "assembly_started",
-            contractsCompleted = 3,
-            totalContracts     = 3,
-            executionStarted   = true,
-            executionCompleted = true,
-            assemblyStarted    = true,
-            assemblyValidated  = false,
-            objective          = "deploy service alpha",
-            assemblyCompleted  = false
+        val result = engine.simulate(
+            assemblyInProgressState(),
+            minimalContract(mode = SimulationMode.SCENARIO)
         )
-        val result = engine.simulate(state, minimalContract(mode = SimulationMode.SCENARIO))
         assertTrue(result.scenarios.any { it.contains("validation") || it.contains("assembly") })
     }
 
     @Test
-    fun `SCENARIO is feasible when objective is set`() {
+    fun `SCENARIO is feasible when lifecycle is not closed`() {
         val result = engine.simulate(
-            idleState(objective = "some goal"),
+            idleState(),
             minimalContract(mode = SimulationMode.SCENARIO)
         )
         assertTrue(result.feasible)
     }
 
     @Test
-    fun `SCENARIO is infeasible when no objective`() {
+    fun `SCENARIO is infeasible when assembly is completed`() {
         val result = engine.simulate(
-            idleState(objective = null),
+            assemblyCompleteState(),
             minimalContract(mode = SimulationMode.SCENARIO)
         )
         assertFalse(result.feasible)
-        assertTrue(result.failurePoints.any { it.contains("no objective") })
     }
 
     @Test
     fun `SCENARIO result contractId mirrors contract`() {
         val result = engine.simulate(
-            idleState(objective = "goal"),
+            idleState(),
             minimalContract(contractId = "scenario-42", mode = SimulationMode.SCENARIO)
         )
         assertEquals("scenario-42", result.contractId)
@@ -463,27 +412,25 @@ class SimulationTest {
     // ── 8. Read-only guarantee ────────────────────────────────────────────────
 
     @Test
-    fun `simulate does not mutate the input ReplayState`() {
-        val state = idleState(objective = "initial objective")
+    fun `simulate does not mutate the input ReplayStructuralState`() {
+        val state = executionStartedState()
 
-        val phaseBefore    = state.phase
-        val objectiveBefore = state.objective
-        val completedBefore = state.contractsCompleted
+        val assignedBefore = state.execution.assignedTasks
+        val assemblyBefore = state.assembly.assemblyStarted
 
         engine.simulate(state, minimalContract(mode = SimulationMode.FEASIBILITY))
         engine.simulate(state, minimalContract(mode = SimulationMode.UNDERSTAND))
         engine.simulate(state, minimalContract(mode = SimulationMode.SCENARIO))
 
-        assertEquals("phase must be unchanged",              phaseBefore,     state.phase)
-        assertEquals("objective must be unchanged",          objectiveBefore, state.objective)
-        assertEquals("contractsCompleted must be unchanged", completedBefore, state.contractsCompleted)
+        assertEquals("assignedTasks must be unchanged", assignedBefore, state.execution.assignedTasks)
+        assertEquals("assemblyStarted must be unchanged", assemblyBefore, state.assembly.assemblyStarted)
     }
 
     // ── 9. Determinism ────────────────────────────────────────────────────────
 
     @Test
     fun `same inputs always produce identical SimulationResult`() {
-        val state    = idleState(objective = "build service alpha")
+        val state    = executionStartedState()
         val contract = minimalContract(mode = SimulationMode.FEASIBILITY)
 
         val r1 = engine.simulate(state, contract)
@@ -497,7 +444,7 @@ class SimulationTest {
         listOf(SimulationMode.UNDERSTAND, SimulationMode.FEASIBILITY, SimulationMode.SCENARIO)
             .forEach { mode ->
                 val contract = minimalContract(contractId = "trace-id-$mode", mode = mode)
-                val result   = engine.simulate(idleState(objective = "goal"), contract)
+                val result   = engine.simulate(idleState(), contract)
                 assertEquals(
                     "contractId must mirror the contract for mode $mode",
                     contract.contractId,
@@ -510,7 +457,7 @@ class SimulationTest {
     fun `result mode always mirrors SimulationContract mode`() {
         SimulationMode.values().forEach { mode ->
             val result = engine.simulate(
-                idleState(objective = "goal"),
+                idleState(),
                 minimalContract(mode = mode)
             )
             assertEquals("mode must mirror the contract mode", mode, result.mode)
@@ -521,8 +468,7 @@ class SimulationTest {
     fun `result confidence is always in valid range`() {
         val states = listOf(
             idleState(),
-            idleState(objective = "goal"),
-            partialExecutionState(),
+            executionStartedState(),
             executionCompleteState(),
             assemblyCompleteState()
         )

@@ -54,31 +54,11 @@ class TaskModuleUI {
 
         val entry = TaskEntry(
             taskId           = taskId,
-            assignmentStatus = deriveAssignmentStatus(state),
+            assignmentStatus = "assigned",
             contractorId     = null,
-            lifecycleState   = deriveLifecycleState(state)
+            lifecycleState   = TaskLifecycleState.ASSIGNED
         )
 
         return TaskModuleState(tasks = listOf(entry))
-    }
-
-    // ── private helpers ───────────────────────────────────────────────────────
-
-    private fun deriveAssignmentStatus(state: UIState): String = when (state.phase) {
-        "task_assigned",
-        "task_started",
-        "task_completed",
-        "task_validated" -> "assigned"
-        "task_failed"    -> "failed"
-        else             -> "unassigned"
-    }
-
-    private fun deriveLifecycleState(state: UIState): TaskLifecycleState = when (state.phase) {
-        "task_assigned"  -> TaskLifecycleState.ASSIGNED
-        "task_started"   -> TaskLifecycleState.STARTED
-        "task_completed" -> TaskLifecycleState.COMPLETED
-        "task_validated" -> TaskLifecycleState.VALIDATED
-        "task_failed"    -> TaskLifecycleState.FAILED
-        else             -> TaskLifecycleState.IDLE
     }
 }

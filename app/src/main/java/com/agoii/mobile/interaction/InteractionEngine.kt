@@ -1,18 +1,18 @@
 package com.agoii.mobile.interaction
 
-import com.agoii.mobile.core.ReplayState
+import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.simulation.SimulationView
 
 /**
  * Polymorphic input supplied to [InteractionEngine.execute].
  *
  * Exactly one subtype is active per invocation:
- *  - [LedgerInput]     → state extracted from the event ledger via [ReplayState].
+ *  - [LedgerInput]     → state extracted from the event ledger via [ReplayStructuralState].
  *  - [SimulationInput] → view produced by the Simulation layer via [SimulationView].
  */
 sealed class InteractionInput {
     /** Input sourced from the event ledger. */
-    data class LedgerInput(val state: ReplayState) : InteractionInput()
+    data class LedgerInput(val state: ReplayStructuralState) : InteractionInput()
 
     /** Input sourced from a completed simulation. */
     data class SimulationInput(val view: SimulationView) : InteractionInput()

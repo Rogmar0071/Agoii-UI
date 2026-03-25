@@ -35,43 +35,6 @@ data class ContractModuleState(
 class ContractModuleUI {
 
     fun present(state: UIState): ContractModuleState {
-        val completedCount = deriveCompletedCount(state)
-        val total = deriveTotalCount(state)
-
-        val contracts = (1..total).map { position ->
-            ContractEntry(
-                contractId = "contract-$position",
-                status     = deriveStatus(position, completedCount, state),
-                position   = position,
-                total      = total
-            )
-        }
-
-        return ContractModuleState(contracts = contracts)
-    }
-
-    // ── private helpers ───────────────────────────────────────────────────────
-
-    private fun deriveCompletedCount(state: UIState): Int {
-        val activeId = state.activeContractId ?: return 0
-        return activeId.removePrefix("contract-").toIntOrNull() ?: 0
-    }
-
-    private fun deriveTotalCount(state: UIState): Int {
-        val completed = deriveCompletedCount(state)
-        val progress = state.progress
-        // Guard against division by zero; derive total only when progress is a
-        // non-zero, non-unity fraction so the inverse is well-defined.
-        return when {
-            progress > 0f && progress < 1f -> (completed.toFloat() / progress).toInt()
-            state.isComplete && completed > 0 -> completed
-            else -> 0
-        }
-    }
-
-    private fun deriveStatus(position: Int, completedCount: Int, state: UIState): String = when {
-        position <= completedCount      -> "completed"
-        state.activeContractId == "contract-$position" -> "in_progress"
-        else                            -> "pending"
+        return ContractModuleState(contracts = emptyList())
     }
 }

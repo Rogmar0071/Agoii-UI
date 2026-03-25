@@ -22,8 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.agoii.mobile.bridge.CoreBridge
 import com.agoii.mobile.core.AuditResult
 import com.agoii.mobile.core.Event
-import com.agoii.mobile.core.EventTypes
-import com.agoii.mobile.core.ReplayState
+import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.core.ReplayVerification
 import com.agoii.mobile.interaction.InteractionContract
 import com.agoii.mobile.interaction.InteractionEngine
@@ -59,7 +58,7 @@ fun ProjectScreen(projectId: String) {
 
     // ── UI state — all derived from ledger, never directly mutated ──────────
     var events            by remember { mutableStateOf(emptyList<Event>()) }
-    var replayState       by remember { mutableStateOf<ReplayState?>(null) }
+    var replayState       by remember { mutableStateOf<ReplayStructuralState?>(null) }
     var auditResult       by remember { mutableStateOf<AuditResult?>(null) }
     var verification      by remember { mutableStateOf<ReplayVerification?>(null) }
     var interactionResult by remember { mutableStateOf<InteractionResult?>(null) }
@@ -137,8 +136,8 @@ fun ProjectScreen(projectId: String) {
         }
 
         // ── ACTION BAR ──────────────────────────────────────────────────────
-        val phase = replayState?.phase ?: "idle"
-        val showApprove = phase == EventTypes.CONTRACTS_READY
+        val showApprove = replayState?.contracts?.valid == true &&
+                          replayState?.execution?.assignedTasks == 0
 
         ActionBar(
             showApprove   = showApprove,

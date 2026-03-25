@@ -25,14 +25,21 @@ class InteractionFormatter {
     // ── private formatting helpers ────────────────────────────────────────────
 
     private fun buildSummary(slice: StateSlice): String {
-        val objectivePart = slice.objective?.let { " | objective: $it" } ?: ""
-        return "phase=${slice.phase}$objectivePart | contracts=${slice.contractsCompleted}/${slice.totalContracts}"
+        val execStatus = when {
+            slice.executionCompleted -> "completed"
+            slice.executionStarted   -> "in_progress"
+            else                     -> "pending"
+        }
+        val assemblyStatus = when {
+            slice.assemblyCompleted  -> "completed"
+            slice.assemblyValidated  -> "validated"
+            slice.assemblyStarted    -> "started"
+            else                     -> "pending"
+        }
+        return "execution=$execStatus | assembly=$assemblyStatus"
     }
 
     private fun buildDetailed(slice: StateSlice): String = buildString {
-        appendLine("Phase: ${slice.phase}")
-        slice.objective?.let { appendLine("Objective: $it") }
-        appendLine("Contracts: ${slice.contractsCompleted} of ${slice.totalContracts} completed")
         appendLine("Execution started: ${slice.executionStarted}")
         appendLine("Execution completed: ${slice.executionCompleted}")
         appendLine("Assembly started: ${slice.assemblyStarted}")
@@ -42,16 +49,23 @@ class InteractionFormatter {
 
     private fun buildExplanation(slice: StateSlice): String = when {
         slice.executionCompleted ->
-            "All ${slice.totalContracts} contracts have completed execution. " +
+            "Execution is complete. " +
             "Assembly phase is ${if (slice.assemblyValidated) "validated" else "in progress"}."
         slice.executionStarted ->
-            "Execution is in progress. ${slice.contractsCompleted} of " +
-            "${slice.totalContracts} contracts have been completed."
-        else -> {
-            val obj = slice.objective?.let { " Objective: $it." } ?: ""
-            "System is in phase '${slice.phase}'.$obj"
-        }
+            "Execution is in progress."
+        else ->
+            "System is awaiting execution."
     }
 
-    private fun buildStatus(slice: StateSlice): String = "status=${slice.phase}"
+    private fun buildStatus(slice: StateSlice): String {
+        val status = when {
+            slice.assemblyCompleted  -> "assembly_completed"
+            slice.assemblyValidated  -> "assembly_validated"
+            slice.assemblyStarted    -> "assembly_started"
+            slice.executionCompleted -> "execution_completed"
+            slice.executionStarted   -> "execution_started"
+            else                     -> "pending"
+        }
+        return "status=$status"
+    }
 }

@@ -62,7 +62,7 @@ User taps RUN STEP (repeat until complete):
 
 After every action, UI reloads:
   - events    = load_events(project_id)
-  - state     = replay(project_id)
+  - state     = replayStructuralState(project_id)
   - audit     = audit_ledger(project_id)
   - verify    = verify_replay(project_id)
 ```
@@ -113,9 +113,15 @@ fun auditLedger(projectId: String): AuditResult
 
 ### Replay
 ```kotlin
-fun replay(projectId: String): ReplayState
-// ReplayState(phase, contractsCompleted, totalContracts,
-//             executionStarted, executionCompleted, objective)
+fun replayStructuralState(projectId: String): ReplayStructuralState
+// ReplayStructuralState(
+//   intent    = IntentStructuralState(structurallyComplete),
+//   contracts = ContractStructuralState(generated, valid),
+//   execution = ExecutionStructuralState(totalTasks, assignedTasks,
+//                                        completedTasks, validatedTasks, fullyExecuted),
+//   assembly  = AssemblyStructuralState(assemblyStarted, assemblyValidated,
+//                                       assemblyCompleted, assemblyValid)
+// )
 ```
 
 ### ReplayTest
@@ -234,9 +240,8 @@ After a full run the system is correct if and only if:
 | `audit_ledger(project_id).valid` | `true` |
 | `verify_replay(project_id).valid` | `true` |
 | `verify_replay(...).invariantErrors` | `[]` |
-| `replay(project_id).phase` | `"assembly_completed"` |
-| `replay(project_id).contractsCompleted` | `3` |
-| `replay(project_id).executionCompleted` | `true` |
+| `replayStructuralState(project_id).assembly.assemblyCompleted` | `true` |
+| `replayStructuralState(project_id).execution.fullyExecuted` | `true` |
 
 ---
 

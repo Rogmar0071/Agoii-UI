@@ -29,36 +29,10 @@ data class ExecutionModuleState(
 class ExecutionModuleUI {
 
     fun present(state: UIState): ExecutionModuleState = ExecutionModuleState(
-        taskStarted      = isTaskStarted(state),
-        taskCompleted    = isTaskCompleted(state),
-        taskFailed       = isTaskFailed(state),
-        retryCount       = deriveRetryCount(state),
-        validationStatus = deriveValidationStatus(state)
+        taskStarted      = state.assemblyStarted || state.isComplete,
+        taskCompleted    = state.assemblyStarted || state.isComplete,
+        taskFailed       = false,
+        retryCount       = 0,
+        validationStatus = if (state.assemblyValidated) "validated" else "pending"
     )
-
-    // ── private helpers ───────────────────────────────────────────────────────
-
-    private fun isTaskStarted(state: UIState): Boolean = state.phase in setOf(
-        "task_started", "task_completed", "task_validated", "task_failed",
-        "execution_completed", "assembly_started", "assembly_validated", "assembly_completed"
-    )
-
-    private fun isTaskCompleted(state: UIState): Boolean = state.phase in setOf(
-        "task_completed", "task_validated",
-        "execution_completed", "assembly_started", "assembly_validated", "assembly_completed"
-    )
-
-    private fun isTaskFailed(state: UIState): Boolean = state.phase == "task_failed"
-
-    private fun deriveRetryCount(state: UIState): Int = when (state.phase) {
-        "contractor_reassigned" -> 1
-        else                    -> 0
-    }
-
-    private fun deriveValidationStatus(state: UIState): String = when (state.phase) {
-        "task_validated"    -> "validated"
-        "task_failed"       -> "failed"
-        "assembly_validated" -> "validated"
-        else                -> "pending"
-    }
 }
