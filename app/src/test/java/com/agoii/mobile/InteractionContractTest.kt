@@ -311,7 +311,8 @@ class InteractionContractTest {
         executionStarted: Boolean = false,
         executionCompleted: Boolean = false,
         assemblyStarted: Boolean = false,
-        assemblyValidated: Boolean = false
+        assemblyValidated: Boolean = false,
+        assemblyCompleted: Boolean = false
     ) = StateSlice(
         phase              = phase,
         objective          = objective,
@@ -321,6 +322,7 @@ class InteractionContractTest {
         executionCompleted = executionCompleted,
         assemblyStarted    = assemblyStarted,
         assemblyValidated  = assemblyValidated,
+        assemblyCompleted  = assemblyCompleted,
         references         = listOf("phase")
     )
 }

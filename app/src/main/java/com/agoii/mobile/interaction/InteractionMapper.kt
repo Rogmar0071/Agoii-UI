@@ -131,6 +131,6 @@ data class StateSlice(
     val executionCompleted: Boolean,
     val assemblyStarted: Boolean,
     val assemblyValidated: Boolean,
-    val assemblyCompleted: Boolean = false,
+    val assemblyCompleted: Boolean,
     val references: List<String>
 )
