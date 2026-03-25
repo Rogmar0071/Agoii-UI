@@ -14,11 +14,12 @@ import com.agoii.mobile.governance.ContractSurfaceLayer
 import com.agoii.mobile.governance.Outcome
 import com.agoii.mobile.governance.StateSurfaceMirror
 import com.agoii.mobile.governance.SurfaceType
+import com.agoii.mobile.orchestration.ExecutionOrchestrator as ExecutionClosure
 import com.agoii.mobile.tasks.Task
 import com.agoii.mobile.tasks.TaskAssignmentStatus
 
 /**
- * Governor — the ONLY execution authority in the system.
+ * Governor — reactive lifecycle driver.
  *
  * Rules:
  *  - Reads the current ledger state.
@@ -27,6 +28,7 @@ import com.agoii.mobile.tasks.TaskAssignmentStatus
  *  - Never mutates state directly.
  *  - Stops and returns WAITING_FOR_APPROVAL when the last event is contracts_ready.
  *  - Contract issuance is gated by SSM state and CSL validation; returns DRIFT on failure.
+ *  - NEVER emits CONTRACT_COMPLETED or EXECUTION_COMPLETED — those belong to [ExecutionClosure].
  *
  * Full execution lifecycle (one governor call per arrow):
  *   execution_started
@@ -35,9 +37,9 @@ import com.agoii.mobile.tasks.TaskAssignmentStatus
  *     → task_started
  *     → task_completed
  *     → task_validated
- *     → contract_completed       [governor: passive — modules emit execution_completed]
- *     → execution_completed      (module-driven)
- *     → assembly_started
+ *     → [ExecutionClosure.closeContract] → CONTRACT_COMPLETED (Execution Module)
+ *                                        → EXECUTION_COMPLETED (Execution Module, last contract only)
+ *     → assembly_started  (Governor reacts to EXECUTION_COMPLETED via VALID_TRANSITIONS)
  *     → assembly_validated
  *     → assembly_completed
  */
@@ -49,6 +51,7 @@ class Governor(
 
     private val ssm = StateSurfaceMirror()
     private val csl = ContractSurfaceLayer()
+    private val executionClosure = ExecutionClosure(gate = csl, eventStore = eventStore)
     // DecisionEngine is the sole authority for task-failure branching decisions.
     private val decisionEngine = DecisionEngine(registry)
 
@@ -127,9 +130,11 @@ class Governor(
             // ── contract_started → resolve task and assign contractor ─────────────
             // Step 1 of the task execution lifecycle.
             lastType == EventTypes.CONTRACT_STARTED -> {
-                val contractId = lastEvent.payload["contract_id"] as? String ?: "unknown"
-                val position   = resolveInt(lastEvent.payload["position"]) ?: 1
-                val task       = taskForContract(contractId, position)
+                val contractId = lastEvent.payload["contract_id"] as? String
+                    ?: return GovernorResult.NO_EVENT
+                val position   = resolveInt(lastEvent.payload["position"])
+                    ?: return GovernorResult.NO_EVENT
+                val task       = taskForContract(contractId, position, "$contractId-step1")
                 val contractor = registry.findBestMatch(task.requiredCapabilities)
                     ?: return GovernorResult.WAITING
                 eventStore.appendEvent(
@@ -147,13 +152,21 @@ class Governor(
             // ── task_assigned → start the task ────────────────────────────────────
             // Step 2 of the task execution lifecycle.
             lastType == EventTypes.TASK_ASSIGNED -> {
+                val taskId       = lastEvent.payload["taskId"]       as? String
+                    ?: return GovernorResult.NO_EVENT
+                val contractorId = lastEvent.payload["contractorId"] as? String
+                    ?: return GovernorResult.NO_EVENT
+                val contractId   = lastEvent.payload["contract_id"]  as? String
+                    ?: return GovernorResult.NO_EVENT
+                val position     = resolveInt(lastEvent.payload["position"])
+                    ?: return GovernorResult.NO_EVENT
                 eventStore.appendEvent(
                     projectId, EventTypes.TASK_STARTED,
                     mapOf(
-                        "taskId"       to (lastEvent.payload["taskId"]       ?: ""),
-                        "contractorId" to (lastEvent.payload["contractorId"] ?: ""),
-                        "contract_id"  to (lastEvent.payload["contract_id"]  ?: ""),
-                        "position"     to (lastEvent.payload["position"]     ?: 0)
+                        "taskId"       to taskId,
+                        "contractorId" to contractorId,
+                        "contract_id"  to contractId,
+                        "position"     to position
                     )
                 )
                 GovernorResult.ADVANCED
@@ -163,13 +176,16 @@ class Governor(
             // Step 3: Governor calls ExecutionOrchestrator (pure worker) and emits
             // task_completed on success, task_failed on execution error.
             lastType == EventTypes.TASK_STARTED -> {
-                val contractId    = lastEvent.payload["contract_id"]  as? String ?: "unknown"
-                val contractorId  = lastEvent.payload["contractorId"] as? String ?: ""
-                val taskId        = lastEvent.payload["taskId"]       as? String
-                    ?: "$contractId-step1"
-                val position      = resolveInt(lastEvent.payload["position"]) ?: 1
-                val task          = taskForContract(contractId, position, taskId)
-                val contractor    = registry.allVerified().find { it.id == contractorId }
+                val contractId   = lastEvent.payload["contract_id"]  as? String
+                    ?: return GovernorResult.NO_EVENT
+                val contractorId = lastEvent.payload["contractorId"] as? String
+                    ?: return GovernorResult.NO_EVENT
+                val taskId       = lastEvent.payload["taskId"]       as? String
+                    ?: return GovernorResult.NO_EVENT
+                val position     = resolveInt(lastEvent.payload["position"])
+                    ?: return GovernorResult.NO_EVENT
+                val task         = taskForContract(contractId, position, taskId)
+                val contractor   = registry.allVerified().find { it.id == contractorId }
                     ?: registry.findBestMatch(task.requiredCapabilities)
                     ?: return GovernorResult.WAITING
                 val result = orchestrator.execute(task, contractor)
@@ -184,6 +200,7 @@ class Governor(
                         )
                     )
                 } else {
+                    val reason = result.error ?: return GovernorResult.NO_EVENT
                     eventStore.appendEvent(
                         projectId, EventTypes.TASK_FAILED,
                         mapOf(
@@ -191,7 +208,7 @@ class Governor(
                             "contractorId" to contractor.id,
                             "contract_id"  to contractId,
                             "position"     to position,
-                            "reason"       to (result.error ?: "Execution error")
+                            "reason"       to reason
                         )
                     )
                 }
@@ -202,11 +219,14 @@ class Governor(
             // Step 4: Governor re-calls ExecutionOrchestrator (deterministic) to
             // validate the artifact. Emits task_validated or task_failed.
             lastType == EventTypes.TASK_COMPLETED -> {
-                val contractId   = lastEvent.payload["contract_id"]  as? String ?: "unknown"
-                val contractorId = lastEvent.payload["contractorId"] as? String ?: ""
+                val contractId   = lastEvent.payload["contract_id"]  as? String
+                    ?: return GovernorResult.NO_EVENT
+                val contractorId = lastEvent.payload["contractorId"] as? String
+                    ?: return GovernorResult.NO_EVENT
                 val taskId       = lastEvent.payload["taskId"]       as? String
-                    ?: "$contractId-step1"
-                val position     = resolveInt(lastEvent.payload["position"]) ?: 1
+                    ?: return GovernorResult.NO_EVENT
+                val position     = resolveInt(lastEvent.payload["position"])
+                    ?: return GovernorResult.NO_EVENT
                 val task         = taskForContract(contractId, position, taskId)
                 val contractor   = registry.allVerified().find { it.id == contractorId }
                     ?: registry.findBestMatch(task.requiredCapabilities)
@@ -237,29 +257,29 @@ class Governor(
                 GovernorResult.ADVANCED
             }
 
-            // ── task_validated → complete the contract ────────────────────────────
-            // Step 5: Contract completes ONLY after task_validated (critical rule).
+            // ── task_validated → delegate lifecycle closure to Execution Module ───
+            // Governor is PASSIVE here. ExecutionClosure is the sole authority for
+            // CONTRACT_COMPLETED and EXECUTION_COMPLETED.
             lastType == EventTypes.TASK_VALIDATED -> {
-                val contractId = lastEvent.payload["contract_id"] as? String ?: "unknown"
-                val position   = resolveInt(lastEvent.payload["position"]) ?: 1
-                eventStore.appendEvent(
-                    projectId, EventTypes.CONTRACT_COMPLETED,
-                    mapOf(
-                        "contract_id" to contractId,
-                        "position"    to position
-                    )
-                )
+                val contractId = lastEvent.payload["contract_id"] as? String
+                    ?: return GovernorResult.NO_EVENT
+                val position   = resolveInt(lastEvent.payload["position"])
+                    ?: return GovernorResult.NO_EVENT
+                executionClosure.closeContract(projectId, contractId, position)
                 GovernorResult.ADVANCED
             }
 
             // ── task_failed → retry / reassign / escalate ─────────────────────────
             // Governor owns the retry decision; DecisionEngine is the sole decision authority.
             lastType == EventTypes.TASK_FAILED -> {
-                val contractId   = lastEvent.payload["contract_id"]  as? String ?: "unknown"
+                val contractId   = lastEvent.payload["contract_id"]  as? String
+                    ?: return GovernorResult.NO_EVENT
                 val taskId       = lastEvent.payload["taskId"]       as? String
-                    ?: "$contractId-step1"
-                val contractorId = lastEvent.payload["contractorId"] as? String ?: ""
-                val position     = resolveInt(lastEvent.payload["position"]) ?: 1
+                    ?: return GovernorResult.NO_EVENT
+                val contractorId = lastEvent.payload["contractorId"] as? String
+                    ?: return GovernorResult.NO_EVENT
+                val position     = resolveInt(lastEvent.payload["position"])
+                    ?: return GovernorResult.NO_EVENT
                 val task         = taskForContract(contractId, position, taskId)
                 val contractor   = registry.allVerified().find { it.id == contractorId }
                     ?: registry.findBestMatch(task.requiredCapabilities)
@@ -311,10 +331,14 @@ class Governor(
 
             // ── contractor_reassigned → re-assign task to new contractor ──────────
             lastType == EventTypes.CONTRACTOR_REASSIGNED -> {
-                val taskId        = lastEvent.payload["taskId"]          as? String ?: ""
-                val newContractorId = lastEvent.payload["newContractorId"] as? String ?: ""
-                val contractId    = lastEvent.payload["contract_id"]     as? String ?: "unknown"
-                val position      = resolveInt(lastEvent.payload["position"]) ?: 1
+                val taskId          = lastEvent.payload["taskId"]          as? String
+                    ?: return GovernorResult.NO_EVENT
+                val newContractorId = lastEvent.payload["newContractorId"] as? String
+                    ?: return GovernorResult.NO_EVENT
+                val contractId      = lastEvent.payload["contract_id"]     as? String
+                    ?: return GovernorResult.NO_EVENT
+                val position        = resolveInt(lastEvent.payload["position"])
+                    ?: return GovernorResult.NO_EVENT
                 eventStore.appendEvent(
                     projectId, EventTypes.TASK_ASSIGNED,
                     mapOf(
@@ -327,8 +351,24 @@ class Governor(
                 GovernorResult.ADVANCED
             }
 
-            // ── contract_completed → passive; lifecycle closure is deferred to modules ──
+            // ── contract_completed → start the next contract if one remains ────────
+            // Governor is PASSIVE for lifecycle closure. ExecutionClosure already emitted
+            // EXECUTION_COMPLETED when the last contract completed, so this branch is only
+            // reached for intermediate contracts (positions < DEFAULT_TOTAL_CONTRACTS).
             lastType == EventTypes.CONTRACT_COMPLETED -> {
+                val position     = resolveInt(lastEvent.payload["position"])
+                    ?: return GovernorResult.NO_EVENT
+                val nextPosition = position + 1
+                if (nextPosition <= EventTypes.DEFAULT_TOTAL_CONTRACTS) {
+                    if (!canIssue(nextPosition)) return GovernorResult.DRIFT
+                    eventStore.appendEvent(
+                        projectId, EventTypes.CONTRACT_STARTED,
+                        mapOf(
+                            "contract_id" to "contract_$nextPosition",
+                            "position"    to nextPosition
+                        )
+                    )
+                }
                 GovernorResult.ADVANCED
             }
 
@@ -381,7 +421,8 @@ class Governor(
     private fun buildPayload(nextType: String, triggerEvent: Event): Map<String, Any> =
         when (nextType) {
             EventTypes.CONTRACTS_GENERATED -> {
-                val intent = triggerEvent.payload["objective"] as? String ?: "unknown"
+                val intent = triggerEvent.payload["objective"] as? String
+                    ?: throw IllegalStateException("intent_submitted event missing 'objective' payload")
                 mapOf(
                     "source_intent" to intent,
                     "contracts"     to listOf(
@@ -401,7 +442,7 @@ class Governor(
     private fun taskForContract(
         contractId: String,
         position:   Int,
-        taskId:     String = "$contractId-step1"
+        taskId:     String
     ): Task = Task(
         taskId               = taskId,
         contractReference    = contractId,

@@ -58,7 +58,7 @@ class SimulationEngine {
      */
     fun toView(result: SimulationResult): SimulationView {
         return SimulationView(
-            summary    = result.findings.firstOrNull() ?: "",
+            summary    = result.findings.first(),
             details    = result.findings,
             confidence = result.confidence,
             mode       = result.mode.name

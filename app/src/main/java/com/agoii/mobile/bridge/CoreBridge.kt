@@ -51,7 +51,7 @@ class CoreBridge(context: Context) {
      * When the last event is contract_started:
      *  1. Resolves the contract name from the ledger.
      *  2. Calls BuildExecutor.execute(contractName).
-     *  3. If execution fails → returns NO_EVENT (blocks contract_completed).
+     *  3. If execution fails → returns NO_EVENT (blocks task_assigned from being emitted).
      *  4. If execution passes → lets the Governor proceed naturally.
      */
     fun runGovernorStep(projectId: String): Governor.GovernorResult {
@@ -59,7 +59,8 @@ class CoreBridge(context: Context) {
         val lastEvent = events.lastOrNull()
 
         if (lastEvent?.type == EventTypes.CONTRACT_STARTED) {
-            val contractId   = lastEvent.payload["contract_id"]?.toString() ?: ""
+            val contractId   = lastEvent.payload["contract_id"]?.toString()
+                ?: throw IllegalStateException("contract_started event missing contract_id payload")
             val contractName = resolveContractName(events, contractId)
             val passed       = buildExecutor.execute(contractName)
             if (!passed) {
@@ -73,16 +74,19 @@ class CoreBridge(context: Context) {
     /**
      * Look up the human-readable contract name for the given contract_id by
      * reading the contracts list stored in the contracts_generated event payload.
-     * Falls back to the raw contract_id string if the name cannot be resolved.
+     * Throws if the event or the contract entry cannot be found.
      */
     private fun resolveContractName(events: List<Event>, contractId: String): String {
         val contractsGenEvent = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
-        val contracts =
-            @Suppress("UNCHECKED_CAST")
-            contractsGenEvent?.payload?.get("contracts") as? List<*>
-        val match = contracts?.filterIsInstance<Map<*, *>>()
-            ?.firstOrNull { it["id"] == contractId }
-        return match?.get("name")?.toString() ?: contractId
+            ?: throw IllegalStateException("contracts_generated event not found in ledger")
+        @Suppress("UNCHECKED_CAST")
+        val contracts = contractsGenEvent.payload["contracts"] as? List<*>
+            ?: throw IllegalStateException("contracts payload missing from contracts_generated event")
+        val match = contracts.filterIsInstance<Map<*, *>>()
+            .firstOrNull { it["id"] == contractId }
+            ?: throw IllegalStateException("contract '$contractId' not found in contracts_generated payload")
+        return match["name"]?.toString()
+            ?: throw IllegalStateException("contract '$contractId' missing name field")
     }
 
     /** Append a contracts_approved event via Governor (sole mutation authority). */
