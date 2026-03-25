@@ -16,6 +16,7 @@ import com.agoii.mobile.governance.StateSurfaceMirror
 import com.agoii.mobile.governance.SurfaceType
 import com.agoii.mobile.tasks.Task
 import com.agoii.mobile.tasks.TaskAssignmentStatus
+import com.agoii.mobile.orchestration.ExecutionOrchestrator as ExecutionClosure
 
 /**
  * Governor — the ONLY execution authority in the system.
@@ -51,6 +52,8 @@ class Governor(
     private val csl = ContractSurfaceLayer()
     // DecisionEngine is the sole authority for task-failure branching decisions.
     private val decisionEngine = DecisionEngine(registry)
+    // ExecutionClosure is the sole authority for contract closure events.
+    private val executionClosure = ExecutionClosure(eventStore)
 
     init {
         ssm.initialize()
@@ -127,8 +130,10 @@ class Governor(
             // ── contract_started → resolve task and assign contractor ─────────────
             // Step 1 of the task execution lifecycle.
             lastType == EventTypes.CONTRACT_STARTED -> {
-                val contractId = lastEvent.payload["contract_id"] as? String ?: "unknown"
-                val position   = resolveInt(lastEvent.payload["position"]) ?: 1
+                val contractId = lastEvent.payload["contract_id"] as? String
+                    ?: throw IllegalStateException("Missing contract_id in contract_started payload")
+                val position   = resolveInt(lastEvent.payload["position"])
+                    ?: throw IllegalStateException("Missing position in contract_started payload")
                 val task       = taskForContract(contractId, position)
                 val contractor = registry.findBestMatch(task.requiredCapabilities)
                     ?: return GovernorResult.WAITING
@@ -150,10 +155,14 @@ class Governor(
                 eventStore.appendEvent(
                     projectId, EventTypes.TASK_STARTED,
                     mapOf(
-                        "taskId"       to (lastEvent.payload["taskId"]       ?: ""),
-                        "contractorId" to (lastEvent.payload["contractorId"] ?: ""),
-                        "contract_id"  to (lastEvent.payload["contract_id"]  ?: ""),
-                        "position"     to (lastEvent.payload["position"]     ?: 0)
+                        "taskId"       to (lastEvent.payload["taskId"]
+                            ?: throw IllegalStateException("Missing taskId in task_assigned payload")),
+                        "contractorId" to (lastEvent.payload["contractorId"]
+                            ?: throw IllegalStateException("Missing contractorId in task_assigned payload")),
+                        "contract_id"  to (lastEvent.payload["contract_id"]
+                            ?: throw IllegalStateException("Missing contract_id in task_assigned payload")),
+                        "position"     to (lastEvent.payload["position"]
+                            ?: throw IllegalStateException("Missing position in task_assigned payload"))
                     )
                 )
                 GovernorResult.ADVANCED
@@ -163,11 +172,14 @@ class Governor(
             // Step 3: Governor calls ExecutionOrchestrator (pure worker) and emits
             // task_completed on success, task_failed on execution error.
             lastType == EventTypes.TASK_STARTED -> {
-                val contractId    = lastEvent.payload["contract_id"]  as? String ?: "unknown"
-                val contractorId  = lastEvent.payload["contractorId"] as? String ?: ""
+                val contractId    = lastEvent.payload["contract_id"]  as? String
+                    ?: throw IllegalStateException("Missing contract_id in task_started payload")
+                val contractorId  = lastEvent.payload["contractorId"] as? String
+                    ?: throw IllegalStateException("Missing contractorId in task_started payload")
                 val taskId        = lastEvent.payload["taskId"]       as? String
-                    ?: "$contractId-step1"
-                val position      = resolveInt(lastEvent.payload["position"]) ?: 1
+                    ?: throw IllegalStateException("Missing taskId in task_started payload")
+                val position      = resolveInt(lastEvent.payload["position"])
+                    ?: throw IllegalStateException("Missing position in task_started payload")
                 val task          = taskForContract(contractId, position, taskId)
                 val contractor    = registry.allVerified().find { it.id == contractorId }
                     ?: registry.findBestMatch(task.requiredCapabilities)
@@ -202,11 +214,14 @@ class Governor(
             // Step 4: Governor re-calls ExecutionOrchestrator (deterministic) to
             // validate the artifact. Emits task_validated or task_failed.
             lastType == EventTypes.TASK_COMPLETED -> {
-                val contractId   = lastEvent.payload["contract_id"]  as? String ?: "unknown"
-                val contractorId = lastEvent.payload["contractorId"] as? String ?: ""
+                val contractId   = lastEvent.payload["contract_id"]  as? String
+                    ?: throw IllegalStateException("Missing contract_id in task_completed payload")
+                val contractorId = lastEvent.payload["contractorId"] as? String
+                    ?: throw IllegalStateException("Missing contractorId in task_completed payload")
                 val taskId       = lastEvent.payload["taskId"]       as? String
-                    ?: "$contractId-step1"
-                val position     = resolveInt(lastEvent.payload["position"]) ?: 1
+                    ?: throw IllegalStateException("Missing taskId in task_completed payload")
+                val position     = resolveInt(lastEvent.payload["position"])
+                    ?: throw IllegalStateException("Missing position in task_completed payload")
                 val task         = taskForContract(contractId, position, taskId)
                 val contractor   = registry.allVerified().find { it.id == contractorId }
                     ?: registry.findBestMatch(task.requiredCapabilities)
@@ -237,29 +252,29 @@ class Governor(
                 GovernorResult.ADVANCED
             }
 
-            // ── task_validated → complete the contract ────────────────────────────
-            // Step 5: Contract completes ONLY after task_validated (critical rule).
+            // ── task_validated → close the contract via execution module ─────────
+            // Step 5: Contract closes ONLY after task_validated (critical rule).
+            // ExecutionClosure is the sole authority for CONTRACT_COMPLETED / EXECUTION_COMPLETED.
             lastType == EventTypes.TASK_VALIDATED -> {
-                val contractId = lastEvent.payload["contract_id"] as? String ?: "unknown"
-                val position   = resolveInt(lastEvent.payload["position"]) ?: 1
-                eventStore.appendEvent(
-                    projectId, EventTypes.CONTRACT_COMPLETED,
-                    mapOf(
-                        "contract_id" to contractId,
-                        "position"    to position
-                    )
-                )
+                val contractId = lastEvent.payload["contract_id"] as? String
+                    ?: throw IllegalStateException("Missing contract_id in task_validated payload")
+                val position   = resolveInt(lastEvent.payload["position"])
+                    ?: throw IllegalStateException("Missing position in task_validated payload")
+                executionClosure.closeContract(projectId, contractId, position)
                 GovernorResult.ADVANCED
             }
 
             // ── task_failed → retry / reassign / escalate ─────────────────────────
             // Governor owns the retry decision; DecisionEngine is the sole decision authority.
             lastType == EventTypes.TASK_FAILED -> {
-                val contractId   = lastEvent.payload["contract_id"]  as? String ?: "unknown"
+                val contractId   = lastEvent.payload["contract_id"]  as? String
+                    ?: throw IllegalStateException("Missing contract_id in task_failed payload")
                 val taskId       = lastEvent.payload["taskId"]       as? String
-                    ?: "$contractId-step1"
-                val contractorId = lastEvent.payload["contractorId"] as? String ?: ""
-                val position     = resolveInt(lastEvent.payload["position"]) ?: 1
+                    ?: throw IllegalStateException("Missing taskId in task_failed payload")
+                val contractorId = lastEvent.payload["contractorId"] as? String
+                    ?: throw IllegalStateException("Missing contractorId in task_failed payload")
+                val position     = resolveInt(lastEvent.payload["position"])
+                    ?: throw IllegalStateException("Missing position in task_failed payload")
                 val task         = taskForContract(contractId, position, taskId)
                 val contractor   = registry.allVerified().find { it.id == contractorId }
                     ?: registry.findBestMatch(task.requiredCapabilities)
@@ -311,10 +326,14 @@ class Governor(
 
             // ── contractor_reassigned → re-assign task to new contractor ──────────
             lastType == EventTypes.CONTRACTOR_REASSIGNED -> {
-                val taskId        = lastEvent.payload["taskId"]          as? String ?: ""
-                val newContractorId = lastEvent.payload["newContractorId"] as? String ?: ""
-                val contractId    = lastEvent.payload["contract_id"]     as? String ?: "unknown"
-                val position      = resolveInt(lastEvent.payload["position"]) ?: 1
+                val taskId          = lastEvent.payload["taskId"]          as? String
+                    ?: throw IllegalStateException("Missing taskId in contractor_reassigned payload")
+                val newContractorId = lastEvent.payload["newContractorId"] as? String
+                    ?: throw IllegalStateException("Missing newContractorId in contractor_reassigned payload")
+                val contractId      = lastEvent.payload["contract_id"]     as? String
+                    ?: throw IllegalStateException("Missing contract_id in contractor_reassigned payload")
+                val position        = resolveInt(lastEvent.payload["position"])
+                    ?: throw IllegalStateException("Missing position in contractor_reassigned payload")
                 eventStore.appendEvent(
                     projectId, EventTypes.TASK_ASSIGNED,
                     mapOf(
@@ -327,8 +346,27 @@ class Governor(
                 GovernorResult.ADVANCED
             }
 
-            // ── contract_completed → passive; lifecycle closure is deferred to modules ──
+            // ── contract_completed → Governor controls sequencing ─────────────────
+            // Read position from payload.
+            // If position < TOTAL_CONTRACTS → emit CONTRACT_STARTED(next).
+            // If position == TOTAL_CONTRACTS → DO NOTHING (EXECUTION_COMPLETED was
+            // already emitted by ExecutionClosure in the same closeContract() call).
+            // canIssue() gates issuance via SSM activation and CSL evaluation;
+            // DRIFT is returned when the next contract cannot be legally issued.
             lastType == EventTypes.CONTRACT_COMPLETED -> {
+                val position = resolveInt(lastEvent.payload["position"])
+                    ?: throw IllegalStateException("Missing position in contract_completed payload")
+                if (position < EventTypes.DEFAULT_TOTAL_CONTRACTS) {
+                    val nextPosition = position + 1
+                    if (!canIssue(nextPosition)) return GovernorResult.DRIFT
+                    eventStore.appendEvent(
+                        projectId, EventTypes.CONTRACT_STARTED,
+                        mapOf(
+                            "contract_id" to "contract_$nextPosition",
+                            "position"    to nextPosition
+                        )
+                    )
+                }
                 GovernorResult.ADVANCED
             }
 
@@ -381,7 +419,8 @@ class Governor(
     private fun buildPayload(nextType: String, triggerEvent: Event): Map<String, Any> =
         when (nextType) {
             EventTypes.CONTRACTS_GENERATED -> {
-                val intent = triggerEvent.payload["objective"] as? String ?: "unknown"
+                val intent = triggerEvent.payload["objective"] as? String
+                    ?: throw IllegalStateException("Missing objective in intent_submitted payload")
                 mapOf(
                     "source_intent" to intent,
                     "contracts"     to listOf(
