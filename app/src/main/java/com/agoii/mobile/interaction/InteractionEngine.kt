@@ -44,13 +44,14 @@ class InteractionEngine(
      * Flow:
      *   LedgerInput     → [InteractionMapper.extract] → [StateSlice]
      *                   → [InteractionFormatter.format] → content string
-     *   SimulationInput → [InteractionResult] constructed directly from [SimulationView]
-     *                   — does NOT pass through [InteractionMapper] or produce a [StateSlice]
+     *   SimulationInput → HARD BLOCK — throws [IllegalStateException]
+     *                   ([InteractionResult] MUST NOT be produced from non-structural input)
      *
      * @param contract Describes what to query and how to format it.
-     * @param input    Immutable source of truth — either ledger state or simulation view.
+     * @param input    Immutable source of truth — must be [InteractionInput.LedgerInput].
      * @return         [InteractionResult] whose [InteractionResult.content] is
-     *                 ready for direct UI rendering.
+     *                 derived exclusively from [StateSlice] via [InteractionFormatter].
+     * @throws IllegalStateException if [input] is [InteractionInput.SimulationInput].
      */
     fun execute(contract: InteractionContract, input: InteractionInput): InteractionResult =
         when (input) {
@@ -69,10 +70,10 @@ class InteractionEngine(
                     )
                 )
             }
-            is InteractionInput.SimulationInput -> InteractionResult(
-                contractId = contract.contractId,
-                content    = input.view.summary,
-                references = listOf("simulation")
-            )
+            is InteractionInput.SimulationInput ->
+                throw IllegalStateException(
+                    "SimulationInput cannot produce InteractionResult — " +
+                    "cross-domain derivation is prohibited"
+                )
         }
 }
