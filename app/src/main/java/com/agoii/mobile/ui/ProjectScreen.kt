@@ -28,9 +28,7 @@ import com.agoii.mobile.interaction.InteractionContract
 import com.agoii.mobile.interaction.InteractionEngine
 import com.agoii.mobile.interaction.InteractionInput
 import com.agoii.mobile.interaction.InteractionResult
-import com.agoii.mobile.interaction.InteractionScope
 import com.agoii.mobile.interaction.OutputType
-import com.agoii.mobile.interaction.SourceType
 import com.agoii.mobile.ui.theme.*
 
 /**
@@ -77,11 +75,9 @@ fun ProjectScreen(projectId: String) {
                 InteractionContract(
                     contractId = projectId,
                     query      = "system state",
-                    scope      = InteractionScope.FULL_SYSTEM,
-                    outputType = OutputType.DETAILED,
-                    sourceType = SourceType.LEDGER
+                    outputType = OutputType.DETAILED
                 ),
-                InteractionInput.LedgerInput(state)
+                InteractionInput(state)
             )
         }
     }

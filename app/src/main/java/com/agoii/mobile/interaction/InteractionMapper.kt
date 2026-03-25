@@ -7,21 +7,16 @@ import com.agoii.mobile.core.ReplayStructuralState
  *
  * Responsibility: mapping only — no formatting, no business logic.
  * Every field in the returned [StateSlice] is derived from [ReplayStructuralState] only.
- *
- * Scope is accepted as an interface boundary and MUST NOT alter field values or
- * suppress any structural field from the output.
  */
 class InteractionMapper {
 
     /**
-     * Derive a [StateSlice] from [state] for the given [scope].
+     * Derive a [StateSlice] from [state].
      *
-     * [scope] is an input boundary only — it does NOT filter, suppress, or
-     * conditionally assign any field in the returned [StateSlice].
      * All five structural fields are always mapped from [ReplayStructuralState].
      * No branching, no false assignment, no null assignment.
      */
-    fun extract(scope: InteractionScope, state: ReplayStructuralState): StateSlice = StateSlice(
+    fun extract(state: ReplayStructuralState): StateSlice = StateSlice(
         executionStarted   = state.execution.assignedTasks > 0,
         executionCompleted = state.execution.fullyExecuted,
         assemblyStarted    = state.assembly.assemblyStarted,
