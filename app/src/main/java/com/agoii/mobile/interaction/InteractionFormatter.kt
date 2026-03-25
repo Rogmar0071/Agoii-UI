@@ -6,6 +6,9 @@ package com.agoii.mobile.interaction
  *
  * Responsibility: formatting only — no business logic, no data extraction.
  * Every method is a pure function of its input.
+ *
+ * Source of truth: [StateSlice] structural boolean fields only.
+ * No [com.agoii.mobile.core.ReplayState] or synthetic data is used.
  */
 class InteractionFormatter {
 
@@ -25,36 +28,43 @@ class InteractionFormatter {
     // ── private formatting helpers ────────────────────────────────────────────
 
     private fun buildSummary(slice: StateSlice): String {
-        val execStatus = when {
-            slice.executionCompleted -> "completed"
-            slice.executionStarted   -> "in_progress"
-            else                     -> "pending"
+        val executionLabel = when {
+            slice.executionCompleted -> "execution: complete"
+            slice.executionStarted   -> "execution: in progress"
+            else                     -> "execution: not started"
         }
-        val assemblyStatus = when {
-            slice.assemblyCompleted  -> "completed"
-            slice.assemblyValidated  -> "validated"
-            slice.assemblyStarted    -> "started"
-            else                     -> "pending"
+        val assemblyLabel = when {
+            slice.assemblyCompleted  -> "assembly: complete"
+            slice.assemblyValidated  -> "assembly: validated"
+            slice.assemblyStarted    -> "assembly: started"
+            else                     -> "assembly: pending"
         }
-        return "execution=$execStatus | assembly=$assemblyStatus"
+        return "$executionLabel | $assemblyLabel"
     }
 
     private fun buildDetailed(slice: StateSlice): String = buildString {
-        appendLine("Execution started: ${slice.executionStarted}")
-        appendLine("Execution completed: ${slice.executionCompleted}")
-        appendLine("Assembly started: ${slice.assemblyStarted}")
-        appendLine("Assembly validated: ${slice.assemblyValidated}")
-        append("Assembly completed: ${slice.assemblyCompleted}")
+        appendLine("Execution started:    ${slice.executionStarted}")
+        appendLine("Execution completed:  ${slice.executionCompleted}")
+        appendLine("Assembly started:     ${slice.assemblyStarted}")
+        appendLine("Assembly validated:   ${slice.assemblyValidated}")
+        append("Assembly completed:   ${slice.assemblyCompleted}")
     }
 
     private fun buildExplanation(slice: StateSlice): String = when {
+        slice.assemblyCompleted ->
+            "The system lifecycle is complete. Assembly has been validated and closed."
+        slice.assemblyValidated ->
+            "Execution is complete and assembly validation has passed. " +
+            "Awaiting assembly closure."
+        slice.assemblyStarted ->
+            "Execution is complete. Assembly has been initiated and is " +
+            "awaiting validation."
         slice.executionCompleted ->
-            "Execution is complete. " +
-            "Assembly phase is ${if (slice.assemblyValidated) "validated" else "in progress"}."
+            "Execution is complete. The system is ready to begin assembly."
         slice.executionStarted ->
-            "Execution is in progress."
+            "Execution is in progress. Awaiting task completion and validation."
         else ->
-            "System is awaiting execution."
+            "The system is awaiting execution. No tasks have been started."
     }
 
     private fun buildStatus(slice: StateSlice): String {
