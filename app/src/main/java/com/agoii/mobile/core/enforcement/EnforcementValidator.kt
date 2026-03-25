@@ -60,9 +60,9 @@ internal class EnforcementValidator {
         for (field in graph.declaredFields) {
             if (field !in STRUCTURAL_FIELDS) {
                 violations += Violation(
-                    type    = ViolationType.MISSING_FIELD,
+                    type    = ViolationType.INVALID_REFERENCE,
                     field   = field,
-                    message = "Field '$field' is not present in the structural surface"
+                    message = "Field '$field' is not a recognised reference in the structural surface"
                 )
             }
         }
@@ -97,16 +97,6 @@ internal class EnforcementValidator {
      */
     fun checkDataClassAlignment(graph: ContractGraph): List<Violation> {
         val violations = mutableListOf<Violation>()
-
-        for (field in graph.declaredFields) {
-            if (field !in STRUCTURAL_FIELDS) {
-                violations += Violation(
-                    type    = ViolationType.DATA_CLASS_MISMATCH,
-                    field   = field,
-                    message = "Non-structural field '$field' detected; data class alignment violated"
-                )
-            }
-        }
 
         for ((field, expr) in graph.derivedFields) {
             if (expr.isBlank() || expr == "null" || expr == "default") {
