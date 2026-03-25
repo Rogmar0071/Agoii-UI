@@ -1,103 +1,49 @@
 package com.agoii.mobile.governor
 
-import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
-import com.agoii.mobile.core.Replay
-import com.agoii.mobile.decision.DecisionAction
-import com.agoii.mobile.decision.DecisionEngine
-import com.agoii.mobile.execution.ExecutionOrchestrator
-import com.agoii.mobile.execution.ValidationVerdict
-import com.agoii.mobile.governance.ContractDescriptor
-import com.agoii.mobile.governance.ContractSurfaceLayer
-import com.agoii.mobile.governance.Outcome
-import com.agoii.mobile.governance.StateSurfaceMirror
-import com.agoii.mobile.governance.SurfaceType
-import com.agoii.mobile.tasks.Task
-import com.agoii.mobile.tasks.TaskAssignmentStatus
-import com.agoii.mobile.orchestration.ExecutionOrchestrator as ExecutionClosure
 
 /**
- * Governor — the ONLY execution authority in the system.
+ * Governor — pure deterministic state machine.
  *
- * Rules:
- *  - Reads the current ledger state.
- *  - Determines the next valid event using VALID_TRANSITIONS.
- *  - Appends EXACTLY ONE event per invocation (or zero if waiting/completed).
- *  - Never mutates state directly.
- *  - Stops and returns WAITING_FOR_APPROVAL when the last event is contracts_ready.
- *  - Contract issuance is gated by SSM state and CSL validation; returns DRIFT on failure.
+ * Design invariants:
+ *  - [nextEvent] is the sole decision function. It is pure: given the same event
+ *    list it always produces the same output. It has no side effects.
+ *  - Exactly one event is decided per call.
+ *  - All decisions are derived exclusively from [events] (last event + ledger history).
+ *  - No external gating, no execution dependency, no contractor registry lookups.
  *
- * Full execution lifecycle (one governor call per arrow):
- *   execution_started
- *     → contract_started  (position=1)
- *     → task_assigned
- *     → task_started
- *     → task_completed
- *     → task_validated
- *     → contract_completed       [governor: passive — modules emit execution_completed]
- *     → execution_completed      (module-driven)
- *     → assembly_started
- *     → assembly_validated
- *     → assembly_completed
+ * Full lifecycle (one nextEvent call per arrow):
+ *   intent_submitted → contracts_generated → contracts_ready
+ *     [user: contracts_approved]
+ *   contracts_approved → execution_started
+ *     → contract_started(1)
+ *     → task_assigned → task_started → task_completed → task_validated
+ *     → contract_completed → contract_started(2) → … → contract_started(N)
+ *     → contract_completed(N) → execution_completed
+ *     → assembly_started → assembly_validated → assembly_completed
  */
-class Governor(
-    private val eventStore:   EventRepository,
-    private val registry:     ContractorRegistry    = ContractorRegistry(),
-    private val orchestrator: ExecutionOrchestrator = ExecutionOrchestrator()
-) {
-
-    private val ssm = StateSurfaceMirror()
-    private val csl = ContractSurfaceLayer()
-    // DecisionEngine is the sole authority for task-failure branching decisions.
-    private val decisionEngine = DecisionEngine(registry)
-    // ExecutionClosure is the sole authority for contract closure events.
-    private val executionClosure = ExecutionClosure(eventStore)
-
-    init {
-        ssm.initialize()
-        ssm.activateSurface(SurfaceType.LG)
-    }
+class Governor(private val eventStore: EventRepository) {
 
     companion object {
-        /**
-         * Fixed validation capacity — deterministic baseline for CSL evaluation.
-         * Must not be derived dynamically or set to total * N.
-         */
-        const val VC = 5
+        /** Maximum task-failure retries before escalation to contract_failed. */
+        const val MAX_RETRIES = 3
 
-        /**
-         * Defines every legal automatic single-step transition driven by the governor.
-         * User-driven transitions (intent_submitted, contracts_approved) are NOT listed here
-         * because they are triggered by UI actions, not the governor.
-         *
-         * The contract lifecycle (contract_started → contract_completed) is handled in
-         * dedicated branches below. The full assembly pipeline is driven entirely by this
-         * map after the contract completes.
-         */
-        val VALID_TRANSITIONS: Map<String, String> = mapOf(
-            EventTypes.INTENT_SUBMITTED    to EventTypes.CONTRACTS_GENERATED,
-            EventTypes.CONTRACTS_GENERATED to EventTypes.CONTRACTS_READY,
-            EventTypes.CONTRACTS_APPROVED  to EventTypes.EXECUTION_STARTED,
-            EventTypes.EXECUTION_COMPLETED to EventTypes.ASSEMBLY_STARTED,
-            EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED
-        )
+        /** Deterministic contractor identifier used in the absence of a registry. */
+        const val DEFAULT_CONTRACTOR = "default-contractor"
     }
 
-    enum class GovernorResult {
-        /** Governor appended one event and advanced the ledger. */
-        ADVANCED,
-        /** Governor is paused; waiting for explicit user approval. */
-        WAITING_FOR_APPROVAL,
-        /** Governor is paused; no verified contractor is available for the active task. */
-        WAITING,
-        /** Execution is fully complete (assembly_completed reached). */
-        COMPLETED,
-        /** Ledger is empty or in an unknown terminal state. */
-        NO_EVENT,
-        /** Contract issuance blocked by SSM or CSL gate. */
-        DRIFT
+    /**
+     * Immutable description of the next event to emit.
+     *
+     * @param type    Event type string from [EventTypes].
+     * @param payload Key-value payload for the event.
+     */
+    data class NextEvent(val type: String, val payload: Map<String, Any>)
+
+    // GovernorResult enum removed — WAITING, NO_EVENT, ADVANCED, DRIFT eliminated.
+    // nextEvent() / runGovernor() return NextEvent? (null = terminal or paused).
     }
 
     fun runGovernor(projectId: String): GovernorResult {
