@@ -25,11 +25,10 @@ import com.agoii.mobile.irs.SwarmConfig
  *
  * Responsibilities:
  *  - Provide a single entry point for the UI layer to call core functions.
- *  - Never introduce logic; only delegate to core modules.
- *  - Each method corresponds to exactly one core operation.
+ *  - Thin adapter only: reads ledger, calls Governor.nextEvent(), appends result.
+ *  - No orchestration logic; no Governor internal state awareness.
  *  - When the last event is contract_started, delegates to BuildExecutor before
- *    allowing the Governor to emit contract_completed. If execution fails, blocks
- *    progression (does not call the Governor).
+ *    calling the Governor. If execution fails, returns null (blocks progression).
  *
  * Write authority:
  *  - All writes flow through [EventLedger] — the single write authority.
@@ -40,28 +39,29 @@ class CoreBridge(context: Context) {
 
     private val eventStore    = EventStore(context)
     private val ledger        = EventLedger(eventStore)
-    private val governor      = Governor(ledger)
+    private val governor      = Governor()
     private val ledgerAudit   = LedgerAudit(ledger)
     private val replay        = Replay(ledger)
     private val replayTest    = ReplayTest(ledger)
     private val buildExecutor = BuildExecutor()
     private val irsOrchestrator = IrsOrchestrator()
 
-    /** Append an intent_submitted event via Governor (sole mutation authority). */
+    /** Append an intent_submitted event directly to the ledger. */
     fun submitIntent(projectId: String, objective: String) {
-        governor.submitIntent(projectId, objective)
+        ledger.appendEvent(projectId, EventTypes.INTENT_SUBMITTED, mapOf("objective" to objective))
     }
 
     /**
-     * Trigger one governor step. Returns the result of that step.
+     * Trigger one governor step. Returns the next [Event] appended, or null if
+     * the Governor has no transition to emit (wait state, terminal, or drift).
      *
      * When the last event is contract_started:
      *  1. Resolves the contract name from the ledger.
      *  2. Calls BuildExecutor.execute(contractName).
-     *  3. If execution fails → returns NO_EVENT (blocks contract_completed).
+     *  3. If execution fails → returns null (blocks contract_completed).
      *  4. If execution passes → lets the Governor proceed naturally.
      */
-    fun runGovernorStep(projectId: String): Governor.GovernorResult {
+    fun runGovernorStep(projectId: String): Event? {
         val events    = ledger.loadEvents(projectId)
         val lastEvent = events.lastOrNull()
 
@@ -70,11 +70,15 @@ class CoreBridge(context: Context) {
             val contractName = resolveContractName(events, contractId)
             val passed       = buildExecutor.execute(contractName)
             if (!passed) {
-                return Governor.GovernorResult.NO_EVENT
+                return null
             }
         }
 
-        return governor.runGovernor(projectId)
+        val next = governor.nextEvent(events)
+        if (next != null) {
+            ledger.appendEvent(projectId, next.type, next.payload)
+        }
+        return next
     }
 
     /**
