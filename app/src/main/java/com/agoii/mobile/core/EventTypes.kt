@@ -40,7 +40,6 @@ object EventTypes {
         ASSEMBLY_STARTED,
         ASSEMBLY_VALIDATED,
         ASSEMBLY_COMPLETED,
-        TASK_CREATED,
         TASK_ASSIGNED,
         TASK_STARTED,
         TASK_COMPLETED,

@@ -3,6 +3,7 @@ package com.agoii.mobile.bridge
 import android.content.Context
 import com.agoii.mobile.core.AuditResult
 import com.agoii.mobile.core.Event
+import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventStore
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.governor.Governor
@@ -26,14 +27,25 @@ import com.agoii.mobile.irs.SwarmConfig
  *  - Provide a single entry point for the UI layer to call core functions.
  *  - Never introduce logic; only delegate to core modules.
  *  - Each method corresponds to exactly one core operation.
- *  - When the last event is contract_started, delegates to BuildExecutor before
- *    allowing the Governor to emit contract_completed. If execution fails, blocks
- *    progression (does not call the Governor).
+ *
+ * Mutation authority:
+ *  - All event writes flow through [EventLedger], which enforces pre-write
+ *    validation via [com.agoii.mobile.core.ValidationLayer].
+ *  - [Governor] receives the [EventLedger] (as [com.agoii.mobile.core.EventRepository])
+ *    so every Governor write is automatically validated before persistence.
+ *  - CoreBridge itself never calls [EventStore.appendEvent] directly.
+ *
+ * Execution containment:
+ *  - [BuildExecutor] is invoked when the last event is contract_started.
+ *  - Execution failure throws [IllegalStateException] (fail-fast).
+ *    No branching on the execution result is allowed; if execution succeeds
+ *    the Governor proceeds normally.
  */
 class CoreBridge(context: Context) {
 
     private val eventStore    = EventStore(context)
-    private val governor      = Governor(eventStore)
+    private val ledger        = EventLedger(eventStore)
+    private val governor      = Governor(ledger)
     private val ledgerAudit   = LedgerAudit(eventStore)
     private val replay        = Replay(eventStore)
     private val replayTest    = ReplayTest(eventStore)
@@ -50,12 +62,14 @@ class CoreBridge(context: Context) {
      *
      * When the last event is contract_started:
      *  1. Resolves the contract name from the ledger.
-     *  2. Calls BuildExecutor.execute(contractName).
-     *  3. If execution fails → returns NO_EVENT (blocks contract_completed).
+     *  2. Calls [BuildExecutor.execute].
+     *  3. If execution fails → throws [IllegalStateException] (fail-fast).
      *  4. If execution passes → lets the Governor proceed naturally.
+     *
+     * Execution never silently blocks the Governor; the failure mode is explicit.
      */
     fun runGovernorStep(projectId: String): Governor.GovernorResult {
-        val events    = eventStore.loadEvents(projectId)
+        val events    = ledger.loadEvents(projectId)
         val lastEvent = events.lastOrNull()
 
         if (lastEvent?.type == EventTypes.CONTRACT_STARTED) {
@@ -63,7 +77,10 @@ class CoreBridge(context: Context) {
             val contractName = resolveContractName(events, contractId)
             val passed       = buildExecutor.execute(contractName)
             if (!passed) {
-                return Governor.GovernorResult.NO_EVENT
+                throw IllegalStateException(
+                    "Build execution failed for contract '$contractName' " +
+                        "(contract_id='$contractId'). Execution is fail-fast; fix the contract before retrying."
+                )
             }
         }
 
@@ -92,7 +109,7 @@ class CoreBridge(context: Context) {
 
     /** Load all events from the ledger (read-only). */
     fun loadEvents(projectId: String): List<Event> =
-        eventStore.loadEvents(projectId)
+        ledger.loadEvents(projectId)
 
     /** Derive current state by replaying the ledger (read-only). */
     fun replayState(projectId: String): ReplayStructuralState =
