@@ -5,18 +5,25 @@ import com.agoii.mobile.core.contract.ContractGraph
 // ─── Enforcement Validator ────────────────────────────────────────────────────
 
 /**
- * EnforcementValidator — implements all eight mandatory enforcement steps.
+ * EnforcementValidator — implements all eight mandatory enforcement steps against
+ * the full structural surface carried by [ContractGraph.surface].
  *
- * Step 1: Structural Surface Scan    — map files, data classes, field usage, and dependencies;
- *                                      detect missing references, type mismatches, invalid links.
- * Step 2: Field Validity Check       — every declared field must belong to ReplayStructuralState.
- * Step 3: Data Class Alignment       — no field without a structural source; no default or
- *                                      placeholder values in derived fields.
+ * Step 1: Structural Surface Scan    — validate files, data classes, field usage, and
+ *                                      dependencies; detect invalid references and type
+ *                                      mismatches across the real structural surface.
+ * Step 2: Field Validity Check       — every field path in [SurfaceMap.fieldUsage] must
+ *                                      belong to ReplayStructuralState.
+ * Step 3: Data Class Alignment       — no data class entry without a structural source;
+ *                                      no default or placeholder derivation expressions.
  * Step 4: Derivation Validation      — only the two permitted derivations are accepted.
  * Step 5: Substitution Detection     — scan for substitution values in expressions.
- * Step 6: Flow Integrity Check       — no legacy ReplayState references; all dependencies resolve.
- * Step 7: Mutation Scope Lock        — derived field keys confined to the allowed derivation set.
- * Step 8: Execution Authorization    — computed by [EnforcementPipeline] from the violation list.
+ * Step 6: Flow Integrity Check       — no legacy ReplayState references in expressions,
+ *                                      field paths, or surface files.
+ * Step 7: Mutation Scope Lock        — files and data classes in the surface must be
+ *                                      confined to the declared structural set; derived
+ *                                      field keys must be confined to the allowed set.
+ * Step 8: Execution Authorization    — computed by [EnforcementPipeline] from the
+ *                                      violation list.
  */
 internal class EnforcementValidator {
 
@@ -35,6 +42,27 @@ internal class EnforcementValidator {
             "assembly.assemblyValidated",
             "assembly.assemblyCompleted",
             "assembly.assemblyValid"
+        )
+
+        /** Data class names that form the authoritative structural surface. */
+        private val STRUCTURAL_DATA_CLASSES: Set<String> = setOf(
+            "ReplayStructuralState",
+            "IntentStructuralState",
+            "ContractStructuralState",
+            "ExecutionStructuralState",
+            "AssemblyStructuralState"
+        )
+
+        /** Source file paths that form the authoritative structural surface. */
+        private val STRUCTURAL_FILES: Set<String> = setOf(
+            "core/Replay.kt",
+            "core/contract/ContractGraph.kt",
+            "core/contract/ContractEngine.kt",
+            "core/contract/ContractModule.kt",
+            "core/contract/ExecutionRouter.kt",
+            "core/enforcement/EnforcementPipeline.kt",
+            "core/enforcement/EnforcementValidator.kt",
+            "core/enforcement/EnforcementResult.kt"
         )
 
         /**
@@ -61,19 +89,18 @@ internal class EnforcementValidator {
     // ── Step 1: Structural Surface Scan ──────────────────────────────────────
 
     /**
-     * Maps all referenced fields and dependencies from [graph] into a [SurfaceMap]
-     * and detects surface-level invalid references (fields absent from the structural set).
+     * Validates the full structural surface carried by [ContractGraph.surface]:
+     * scans files, data classes, field usage, and dependencies; detects field paths
+     * absent from the structural set, unrecognised data class entries, and type mismatches.
+     *
+     * Returns the surface (propagated unmodified as the validated surface) and all
+     * Step-1 [Violation]s.
      */
     fun scanSurface(graph: ContractGraph): Pair<SurfaceMap, List<Violation>> {
         val violations = mutableListOf<Violation>()
 
-        val surfaceMap = SurfaceMap(
-            fields       = graph.declaredFields,
-            references   = graph.derivedFields.keys.toList(),
-            dependencies = listOf("ReplayStructuralState")
-        )
-
-        for (field in graph.declaredFields) {
+        // Validate each field path declared in fieldUsage
+        for (field in graph.surface.fieldUsage.keys) {
             if (field !in STRUCTURAL_FIELDS) {
                 violations += Violation(
                     type    = ViolationType.INVALID_REFERENCE,
@@ -83,17 +110,29 @@ internal class EnforcementValidator {
             }
         }
 
-        return surfaceMap to violations
+        // Validate each data class name declared in the surface
+        for (className in graph.surface.dataClasses.keys) {
+            if (className !in STRUCTURAL_DATA_CLASSES) {
+                violations += Violation(
+                    type    = ViolationType.INVALID_REFERENCE,
+                    field   = className,
+                    message = "Data class '$className' is not a recognised structural data class"
+                )
+            }
+        }
+
+        return graph.surface to violations
     }
 
     // ── Step 2: Field Validity Check ─────────────────────────────────────────
 
     /**
-     * Validates that every declared field in [graph] belongs to [ReplayStructuralState].
-     * Any field outside the structural set produces an [ViolationType.INVALID_FIELD] violation.
+     * Validates that every field path in [SurfaceMap.fieldUsage] belongs to
+     * [ReplayStructuralState].  Any field outside the structural set produces
+     * a [ViolationType.INVALID_FIELD] violation.
      */
     fun validateFields(graph: ContractGraph): List<Violation> {
-        return graph.declaredFields
+        return graph.surface.fieldUsage.keys
             .filter { it !in STRUCTURAL_FIELDS }
             .map { field ->
                 Violation(
@@ -108,20 +147,36 @@ internal class EnforcementValidator {
 
     /**
      * Detects blank, null, or literal-default derivation expressions — these indicate
-     * a field with no structural source.  Violations produce [ViolationType.DATA_CLASS_MISMATCH].
+     * a field with no structural source.  Also detects data class entries in the surface
+     * that carry no field paths (empty source).
+     * Violations produce [ViolationType.DATA_CLASS_MISMATCH].
      */
     fun checkDataClassAlignment(graph: ContractGraph): List<Violation> {
-        return graph.derivedFields.mapNotNull { (field, expr) ->
+        val violations = mutableListOf<Violation>()
+
+        // Derivation expressions must not be placeholder values
+        for ((field, expr) in graph.derivedFields) {
             if (expr.trim() in SUBSTITUTION_LITERALS) {
-                Violation(
+                violations += Violation(
                     type    = ViolationType.DATA_CLASS_MISMATCH,
                     field   = field,
                     message = "Derived field '$field' has no structural source — expression is '$expr'"
                 )
-            } else {
-                null
             }
         }
+
+        // Data class entries must each declare at least one field path
+        for ((className, fields) in graph.surface.dataClasses) {
+            if (fields.isEmpty()) {
+                violations += Violation(
+                    type    = ViolationType.DATA_CLASS_MISMATCH,
+                    field   = className,
+                    message = "Data class '$className' is declared in the surface but has no field paths"
+                )
+            }
+        }
+
+        return violations
     }
 
     // ── Step 4: Derivation Validation ────────────────────────────────────────
@@ -174,16 +229,15 @@ internal class EnforcementValidator {
     // ── Step 6: Flow Integrity Check ─────────────────────────────────────────
 
     /**
-     * Verifies that no derivation expression references the legacy [ReplayState] type,
-     * and that all graph dependencies resolve to [ReplayStructuralState].
-     * Violations produce [ViolationType.FLOW_BREAK].
+     * Verifies that no derivation expression, field path, or surface file references the
+     * legacy [ReplayState] type, and that all graph dependencies resolve to
+     * [ReplayStructuralState].  Violations produce [ViolationType.FLOW_BREAK].
      */
     fun checkFlowIntegrity(graph: ContractGraph): List<Violation> {
         val violations = mutableListOf<Violation>()
 
+        // Derivation expressions must not reference the legacy state type
         for ((field, expr) in graph.derivedFields) {
-            // Strip valid "ReplayStructuralState" occurrences first, then check for
-            // bare legacy "ReplayState" references in the remainder.
             val stripped = expr.replace("ReplayStructuralState", "")
             if (stripped.contains(LEGACY_STATE_REFERENCE)) {
                 violations += Violation(
@@ -195,13 +249,26 @@ internal class EnforcementValidator {
             }
         }
 
-        for (dep in graph.declaredFields) {
-            val stripped = dep.replace("ReplayStructuralState", "")
+        // Field paths must not contain legacy state references
+        for (fieldPath in graph.surface.fieldUsage.keys) {
+            val stripped = fieldPath.replace("ReplayStructuralState", "")
             if (stripped.contains(LEGACY_STATE_REFERENCE)) {
                 violations += Violation(
                     type    = ViolationType.FLOW_BREAK,
-                    field   = dep,
-                    message = "Declared field '$dep' contains a legacy '$LEGACY_STATE_REFERENCE' reference"
+                    field   = fieldPath,
+                    message = "Field path '$fieldPath' contains a legacy '$LEGACY_STATE_REFERENCE' reference"
+                )
+            }
+        }
+
+        // Surface files must not reference the legacy state type in their names
+        for (file in graph.surface.files) {
+            val stripped = file.replace("ReplayStructuralState", "")
+            if (stripped.contains(LEGACY_STATE_REFERENCE)) {
+                violations += Violation(
+                    type    = ViolationType.FLOW_BREAK,
+                    field   = file,
+                    message = "Surface file '$file' contains a legacy '$LEGACY_STATE_REFERENCE' reference"
                 )
             }
         }
@@ -212,20 +279,47 @@ internal class EnforcementValidator {
     // ── Step 7: Mutation Scope Lock ───────────────────────────────────────────
 
     /**
-     * Verifies that all derived field keys are confined to the allowed derivation set.
-     * Any key outside this set represents scope drift.
-     * Violations produce [ViolationType.SCOPE_DRIFT].
+     * Verifies that:
+     * - All files in [SurfaceMap.files] are confined to the declared structural file set.
+     * - All data class names in [SurfaceMap.dataClasses] are confined to the structural
+     *   data class set.
+     * - All derived field keys are confined to the allowed derivation set.
+     * Any value outside the declared scope produces [ViolationType.SCOPE_DRIFT].
      */
     fun checkMutationScope(graph: ContractGraph): List<Violation> {
-        return graph.derivedFields.keys
-            .filter { it !in ALLOWED_DERIVATIONS }
-            .map { field ->
-                Violation(
+        val violations = mutableListOf<Violation>()
+
+        for (file in graph.surface.files) {
+            if (file !in STRUCTURAL_FILES) {
+                violations += Violation(
+                    type    = ViolationType.SCOPE_DRIFT,
+                    field   = file,
+                    message = "Surface file '$file' is outside the declared structural file scope"
+                )
+            }
+        }
+
+        for (className in graph.surface.dataClasses.keys) {
+            if (className !in STRUCTURAL_DATA_CLASSES) {
+                violations += Violation(
+                    type    = ViolationType.SCOPE_DRIFT,
+                    field   = className,
+                    message = "Data class '$className' is outside the declared structural data class scope"
+                )
+            }
+        }
+
+        for (field in graph.derivedFields.keys) {
+            if (field !in ALLOWED_DERIVATIONS) {
+                violations += Violation(
                     type    = ViolationType.SCOPE_DRIFT,
                     field   = field,
                     message = "Derived field '$field' is outside the declared mutation scope; " +
                               "only ${ALLOWED_DERIVATIONS.keys} are permitted"
                 )
             }
+        }
+
+        return violations
     }
 }

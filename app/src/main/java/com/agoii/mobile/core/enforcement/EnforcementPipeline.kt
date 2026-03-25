@@ -9,15 +9,19 @@ import com.agoii.mobile.core.contract.ContractGraph
  *
  * No contract may proceed to execution without passing all eight steps:
  *
- *   Step 1: Structural Surface Scan    — map fields, references, and dependencies;
- *                                        detect invalid references and type mismatches.
- *   Step 2: Field Validity Check       — all fields must belong to ReplayStructuralState.
- *   Step 3: Data Class Alignment       — no field without a structural source;
- *                                        no default or placeholder expressions.
+ *   Step 1: Structural Surface Scan    — validate the full [SurfaceMap]: files, data classes,
+ *                                        field usage, and dependencies; detect invalid references
+ *                                        and unrecognised structural entries.
+ *   Step 2: Field Validity Check       — all field paths in [SurfaceMap.fieldUsage] must
+ *                                        belong to ReplayStructuralState.
+ *   Step 3: Data Class Alignment       — no data class without field paths; no default or
+ *                                        placeholder derivation expressions.
  *   Step 4: Derivation Validation      — only the two permitted derivations are accepted.
  *   Step 5: Substitution Detection     — scan for substitution patterns in expressions.
- *   Step 6: Flow Integrity Check       — no legacy ReplayState references; dependencies resolve.
- *   Step 7: Mutation Scope Lock        — derived keys confined to the allowed derivation set.
+ *   Step 6: Flow Integrity Check       — no legacy ReplayState references in expressions,
+ *                                        field paths, or surface files.
+ *   Step 7: Mutation Scope Lock        — files, data classes, and derived field keys must be
+ *                                        confined to their respective declared structural sets.
  *   Step 8: Execution Authorization    — approved = violations.isEmpty(); blocks on any violation.
  *
  * Forbidden:

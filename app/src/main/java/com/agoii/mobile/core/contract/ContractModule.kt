@@ -3,6 +3,7 @@ package com.agoii.mobile.core.contract
 import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.core.enforcement.EnforcementPipeline
 import com.agoii.mobile.core.enforcement.EnforcementResult
+import com.agoii.mobile.core.enforcement.SurfaceMap
 
 // ─── Contract Module ──────────────────────────────────────────────────────────
 
@@ -34,7 +35,8 @@ class ContractModule(
      *
      * @param contractId     Unique identifier for this contract.
      * @param state          Current [ReplayStructuralState] to base the graph on.
-     * @param declaredFields Field paths this contract references.
+     * @param declaredFields Field paths this contract references (used to populate
+     *                       [SurfaceMap.fieldUsage]).
      * @param derivedFields  Derivation expressions this contract declares.
      * @return [ContractModuleResult] with the enforcement outcome and, when approved, the
      *         routing result.
@@ -46,15 +48,49 @@ class ContractModule(
         derivedFields:  Map<String, String>
     ): ContractModuleResult {
 
-        // Step 1: Construct ContractGraph from structural state
-        val graph = ContractGraph(
-            contractId     = contractId,
-            state          = state,
-            declaredFields = declaredFields,
-            derivedFields  = derivedFields
+        // Step 1: Construct the full SurfaceMap — real files, data classes, field usage, dependencies
+        val surface = SurfaceMap(
+            files        = listOf(
+                "core/Replay.kt",
+                "core/contract/ContractGraph.kt",
+                "core/contract/ContractEngine.kt",
+                "core/contract/ContractModule.kt",
+                "core/contract/ExecutionRouter.kt",
+                "core/enforcement/EnforcementPipeline.kt",
+                "core/enforcement/EnforcementValidator.kt",
+                "core/enforcement/EnforcementResult.kt"
+            ),
+            dataClasses  = mapOf(
+                "ReplayStructuralState"    to listOf("intent", "contracts", "execution", "assembly"),
+                "IntentStructuralState"    to listOf("intent.structurallyComplete"),
+                "ContractStructuralState"  to listOf("contracts.generated", "contracts.valid"),
+                "ExecutionStructuralState" to listOf(
+                    "execution.totalTasks",
+                    "execution.assignedTasks",
+                    "execution.completedTasks",
+                    "execution.validatedTasks",
+                    "execution.fullyExecuted"
+                ),
+                "AssemblyStructuralState"  to listOf(
+                    "assembly.assemblyStarted",
+                    "assembly.assemblyValidated",
+                    "assembly.assemblyCompleted",
+                    "assembly.assemblyValid"
+                )
+            ),
+            fieldUsage   = declaredFields.associateWith { listOf(contractId) },
+            dependencies = listOf("ReplayStructuralState")
         )
 
-        // Step 2: Single centralized enforcement gate — mandatory; cannot be skipped
+        // Step 2: Construct ContractGraph from the full structural surface
+        val graph = ContractGraph(
+            contractId    = contractId,
+            state         = state,
+            surface       = surface,
+            derivedFields = derivedFields
+        )
+
+        // Step 3: Single centralized enforcement gate — mandatory; cannot be skipped
         val enforcementResult = enforcementPipeline.run(graph)
 
         // Step 3: Block execution if enforcement did not approve

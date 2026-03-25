@@ -15,15 +15,25 @@ enum class ViolationType {
 }
 
 /**
- * Structural surface produced by Step 1 of the enforcement pipeline.
+ * Full structural surface of the system, produced by Step 1 of the enforcement pipeline.
  *
- * @property fields       All field paths found in the contract graph.
- * @property references   All external references (derived field names) found.
- * @property dependencies All declared structural dependencies.
+ * This is the authoritative description of all real files, data classes, field usages,
+ * and dependencies that the contract is bound to.  It replaces graph-only abstractions
+ * that do not reflect the real system surface.
+ *
+ * @property files        Source file paths that form the structural surface.
+ * @property dataClasses  Map of data class name → ordered list of field paths belonging to
+ *                        that class.  All entries must have a structural source.
+ * @property fieldUsage   Map of field path → list of contract or entity identifiers that
+ *                        reference that field.  Keys are the canonical field paths validated
+ *                        against [ReplayStructuralState].
+ * @property dependencies Ordered list of structural dependency identifiers (e.g. type names)
+ *                        that this surface depends on.
  */
 data class SurfaceMap(
-    val fields:       List<String>,
-    val references:   List<String>,
+    val files:        List<String>,
+    val dataClasses:  Map<String, List<String>>,
+    val fieldUsage:   Map<String, List<String>>,
     val dependencies: List<String>
 )
 
