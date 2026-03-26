@@ -6,6 +6,13 @@ package com.agoii.mobile.core
  * Governor, LedgerAudit, Replay, and UI.
  */
 object EventTypes {
+
+    // ── IRS intent-validation lifecycle (precedes INTENT_SUBMITTED) ───────────
+    const val INTENT_DRAFT_CREATED    = "intent_draft_created"
+    const val IRS_STAGE_COMPLETED     = "irs_stage_completed"
+    const val IRS_CERTIFIED           = "irs_certified"
+
+    // ── Core execution lifecycle ──────────────────────────────────────────────
     const val INTENT_SUBMITTED    = "intent_submitted"
     const val CONTRACTS_GENERATED = "contracts_generated"
     const val CONTRACTS_READY     = "contracts_ready"
@@ -29,6 +36,9 @@ object EventTypes {
     const val CONTRACT_FAILED         = "contract_failed"
 
     val ALL: Set<String> = setOf(
+        INTENT_DRAFT_CREATED,
+        IRS_STAGE_COMPLETED,
+        IRS_CERTIFIED,
         INTENT_SUBMITTED,
         CONTRACTS_GENERATED,
         CONTRACTS_READY,

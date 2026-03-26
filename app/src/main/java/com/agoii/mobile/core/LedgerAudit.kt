@@ -75,6 +75,15 @@ class LedgerAudit(private val eventStore: EventRepository) {
             EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED
         )
 
+        // ── IRS lifecycle transitions ─────────────────────────────────────────
+        // These precede INTENT_SUBMITTED in the event-driven IRS validation flow.
+        private val irsTransitions: Set<Pair<String, String>> = setOf(
+            EventTypes.INTENT_DRAFT_CREATED to EventTypes.IRS_STAGE_COMPLETED,
+            EventTypes.IRS_STAGE_COMPLETED  to EventTypes.IRS_STAGE_COMPLETED,
+            EventTypes.IRS_STAGE_COMPLETED  to EventTypes.IRS_CERTIFIED,
+            EventTypes.IRS_CERTIFIED        to EventTypes.INTENT_SUBMITTED
+        )
+
         /**
          * Returns true when transitioning [from] → [to] is a legal step in the Agoii
          * lifecycle.  Shared by [LedgerAudit] (post-hoc audit) and [ValidationLayer]
