@@ -6,6 +6,8 @@ import com.agoii.mobile.execution.BuildExecutor
 import com.agoii.mobile.execution.ExecutionEntryPoint
 import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.irs.*
+import com.agoii.mobile.observability.ExecutionObservability
+import com.agoii.mobile.observability.ExecutionTrace
 
 /**
  * CoreBridge — mobile runtime adapter.
@@ -38,6 +40,7 @@ class CoreBridge(context: Context) {
     private val buildExecutor       = BuildExecutor()
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
+    private val observability       = ExecutionObservability(ledger)
 
     /** Append an intent_submitted event directly to the ledger. */
     fun submitIntent(projectId: String, objective: String) {
@@ -123,6 +126,10 @@ class CoreBridge(context: Context) {
     /** Run full replay verification: audit + invariant checks (read-only). */
     fun verifyReplay(projectId: String): ReplayVerification =
         replayTest.verifyReplay(projectId)
+
+    /** Return the full execution lifecycle trace derived from ledger (read-only). */
+    fun getExecutionTrace(projectId: String): ExecutionTrace =
+        observability.trace(projectId)
 
     // ─── IRS delegation (interface only; all logic lives in IrsOrchestrator) ──
 
