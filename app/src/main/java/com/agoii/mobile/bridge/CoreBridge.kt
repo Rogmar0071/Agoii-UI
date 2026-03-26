@@ -6,6 +6,8 @@ import com.agoii.mobile.execution.BuildExecutor
 import com.agoii.mobile.execution.ExecutionEntryPoint
 import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.irs.*
+import com.agoii.mobile.observability.ExecutionObservability
+import com.agoii.mobile.observability.ExecutionTrace
 
 /**
  * CoreBridge — mobile runtime adapter.
@@ -38,6 +40,9 @@ class CoreBridge(context: Context) {
     private val buildExecutor       = BuildExecutor()
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
+
+    // ✅ Read-only observability layer
+    private val observability       = ExecutionObservability(ledger)
 
     /** Append an intent_submitted event directly to the ledger. */
     fun submitIntent(projectId: String, objective: String) {
@@ -100,6 +105,7 @@ class CoreBridge(context: Context) {
         val match = contracts
             ?.filterIsInstance<Map<*, *>>()
             ?.firstOrNull { it["id"] == contractId }
+
         return match?.get("name")?.toString() ?: contractId
     }
 
@@ -124,17 +130,12 @@ class CoreBridge(context: Context) {
     fun verifyReplay(projectId: String): ReplayVerification =
         replayTest.verifyReplay(projectId)
 
+    /** ✅ Read-only execution trace (observability layer) */
+    fun getExecutionTrace(projectId: String): ExecutionTrace =
+        observability.trace(projectId)
+
     // ─── IRS delegation (interface only; all logic lives in IrsOrchestrator) ──
 
-    /**
-     * Create a new IRS session.
-     *
-     * @param sessionId        Unique identifier for the session.
-     * @param rawFields        Raw intent field values (objective, constraints, environment, resources).
-     * @param evidence         Evidence refs keyed by field name.
-     * @param swarmConfig      Swarm parameters; agentCount must be ≥ 2.
-     * @param availableEvidence Supplementary evidence pool for the ScoutOrchestrator.
-     */
     fun createIrsSession(
         sessionId:         String,
         rawFields:         Map<String, String>,
@@ -144,18 +145,9 @@ class CoreBridge(context: Context) {
     ): IrsSession =
         irsOrchestrator.createSession(sessionId, rawFields, evidence, swarmConfig, availableEvidence)
 
-    /**
-     * Advance the IRS session by exactly one stage.
-     * External driver must call this repeatedly until [StepResult.terminal] is true.
-     */
     fun stepIrs(sessionId: String): StepResult =
         irsOrchestrator.step(sessionId)
 
-    /**
-     * Replay the full ordered snapshot history for an IRS session (read-only).
-     * Supports audit and deterministic re-execution.
-     */
     fun replayIrs(sessionId: String): List<IrsSnapshot> =
         irsOrchestrator.replayHistory(sessionId)
 }
-
