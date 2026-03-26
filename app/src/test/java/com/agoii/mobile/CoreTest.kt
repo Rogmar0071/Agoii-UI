@@ -387,10 +387,13 @@ class CoreTest {
     }
 
     @Test
-    fun `governor advances from intent_submitted to contracts_generated`() {
+    fun `governor returns NO_EVENT when last event is intent_submitted and contracts not yet derived`() {
+        // CONTRACTS_GENERATED is authored by the Execution Authority (CoreBridge), not by Governor.
+        // Governor reads from the ledger only; when it has not yet been written, it waits.
         val s = store(listOf(Event("intent_submitted", mapOf("objective" to "obj"))))
-        assertEquals(Governor.GovernorResult.ADVANCED, Governor(s).runGovernor("proj"))
-        assertEquals("contracts_generated", s.loadEvents("proj").last().type)
+        assertEquals(Governor.GovernorResult.NO_EVENT, Governor(s).runGovernor("proj"))
+        // Ledger must NOT be modified — derivation is CoreBridge's responsibility.
+        assertEquals(1, s.loadEvents("proj").size)
     }
 
     @Test
@@ -653,20 +656,21 @@ class CoreTest {
 
     /**
      * LOCK STEP 2 — TRANSITION LOCK
-     * Verifies Governor.VALID_TRANSITIONS is frozen: exactly the 5 defined governor transitions.
-     * Note: assembly_started → assembly_validated is handled by a dedicated assembly gate
-     * (AssemblyValidator) rather than an automatic VALID_TRANSITIONS entry.
+     * Verifies Governor.VALID_TRANSITIONS is frozen: exactly the 4 defined governor transitions.
+     * Note: intent_submitted → contracts_generated is NOT listed here because CONTRACTS_GENERATED
+     * is authored by the Execution Authority (CoreBridge), not by Governor.
+     * Note: assembly_started → assembly_validated is handled explicitly in nextEvent
+     * rather than an automatic VALID_TRANSITIONS entry.
      */
     @Test
-    fun `lock - Governor VALID_TRANSITIONS is frozen with exactly the 6 locked entries`() {
+    fun `lock - Governor VALID_TRANSITIONS is frozen with exactly the 4 locked entries`() {
         val locked = mapOf(
-            "intent_submitted"    to "contracts_generated",
             "contracts_generated" to "contracts_ready",
             "contracts_approved"  to "execution_started",
             "execution_completed" to "assembly_started",
             "assembly_validated"  to "assembly_completed"
         )
-        assertEquals("VALID_TRANSITIONS must contain exactly 5 locked entries", 5, Governor.VALID_TRANSITIONS.size)
+        assertEquals("VALID_TRANSITIONS must contain exactly 4 locked entries", 4, Governor.VALID_TRANSITIONS.size)
         assertEquals("VALID_TRANSITIONS must match the locked map exactly", locked, Governor.VALID_TRANSITIONS)
     }
 
