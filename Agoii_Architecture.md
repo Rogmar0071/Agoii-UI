@@ -1,244 +1,288 @@
-# AGOII ARCHITECTURE — MASTER LAW (LOCKED)
+# AGOII ARCHITECTURE — MASTER LAW (LOCKED)  
 
-STATUS: AUTHORITATIVE
-MODE: ENFORCED
-MUTABILITY: RESTRICTED (EXPLICIT CONTRACT REQUIRED)
+STATUS: AUTHORITATIVE  
+MODE: ENFORCED  
+MUTABILITY: RESTRICTED (EXPLICIT CONTRACT REQUIRED)  
 
----
+---  
 
-## 0. SYSTEM IDENTITY
+## 0. SYSTEM IDENTITY  
 
-Agoii is a deterministic orchestration system.
+Agoii is a deterministic orchestration system.  
 
-- All system change originates from events
-- All events are validated before persistence
-- No module may bypass the event pipeline
-- No module may assume authority
+- All system change originates from events  
+- All events are validated before persistence  
+- No module may bypass the event pipeline  
+- No module may assume authority  
 
----
+---  
 
-## 1. CORE FLOW (NON-NEGOTIABLE)
+## 1. CORE FLOW (NON-NEGOTIABLE)  
 
-RAW INPUT  
-→ IngressContract (translation only)  
-→ Intent Module (intent completion)  
-→ Contract Derivation (deterministic)  
-→ Execution Authority (validation + authorization)  
-→ EventLedger.appendEvent()  
-→ Governor (state progression)  
-→ ICS (output only)
+RAW INPUT    
+→ IngressContract (translation only)    
+→ Intent Module (intent completion)    
+→ ContractSystemOrchestrator (derivation)    
+→ Execution Authority (validation + authorization)    
+→ EventLedger.appendEvent()    
+→ Governor (state progression)    
+→ ICS (output only)  
 
----
+---  
 
-## 2. SINGLE WRITE AUTHORITY LAW
+## 2. SINGLE WRITE AUTHORITY LAW  
 
-ONLY ONE COMPONENT MAY WRITE:
+ONLY ONE COMPONENT MAY WRITE:  
 
-→ EventLedger
+→ EventLedger  
 
-RULES:
-- No direct EventStore writes
-- No indirect persistence bypass
-- No module may simulate a write
+RULES:  
+- No direct EventStore writes  
+- No indirect persistence bypass  
+- No module may simulate a write  
 
-VIOLATION = SYSTEM BREACH
+VIOLATION = SYSTEM BREACH  
 
----
+---  
 
-## 3. EXECUTION AUTHORITY LAW
+## 3. EXECUTION AUTHORITY LAW  
 
-Execution Authority is the ONLY gate before ledger writes.
+Execution Authority is the ONLY gate before ledger writes.  
 
-Execution Authority consists of:
+Execution Authority consists of:  
 
-1. Validation (structural + invariant)
-2. Authorization (explicit approval of transition)
+1. Validation (structural + invariant)  
+2. Authorization (explicit approval of transition)  
 
-RULES:
-- Validation success ≠ authorization
-- Both MUST pass before write
-- If either fails → BLOCK
+RULES:  
+- Validation success ≠ authorization  
+- Both MUST pass before write  
+- If either fails → BLOCK  
 
-IMPLEMENTATION NOTE:
-Current implementation may co-locate validation + authorization,
-but they MUST be logically separable.
+MANDATORY ENFORCEMENT:  
 
----
+Execution Authority MUST enforce:  
 
-## 4. CONTRACT DERIVATION LAW
+- Contracts list is non-empty  
+- All contracts contain id, name, position  
+- Positions are strictly sequential (1..N)  
+- total == contracts.size  
 
-Contracts MUST be derived BEFORE entering the ledger.
+Failure at any stage MUST block ledger write.  
 
-SOURCE OF TRUTH:
-→ ContractSystemOrchestrator
+IMPLEMENTATION NOTE:  
+Validation and Authorization may be co-located,  
+but MUST remain logically separable phases.  
 
-MAPPING RULE (LOCKED):
+---  
 
-ExecutionPlan.steps → CONTRACTS_GENERATED.payload["contracts"]
+## 4. CONTRACT DERIVATION LAW  
 
-Each step MUST map as:
+Contracts MUST be derived BEFORE entering the ledger.  
 
-- id = "contract_{position}"
-- name = step.description
-- position = step.position
+SOURCE OF TRUTH:  
+→ ContractSystemOrchestrator  
 
-Payload MUST include:
-- contracts: List<Map>
-- total: Int
+MAPPING RULE (LOCKED):  
 
-RULES:
-- No hardcoded contracts
-- No Governor-derived contracts (TARGET STATE)
-- Deterministic: same intent → same contracts
+ExecutionPlan.steps → CONTRACTS_GENERATED.payload["contracts"]  
 
-TEMPORARY STATE:
-If derivation occurs inside Governor, it MUST be marked for extraction.
+Each step MUST map as:  
 
----
+- id = "contract_{position}"  
+- name = step.description  
+- position = step.position  
 
-## 5. GOVERNOR LAW
+Payload MUST include:  
+- contracts: List<Map>  
+- total: Int  
 
-Governor is a deterministic state machine.
+RULES:  
+- No hardcoded contracts  
+- Governor is strictly prohibited from deriving contracts  
+- Deterministic: same intent → same contracts  
 
-INPUT:
-→ Event stream ONLY
+ENFORCEMENT:  
+Contract derivation MUST occur before any ledger write.  
 
-OUTPUT:
-→ Next event OR null
+---  
 
-RULES:
-- No external dependencies for decision making
-- No contract derivation (TARGET STATE)
-- No execution logic
-- No side effects
+## 5. GOVERNOR LAW  
 
-Governor MUST:
-- Consume ledger state
-- Enforce transition rules
-- Never introduce new information
+Governor is a deterministic state machine.  
 
----
+INPUT:  
+→ Event stream ONLY  
 
-## 6. BRIDGE LAW (CoreBridge)
+OUTPUT:  
+→ Next event OR null  
 
-CoreBridge is a thin adapter.
+RULES:  
+- Pure: no external calls  
+- Deterministic: ledger-driven only  
+- No contract derivation  
+- No execution logic  
+- No validation logic  
+- No side effects  
 
-RULES:
-- No execution logic
-- No validation logic
-- No decision making
-- Only delegates to Governor / Ledger / IRS
+Governor MUST:  
+- Consume ledger state  
+- Enforce transition rules  
+- Never introduce new information  
 
-VIOLATION = ARCHITECTURAL DRIFT
+MANDATORY BEHAVIOR:  
 
----
+On INTENT_SUBMITTED:  
+- Governor MUST NOT produce CONTRACTS_GENERATED  
+- Governor MUST wait until CONTRACTS_GENERATED exists in ledger  
 
-## 7. ICS LAW (INTERACTION LAYER)
+---  
 
-ICS is output-only.
+## 6. BRIDGE LAW (CoreBridge)  
 
-RULES:
-- No validation
-- No mutation
-- No execution
-- No state authority
+CoreBridge is a thin adapter AND Execution Authority host.  
 
-Purpose:
-→ Translate system state to user communication
+RULES:  
+- May coordinate ContractSystemOrchestrator  
+- May execute Validation + Authorization phases  
+- MUST NOT bypass Execution Authority rules  
+- MUST NOT write outside EventLedger  
+- MUST NOT contain hidden decision layers  
 
----
+CoreBridge responsibilities are LIMITED to:  
+- Derivation coordination (pre-ledger)  
+- Execution Authority enforcement  
+- Delegation to Governor  
 
-## 8. INGRESS LAW
+VIOLATION = ARCHITECTURAL DRIFT  
 
-IngressContract transforms input ONLY.
+---  
 
-RULES:
-- No validation authority
-- No execution authority
-- No ledger writes
+## 7. ICS LAW (INTERACTION LAYER)  
 
-Purpose:
-→ Human → structured input
+ICS is output-only.  
 
----
+RULES:  
+- No validation  
+- No mutation  
+- No execution  
+- No state authority  
 
-## 9. PAYLOAD SCHEMA LAW (LOCKED)
+Purpose:  
+→ Translate system state to user communication  
 
-All event payloads MUST be explicitly defined.
+---  
 
-### TASK_ASSIGNED (MANDATORY STRUCTURE)
+## 8. INGRESS LAW  
 
-{
-  "contractorId": String,
-  "taskId": String,
-  "position": Int,
-  "total": Int
-}
+IngressContract transforms input ONLY.  
 
-RULES:
-- No implicit fields
-- No silent schema changes
-- ValidationLayer MUST enforce this structure
+RULES:  
+- No validation authority  
+- No execution authority  
+- No ledger writes  
 
----
+Purpose:  
+→ Human → structured input  
 
-## 10. DEAD CODE LAW
+---  
 
-Authority-related components MUST NOT exist unused.
+## 9. PAYLOAD SCHEMA LAW (LOCKED)  
 
-RULES:
-- Unused authority logic MUST be removed OR explicitly disabled
-- No parallel execution paths allowed
-- No shadow orchestrators
+All event payloads MUST be explicitly defined.  
 
----
+### CONTRACTS_GENERATED (MANDATORY STRUCTURE)  
 
-## 11. SIMULATION LAW
+{  
+  "contracts": [  
+    {  
+      "id": String,  
+      "name": String,  
+      "position": Int  
+    }  
+  ],  
+  "total": Int  
+}  
 
-Simulation is NON-AUTHORITATIVE.
+CONSTRAINTS (MANDATORY):  
+- positions MUST be sequential (1..N)  
+- total MUST equal contracts.size  
 
-RULES:
-- Cannot trigger events
-- Cannot advance state
-- Cannot override execution
+### TASK_ASSIGNED (MANDATORY STRUCTURE)  
 
-Purpose:
-→ Analysis only
+{  
+  "contractorId": String,  
+  "taskId": String,  
+  "position": Int,  
+  "total": Int  
+}  
 
----
+RULES:  
+- No implicit fields  
+- No silent schema changes  
+- ValidationLayer MUST enforce this structure  
 
-## 12. FAILURE LAW
+---  
 
-IF ANY STEP FAILS:
+## 10. DEAD CODE LAW  
 
-→ SYSTEM BLOCKS
+Authority-related components MUST NOT exist unused.  
 
-NO:
-- fallback execution
-- silent correction
-- assumption-based continuation
+RULES:  
+- Unused authority logic MUST be removed OR explicitly disabled  
+- No parallel execution paths allowed  
+- No shadow orchestrators  
 
----
+---  
 
-## 13. SYSTEM INVARIANTS
+## 11. SIMULATION LAW  
 
-- Append-only ledger
-- Deterministic replay
-- Single write authority
-- Explicit validation + authorization
-- No hidden mutation
-- No implicit state transitions
+Simulation is NON-AUTHORITATIVE.  
 
----
+RULES:  
+- Cannot trigger events  
+- Cannot advance state  
+- Cannot override execution  
 
-## 14. ENFORCEMENT
+Purpose:  
+→ Analysis only  
 
-ALL CONTRACTS MUST:
+---  
 
-- Reference this document
-- Conform to all laws
-- Refuse execution on ambiguity
+## 12. FAILURE LAW  
 
----
+IF ANY STEP FAILS:  
+
+→ SYSTEM BLOCKS  
+
+NO:  
+- fallback execution  
+- silent correction  
+- assumption-based continuation  
+
+---  
+
+## 13. SYSTEM INVARIANTS  
+
+- Append-only ledger  
+- Deterministic replay  
+- Single write authority  
+- Explicit validation + authorization  
+- No hidden mutation  
+- No implicit state transitions  
+- Sequential contract execution integrity  
+- Payload truth must match structural reality  
+
+---  
+
+## 14. ENFORCEMENT  
+
+ALL CONTRACTS MUST:  
+
+- Reference this document  
+- Conform to all laws  
+- Refuse execution on ambiguity  
+
+---  
 
 END OF DOCUMENT
