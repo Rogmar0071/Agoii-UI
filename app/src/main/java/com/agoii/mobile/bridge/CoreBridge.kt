@@ -53,20 +53,36 @@ class CoreBridge(context: Context) {
         objective:         String
     ): Boolean {
         val sessionId = "$projectId-${java.util.UUID.randomUUID()}"
-        irsOrchestrator.createSession(sessionId, rawFields, evidence, swarmConfig, availableEvidence)
+
+        irsOrchestrator.createSession(
+            sessionId,
+            rawFields,
+            evidence,
+            swarmConfig,
+            availableEvidence
+        )
 
         var stepResult: StepResult
         do {
             stepResult = irsOrchestrator.step(sessionId)
         } while (!stepResult.terminal)
 
-        if (stepResult.orchestratorResult !is OrchestratorResult.Certified) return false
+        // ❌ Block if not certified
+        if (stepResult.orchestratorResult !is OrchestratorResult.Certified) {
+            return false
+        }
 
+        // ✅ Minimal certification trace (non-invasive)
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
-            mapOf("objective" to objective)
+            mapOf(
+                "objective"       to objective,
+                "certificationId" to sessionId,
+                "certifiedAt"     to System.currentTimeMillis()
+            )
         )
+
         return true
     }
 
@@ -172,4 +188,3 @@ class CoreBridge(context: Context) {
     fun replayIrs(sessionId: String): List<IrsSnapshot> =
         irsOrchestrator.replayHistory(sessionId)
 }
-
