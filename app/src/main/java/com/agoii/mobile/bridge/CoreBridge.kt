@@ -62,14 +62,19 @@ class CoreBridge(context: Context) {
         /**
          * Default agent profile used when evaluating [ContractSystemOrchestrator].
          * Represents a maximally capable agent for deterministic contract derivation.
+         *
+         * All capability dimensions use a 0–3 scale (higher = more capable).
+         * driftTendency uses an inverted scale (0 = no drift, 3 = high drift).
+         * This profile maximises every positive dimension and minimises drift, ensuring
+         * contracts derived from any valid objective reach [readyForExecution] = true.
          */
         private val DEFAULT_AGENT_PROFILE = AgentProfile(
             agentId             = "default-agent",
-            constraintObedience = 3,
-            structuralAccuracy  = 3,
-            driftTendency       = 0,
-            complexityHandling  = 3,
-            outputReliability   = 3
+            constraintObedience = 3,  // maximum: always follows constraints
+            structuralAccuracy  = 3,  // maximum: always follows structure
+            driftTendency       = 0,  // minimum: zero deviation tendency
+            complexityHandling  = 3,  // maximum: handles complex multi-step plans
+            outputReliability   = 3   // maximum: fully deterministic output
         )
     }
 
@@ -150,6 +155,8 @@ class CoreBridge(context: Context) {
         val result = contractSystemOrchestrator.evaluate(intent, DEFAULT_AGENT_PROFILE)
         if (!result.readyForExecution) return null
 
+        // Prefer the adapted plan when the agent matcher returned ADAPT (structural hardening
+        // was applied); fall back to the original derivation plan on a direct ACCEPT.
         val steps = result.adaptedContract?.adaptedPlan?.steps
             ?: result.scoredContract?.derivation?.executionPlan?.steps
             ?: return null

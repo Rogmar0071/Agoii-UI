@@ -33,7 +33,17 @@ class Governor(
 ) {
 
     companion object {
-        /** Velocity Ceiling — maximum execution load permitted per contract. */
+        /**
+         * Velocity Ceiling — maximum execution load (EL) permitted per contract.
+         *
+         * EL is calculated as [CONTRACT_BASE_LOAD] + position, where position is the
+         * 1-based index of the contract in the execution sequence. A contract is only
+         * issued when EL ≤ VC (see [canIssue]):
+         *   position 1 → EL = 3 ≤ 5 ✓
+         *   position 2 → EL = 4 ≤ 5 ✓
+         *   position 3 → EL = 5 ≤ 5 ✓
+         *   position 4 → EL = 6 > 5 ✗ (DRIFT)
+         */
         const val VC = 5
 
         /** Base execution load contributed by every contract regardless of position. */
@@ -152,6 +162,8 @@ class Governor(
                 val position   = resolveInt(last.payload["position"])    ?: return null
                 val total      = deriveTotal(events)                      ?: return null
                 val contractor = registry?.findBestMatch(emptyMap())?.id ?: DEFAULT_CONTRACTOR
+                // Task ID convention: "{contractId}-step1" — each contract has exactly one
+                // primary task in the current execution model (step1 is the canonical step).
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
