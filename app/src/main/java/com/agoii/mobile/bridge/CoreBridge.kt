@@ -237,6 +237,11 @@ class CoreBridge(context: Context) {
         }
         if (!allFieldsValid) return null
 
+        val positions = contracts.mapNotNull { resolvePayloadInt(it["position"]) }.sorted()
+        if (positions != (1..contracts.size).toList()) return null
+
+        if (total != contracts.size) return null
+
         // ── Phase 3: Write ───────────────────────────────────────────────────────
         // EventLedger is the sole write authority; all validation has passed.
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_GENERATED, payload)
