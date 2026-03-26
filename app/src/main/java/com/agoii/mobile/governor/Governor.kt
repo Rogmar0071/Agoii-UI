@@ -80,7 +80,21 @@ class Governor(
             EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED
         )
 
-        /** Standard capability profile used for deterministic contract derivation. */
+        /**
+         * Standard agent profile used for contract derivation when no explicit profile is provided.
+         *
+         * All capability dimensions are scored 0–3 (higher = more capable), except driftTendency
+         * where 0 = no drift (most reliable). Max capability score = 15 (3+3+3+3+3).
+         *
+         *  constraintObedience = 3 — always follows boundary conditions exactly
+         *  structuralAccuracy  = 3 — follows structural plan without deviation
+         *  driftTendency       = 0 — deterministic; never deviates (minimum allowed drift)
+         *  complexityHandling  = 3 — can handle multi-step complex plans
+         *  outputReliability   = 3 — consistent and deterministic output
+         *
+         * These maximum values ensure ACCEPT for any contract classification (LOW / MEDIUM / HIGH),
+         * making derivation deterministic regardless of objective complexity.
+         */
         private val DEFAULT_AGENT_PROFILE = AgentProfile(
             agentId             = "default-agent",
             constraintObedience = 3,
@@ -181,6 +195,10 @@ class Governor(
                 val contractId = last.payload["contract_id"] as? String ?: return null
                 val position   = resolveInt(last.payload["position"]) ?: return null
                 val total      = resolveInt(last.payload["total"]) ?: deriveTotal(events) ?: return null
+                // Governor treats each contract as a single atomic work unit at the state-machine
+                // level. The execution plan steps derived by ContractSystemOrchestrator determine
+                // how many contracts exist (one per step); within each contract the Governor
+                // manages exactly one task: assignment → start → completion → validation.
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
@@ -274,7 +292,13 @@ class Governor(
      * Mapping (per architecture contract):
      *   ExecutionPlan.steps → [{id: "contract_{position}", name: step.description, position: step.position}]
      *
-     * @return Derived contract list, or null when derivation fails or is rejected.
+     * Each execution plan step becomes one contract in the Governor's execution spine.
+     * The number of contracts is therefore deterministic: same objective → same step count.
+     *
+     * @return Derived contract list, or null when the objective is rejected by the contract system
+     *         (e.g. critical failure mode detected, constraint violated, or unexpected exception).
+     *         A null return causes [runGovernor] to return [GovernorResult.NO_EVENT], leaving the
+     *         ledger unmodified so the caller can inspect the state and decide how to proceed.
      */
     private fun deriveContracts(objective: String): List<Map<String, Any>>? {
         return try {
@@ -297,6 +321,8 @@ class Governor(
                 )
             }
         } catch (_: Exception) {
+            // ContractSystemOrchestrator is pure computation; an exception here indicates an
+            // unrecoverable evaluation fault. Return null to leave the ledger unmodified.
             null
         }
     }
