@@ -106,6 +106,65 @@ class ExecutionObservability(
         )
     }
 
+    fun timeline(projectId: String): ExecutionTimeline {
+        val events = ledger.loadEvents(projectId)
+
+        val steps = events.mapIndexed { index, event ->
+            TimelineStep(
+                index = index + 1,
+                eventType = event.type,
+                label = mapLabel(event.type),
+                description = mapDescription(event)
+            )
+        }
+
+        return ExecutionTimeline(
+            projectId = projectId,
+            steps = steps
+        )
+    }
+
+    private fun mapLabel(type: String): String {
+        return when (type) {
+            EventTypes.INTENT_SUBMITTED    -> "Intent Submitted"
+            EventTypes.CONTRACTS_GENERATED -> "Contracts Generated"
+            EventTypes.CONTRACTS_APPROVED  -> "Contracts Approved"
+            EventTypes.CONTRACT_STARTED    -> "Contract Started"
+            EventTypes.CONTRACT_COMPLETED  -> "Contract Completed"
+            EventTypes.CONTRACT_FAILED     -> "Contract Failed"
+            EventTypes.TASK_FAILED         -> "Task Failed"
+            EventTypes.EXECUTION_COMPLETED -> "Execution Completed"
+            else -> "Unknown Step"
+        }
+    }
+
+    private fun mapDescription(event: Event): String {
+        return when (event.type) {
+            EventTypes.INTENT_SUBMITTED ->
+                "Objective: ${event.payload["objective"] ?: "Not specified"}"
+
+            EventTypes.CONTRACTS_GENERATED ->
+                "Total contracts: ${event.payload["total"] ?: "Unknown"}"
+
+            EventTypes.CONTRACT_STARTED ->
+                "Executing contract: ${event.payload["contract_id"] ?: "Unknown"}"
+
+            EventTypes.CONTRACT_COMPLETED ->
+                "Contract completed: ${event.payload["contract_id"] ?: "Unknown"}"
+
+            EventTypes.CONTRACT_FAILED ->
+                "Contract failed: ${event.payload["contract_id"] ?: "Unknown"}"
+
+            EventTypes.TASK_FAILED ->
+                "Task failure occurred"
+
+            EventTypes.EXECUTION_COMPLETED ->
+                "Execution fully completed"
+
+            else -> "No additional details"
+        }
+    }
+
     private fun extractContractsTotal(events: List<Event>): Int? {
         val event = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
         return (event?.payload?.get("total") as? Number)?.toInt()
