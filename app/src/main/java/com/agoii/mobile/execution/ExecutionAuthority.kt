@@ -92,7 +92,7 @@ class ExecutionAuthority(private val ledger: EventLedger) {
         }
         if (!allFieldsValid) {
             return AuthorizationResult.blocked(
-                "one or more contracts have a blank 'id', blank 'name', or null 'position'",
+                "One or more contracts have a blank 'id', blank 'name', or null 'position'",
                 "AUTHORIZATION"
             )
         }

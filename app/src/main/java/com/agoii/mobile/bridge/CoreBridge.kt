@@ -1,9 +1,6 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
-import com.agoii.mobile.contracts.AgentProfile
-import com.agoii.mobile.contracts.ContractIntent
-import com.agoii.mobile.contracts.ContractSystemOrchestrator
 import com.agoii.mobile.core.AuditResult
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventLedger
@@ -16,7 +13,7 @@ import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.core.ReplayVerification
 import com.agoii.mobile.execution.BuildExecutor
-import com.agoii.mobile.execution.ExecutionAuthority
+import com.agoii.mobile.execution.ExecutionEntryPoint
 import com.agoii.mobile.irs.EvidenceRef
 import com.agoii.mobile.irs.IrsOrchestrator
 import com.agoii.mobile.irs.IrsSession
@@ -29,53 +26,30 @@ import com.agoii.mobile.irs.SwarmConfig
  *
  * Responsibilities:
  *  - Provide a single entry point for the UI layer to call core functions.
- *  - When the last ledger event is [EventTypes.INTENT_SUBMITTED], coordinate the
- *    pipeline: CSO derivation → [ExecutionAuthority] → [EventLedger] write.
+ *  - When the last ledger event is [EventTypes.INTENT_SUBMITTED], delegate to
+ *    [ExecutionEntryPoint] which coordinates CSO derivation → [ExecutionAuthority]
+ *    → [EventLedger] write → [Governor] step.
  *  - Delegate all subsequent ledger transitions to [Governor.runGovernor].
  *  - When the last event is [EventTypes.CONTRACT_STARTED], delegate to [BuildExecutor]
  *    before the Governor step; block progression if execution fails.
  *
  * Bridge law:
  *  - CoreBridge makes ZERO authority decisions.
- *  - All validation and authorization is performed by [ExecutionAuthority].
+ *  - CoreBridge does NOT call [ExecutionAuthority] or [com.agoii.mobile.contracts.ContractSystemOrchestrator].
+ *  - All execution authority flows through [ExecutionEntryPoint].
  *  - All writes flow through [EventLedger] — the single write authority.
  */
 class CoreBridge(context: Context) {
 
-    private val eventStore                 = EventStore(context)
-    private val ledger                     = EventLedger(eventStore)
-    private val governor                   = Governor(ledger)
-    private val ledgerAudit                = LedgerAudit(ledger)
-    private val replay                     = Replay(ledger)
-    private val replayTest                 = ReplayTest(ledger)
-    private val buildExecutor              = BuildExecutor()
-    private val irsOrchestrator            = IrsOrchestrator()
-    private val contractSystemOrchestrator = ContractSystemOrchestrator()
-    private val executionAuthority         = ExecutionAuthority(ledger)
-
-    companion object {
-        private const val DEFAULT_CONSTRAINTS = "standard"
-        private const val DEFAULT_ENVIRONMENT = "mobile"
-        private const val DEFAULT_RESOURCES   = "available"
-
-        /**
-         * Default agent profile used when evaluating [ContractSystemOrchestrator].
-         * Represents a maximally capable agent for deterministic contract derivation.
-         *
-         * All capability dimensions use a 0–3 scale (higher = more capable).
-         * driftTendency uses an inverted scale (0 = no drift, 3 = high drift).
-         * This profile maximises every positive dimension and minimises drift, ensuring
-         * contracts derived from any valid objective reach [readyForExecution] = true.
-         */
-        private val DEFAULT_AGENT_PROFILE = AgentProfile(
-            agentId             = "default-agent",
-            constraintObedience = 3,  // maximum: always follows constraints
-            structuralAccuracy  = 3,  // maximum: always follows structure
-            driftTendency       = 0,  // minimum: zero deviation tendency
-            complexityHandling  = 3,  // maximum: handles complex multi-step plans
-            outputReliability   = 3   // maximum: fully deterministic output
-        )
-    }
+    private val eventStore          = EventStore(context)
+    private val ledger              = EventLedger(eventStore)
+    private val governor            = Governor(ledger)
+    private val ledgerAudit         = LedgerAudit(ledger)
+    private val replay              = Replay(ledger)
+    private val replayTest          = ReplayTest(ledger)
+    private val buildExecutor       = BuildExecutor()
+    private val irsOrchestrator     = IrsOrchestrator()
+    private val executionEntryPoint = ExecutionEntryPoint(ledger, governor)
 
     /** Append an intent_submitted event directly to the ledger. */
     fun submitIntent(projectId: String, objective: String) {
@@ -88,11 +62,10 @@ class CoreBridge(context: Context) {
      * terminal state, or drift).
      *
      * When the last event is [EventTypes.INTENT_SUBMITTED]:
-     *  1. Extracts the objective from the event payload.
-     *  2. Calls [ContractSystemOrchestrator.evaluate] to derive contracts.
-     *  3. Maps [ExecutionStep] list to contract descriptors.
-     *  4. Passes the descriptor list to [ExecutionAuthority] (sole decision layer).
-     *  5. On success: returns the persisted [EventTypes.CONTRACTS_GENERATED] event.
+     *  - Delegates entirely to [ExecutionEntryPoint.executeIntent], which coordinates
+     *    CSO derivation → [ExecutionAuthority] → ledger write → first Governor step.
+     *  - Returns the persisted [EventTypes.CONTRACTS_GENERATED] event on success, or
+     *    null when [ExecutionEntryPoint] returns a blocked result.
      *
      * When the last event is [EventTypes.CONTRACT_STARTED]:
      *  1. Resolves the contract name from the ledger.
@@ -105,9 +78,10 @@ class CoreBridge(context: Context) {
         val events    = ledger.loadEvents(projectId)
         val lastEvent = events.lastOrNull()
 
-        // ── Derive contracts and pass to ExecutionAuthority ──────────────────────
+        // ── Delegate contract derivation + authorization to ExecutionEntryPoint ──
         if (lastEvent?.type == EventTypes.INTENT_SUBMITTED) {
-            return deriveAndAuthorizeContracts(projectId, lastEvent.payload)
+            val result = executionEntryPoint.executeIntent(projectId, lastEvent.payload)
+            return result.event
         }
 
         // ── BuildExecutor gate ────────────────────────────────────────────────────
@@ -124,59 +98,6 @@ class CoreBridge(context: Context) {
         } else {
             null
         }
-    }
-
-    /**
-     * Derives contracts from [ContractSystemOrchestrator] for the given intent payload,
-     * then delegates all validation, authorization, and persistence to [ExecutionAuthority].
-     *
-     * Returns the persisted [Event], or null if derivation produced no valid steps or
-     * [ExecutionAuthority] blocked the write.
-     *
-     * Mapping (locked):
-     *  - `id`       = "contract_{step.position}"
-     *  - `name`     = step.description
-     *  - `position` = step.position
-     */
-    private fun deriveAndAuthorizeContracts(
-        projectId:     String,
-        intentPayload: Map<String, Any>
-    ): Event? {
-        val objective = intentPayload["objective"] as? String ?: return null
-        val intentId  = intentPayload["intentId"]  as? String ?: objective
-
-        val intent = ContractIntent(
-            objective    = objective,
-            constraints  = DEFAULT_CONSTRAINTS,
-            environment  = DEFAULT_ENVIRONMENT,
-            resources    = DEFAULT_RESOURCES
-        )
-
-        val result = contractSystemOrchestrator.evaluate(intent, DEFAULT_AGENT_PROFILE)
-
-        // Prefer the adapted plan when the agent matcher returned ADAPT (the
-        // ContractSystemOrchestrator applied structural hardening — see ContractAdapter);
-        // fall back to the original derivation plan for a direct ACCEPT
-        // (adaptedContract is null, scoredContract holds the final plan).
-        val steps = result.adaptedContract?.adaptedPlan?.steps
-            ?: result.scoredContract?.derivation?.executionPlan?.steps
-            ?: return null
-        if (steps.isEmpty()) return null
-
-        val contracts: List<Map<String, Any>> = steps.map { step ->
-            mapOf(
-                "id"       to "contract_${step.position}",
-                "name"     to step.description,
-                "position" to step.position
-            )
-        }
-
-        val authResult = executionAuthority.authorize(
-            projectId = projectId,
-            intentId  = intentId,
-            contracts = contracts
-        )
-        return authResult.event
     }
 
     /**
