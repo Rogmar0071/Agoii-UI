@@ -382,6 +382,12 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "EXECUTION_COMPLETED: no CONTRACT_STARTED found in '$projectId'"
             )
+        if (total != stateTotal) {
+            throw LedgerValidationException(
+                "EXECUTION_COMPLETED 'total' ($total) does not match CONTRACT_STARTED count " +
+                    "($stateTotal) in '$projectId'"
+            )
+        }
         if (state.completedContracts != stateTotal) {
             throw LedgerValidationException(
                 "EXECUTION_COMPLETED: expected $stateTotal CONTRACT_COMPLETED, " +

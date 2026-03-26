@@ -589,12 +589,13 @@ class CoreTest {
     }
 
     /**
-     * GOVERNOR TIGHTEN — G2: SSM gates execution for positions 1-3 (allowed).
-     * Ensures positions 1-3 pass CSL (EL ≤ VC=5).
+     * GOVERNOR TIGHTEN — G2: All three positions in a 3-contract execution pass CSL.
+     * Positions 1-3 each pass the CSL gate (EL ≤ VC=5), confirming no premature DRIFT.
      */
     @Test
     fun `governor allows contracts at positions 1 through 3 within VC`() {
         // Position 1: EL=3, Position 2: EL=4, Position 3: EL=5 — all ≤ VC=5
+        // Using total=3 contracts to exercise all three positions (1, 2, 3) within the VC limit.
         val events = listOf(
             Event("intent_submitted",    mapOf("objective" to "obj")),
             Event("contracts_generated", mapOf("total" to 3.0)),
