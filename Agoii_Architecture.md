@@ -1,288 +1,432 @@
-# AGOII ARCHITECTURE — MASTER LAW (LOCKED)  
+# AGOII ARCHITECTURE — MASTER LAW (ALIGNED & LOCKED)
 
 STATUS: AUTHORITATIVE  
 MODE: ENFORCED  
 MUTABILITY: RESTRICTED (EXPLICIT CONTRACT REQUIRED)  
 
----  
+---
 
-## 0. SYSTEM IDENTITY  
+## 0. SYSTEM IDENTITY
 
-Agoii is a deterministic orchestration system.  
+Agoii is a deterministic orchestration system.
 
-- All system change originates from events  
-- All events are validated before persistence  
-- No module may bypass the event pipeline  
-- No module may assume authority  
+- All system change originates from events
+- All events are validated before persistence
+- No module may bypass the event pipeline
+- No module may assume authority
 
----  
+MANDATORY EXTENSION:
 
-## 1. CORE FLOW (NON-NEGOTIABLE)  
+ALL EXECUTION IN AGOII IS CONTRACT-BOUND
 
-RAW INPUT    
-→ IngressContract (translation only)    
-→ Intent Module (intent completion)    
-→ ContractSystemOrchestrator (derivation)    
-→ Execution Authority (validation + authorization)    
-→ EventLedger.appendEvent()    
-→ Governor (state progression)    
-→ ICS (output only)  
+- No agent may act outside a contract
+- No module may execute logic without issuing or evaluating a contract
+- No communication may occur without a communication contract
 
----  
+---
 
-## 2. SINGLE WRITE AUTHORITY LAW  
+## 1. CORE FLOW (NON-NEGOTIABLE)
 
-ONLY ONE COMPONENT MAY WRITE:  
+RAW INPUT  
+→ IngressContract (translation only)  
+→ Intent Module (contract-driven intent completion)  
+→ ContractSystemOrchestrator (derivation ONLY)  
+→ Execution Authority (validation + authorization)  
+→ EventLedger.appendEvent()  
+→ Governor (state progression)  
+→ ICS (contract-based output only)  
 
-→ EventLedger  
+MANDATORY:
 
-RULES:  
-- No direct EventStore writes  
-- No indirect persistence bypass  
-- No module may simulate a write  
+- All modules operate via contracts
+- No direct execution without contract issuance
 
-VIOLATION = SYSTEM BREACH  
+---
 
----  
+## 2. SINGLE WRITE AUTHORITY LAW
 
-## 3. EXECUTION AUTHORITY LAW  
+ONLY ONE COMPONENT MAY WRITE:
 
-Execution Authority is the ONLY gate before ledger writes.  
+→ EventLedger
 
-Execution Authority consists of:  
+RULES:
+- No direct EventStore writes
+- No indirect persistence bypass
+- No module may simulate a write
 
-1. Validation (structural + invariant)  
-2. Authorization (explicit approval of transition)  
+VIOLATION = SYSTEM BREACH
 
-RULES:  
-- Validation success ≠ authorization  
-- Both MUST pass before write  
-- If either fails → BLOCK  
+---
 
-MANDATORY ENFORCEMENT:  
+## 3. EXECUTION AUTHORITY LAW
 
-Execution Authority MUST enforce:  
+Execution Authority is the ONLY gate before ledger writes.
 
-- Contracts list is non-empty  
-- All contracts contain id, name, position  
-- Positions are strictly sequential (1..N)  
-- total == contracts.size  
+Execution Authority consists of:
 
-Failure at any stage MUST block ledger write.  
+1. Validation (structural + invariant)
+2. Authorization (explicit approval of transition)
 
-IMPLEMENTATION NOTE:  
-Validation and Authorization may be co-located,  
-but MUST remain logically separable phases.  
+RULES:
+- Validation success ≠ authorization
+- Both MUST pass before write
+- If either fails → BLOCK
 
----  
+MANDATORY ENFORCEMENT:
 
-## 4. CONTRACT DERIVATION LAW  
+Execution Authority MUST validate CONTRACT OUTPUT:
 
-Contracts MUST be derived BEFORE entering the ledger.  
+- Contracts list is non-empty
+- All contracts contain id, name, position
+- Positions are strictly sequential (1..N)
+- total == contracts.size
 
-SOURCE OF TRUTH:  
-→ ContractSystemOrchestrator  
+Failure at any stage MUST block ledger write.
 
-MAPPING RULE (LOCKED):  
+---
 
-ExecutionPlan.steps → CONTRACTS_GENERATED.payload["contracts"]  
+## 4. CONTRACT DERIVATION LAW
 
-Each step MUST map as:  
+Execution contracts MUST be derived BEFORE entering the ledger.
 
-- id = "contract_{position}"  
-- name = step.description  
-- position = step.position  
+SOURCE OF TRUTH:
+→ ContractSystemOrchestrator
 
-Payload MUST include:  
-- contracts: List<Map>  
-- total: Int  
+MAPPING RULE (LOCKED):
 
-RULES:  
-- No hardcoded contracts  
-- Governor is strictly prohibited from deriving contracts  
-- Deterministic: same intent → same contracts  
+ExecutionPlan.steps → CONTRACTS_GENERATED.payload["contracts"]
 
-ENFORCEMENT:  
-Contract derivation MUST occur before any ledger write.  
+Each step MUST map as:
 
----  
+- id = "contract_{position}"
+- name = step.description
+- position = step.position
 
-## 5. GOVERNOR LAW  
+Payload MUST include:
+- contracts: List<Map>
+- total: Int
 
-Governor is a deterministic state machine.  
+RULES:
+- No hardcoded contracts
+- Governor is strictly prohibited from deriving contracts
+- Deterministic: same intent → same contracts
 
-INPUT:  
-→ Event stream ONLY  
+IMPORTANT:
 
-OUTPUT:  
-→ Next event OR null  
+ContractSystemOrchestrator ONLY derives EXECUTION CONTRACTS
 
-RULES:  
-- Pure: no external calls  
-- Deterministic: ledger-driven only  
-- No contract derivation  
-- No execution logic  
-- No validation logic  
-- No side effects  
+It MUST NOT:
+- Generate communication contracts
+- Generate recovery contracts
+- Generate validation contracts
 
-Governor MUST:  
-- Consume ledger state  
-- Enforce transition rules  
-- Never introduce new information  
+---
 
-MANDATORY BEHAVIOR:  
+## 5. GOVERNOR LAW
 
-On INTENT_SUBMITTED:  
-- Governor MUST NOT produce CONTRACTS_GENERATED  
-- Governor MUST wait until CONTRACTS_GENERATED exists in ledger  
+Governor is a deterministic state machine.
 
----  
+INPUT:
+→ Event stream ONLY
 
-## 6. BRIDGE LAW (CoreBridge)  
+OUTPUT:
+→ Next event OR null
 
-CoreBridge is a thin adapter AND Execution Authority host.  
+RULES:
+- Pure: no external calls
+- Deterministic: ledger-driven only
+- No contract derivation
+- No execution logic
+- No validation logic
+- No side effects
 
-RULES:  
-- May coordinate ContractSystemOrchestrator  
-- May execute Validation + Authorization phases  
-- MUST NOT bypass Execution Authority rules  
-- MUST NOT write outside EventLedger  
-- MUST NOT contain hidden decision layers  
+Governor MUST:
+- Consume ledger state
+- Enforce transition rules
+- Never introduce new information
 
-CoreBridge responsibilities are LIMITED to:  
-- Derivation coordination (pre-ledger)  
-- Execution Authority enforcement  
-- Delegation to Governor  
+MANDATORY:
 
-VIOLATION = ARCHITECTURAL DRIFT  
+On INTENT_SUBMITTED:
+→ Governor MUST NOT produce CONTRACTS_GENERATED  
+→ Governor MUST wait for CONTRACTS_GENERATED in ledger  
 
----  
+---
 
-## 7. ICS LAW (INTERACTION LAYER)  
+## 6. BRIDGE LAW (CoreBridge)
 
-ICS is output-only.  
+CoreBridge is a thin adapter AND Execution Authority host.
 
-RULES:  
-- No validation  
-- No mutation  
-- No execution  
-- No state authority  
+RULES:
+- May coordinate ContractSystemOrchestrator
+- May trigger contract execution
+- Must execute Validation + Authorization phases
+- Must delegate to Governor
 
-Purpose:  
-→ Translate system state to user communication  
+CoreBridge MUST NOT:
+- Bypass Execution Authority
+- Write outside EventLedger
+- Interpret agent output
+- Define contract logic
+- Introduce hidden decision layers
 
----  
+VIOLATION = ARCHITECTURAL DRIFT
 
-## 8. INGRESS LAW  
+---
 
-IngressContract transforms input ONLY.  
+## 7. ICS LAW (INTERACTION CONTRACT SYSTEM)
 
-RULES:  
-- No validation authority  
-- No execution authority  
-- No ledger writes  
+ICS is contract-bound output translation.
 
-Purpose:  
-→ Human → structured input  
+RULES:
+- Executes communication contracts ONLY
+- Translates structured system output → human language
+- No validation
+- No mutation
+- No execution authority
+- No state authority
 
----  
+ICS MUST NOT:
+- Generate logic
+- Invent responses
+- Interpret outside contract scope
 
-## 9. PAYLOAD SCHEMA LAW (LOCKED)  
+---
 
-All event payloads MUST be explicitly defined.  
+## 8. INGRESS LAW
 
-### CONTRACTS_GENERATED (MANDATORY STRUCTURE)  
+IngressContract is contract-bound input translation.
 
-{  
-  "contracts": [  
-    {  
-      "id": String,  
-      "name": String,  
-      "position": Int  
-    }  
-  ],  
-  "total": Int  
-}  
+RULES:
+- Converts human input → structured data
+- Must follow communication contract
+- No validation authority
+- No execution authority
+- No ledger writes
 
-CONSTRAINTS (MANDATORY):  
-- positions MUST be sequential (1..N)  
-- total MUST equal contracts.size  
+Ingress MUST NOT:
+- Inject meaning
+- Interpret intent
+- Perform completion
 
-### TASK_ASSIGNED (MANDATORY STRUCTURE)  
+---
 
-{  
-  "contractorId": String,  
-  "taskId": String,  
-  "position": Int,  
-  "total": Int  
-}  
+## 9. CONTRACT SYSTEM LAW (GLOBAL)
 
-RULES:  
-- No implicit fields  
-- No silent schema changes  
-- ValidationLayer MUST enforce this structure  
+ALL CONTRACTS MUST BE GENERATED AND MANAGED BY CONTRACT SYSTEM
 
----  
+CONTRACT TYPES:
 
-## 10. DEAD CODE LAW  
+1. Communication Contracts (AI ↔ User)
+2. Execution Contracts (Contractors)
+3. Validation Contracts
+4. Recovery Contracts
+5. Simulation Contracts
 
-Authority-related components MUST NOT exist unused.  
+RULES:
 
-RULES:  
-- Unused authority logic MUST be removed OR explicitly disabled  
-- No parallel execution paths allowed  
-- No shadow orchestrators  
+- No module may invent contracts
+- No inline contract definitions
+- All contracts are structured and governed
+- Contracts define:
+  - objective
+  - scope
+  - constraints
+  - expected output
+  - completion criteria
 
----  
+---
 
-## 11. SIMULATION LAW  
+## 10. AGENT EXECUTION LAW
 
-Simulation is NON-AUTHORITATIVE.  
+AGENTS HAVE ZERO AUTHORITY
 
-RULES:  
-- Cannot trigger events  
-- Cannot advance state  
-- Cannot override execution  
+AGENTS ONLY EXECUTE CONTRACTS
 
-Purpose:  
-→ Analysis only  
+APPLIES TO:
+- AI (communication)
+- Contractors
+- Internal processors
 
----  
+RULES:
+- Agents cannot redefine scope
+- Agents cannot decide next steps
+- Agents cannot write to ledger
 
-## 12. FAILURE LAW  
+VIOLATION = SYSTEM BREACH
 
-IF ANY STEP FAILS:  
+---
 
-→ SYSTEM BLOCKS  
+## 11. FAILURE LAW
 
-NO:  
-- fallback execution  
-- silent correction  
-- assumption-based continuation  
+FAILURE = CONTRACT NOT SATISFIED
 
----  
+RESPONSE:
 
-## 13. SYSTEM INVARIANTS  
+→ ISSUE NEW CONTRACT
 
-- Append-only ledger  
-- Deterministic replay  
-- Single write authority  
-- Explicit validation + authorization  
-- No hidden mutation  
-- No implicit state transitions  
-- Sequential contract execution integrity  
-- Payload truth must match structural reality  
+RULES:
+- No patching
+- No assumption-based continuation
+- No silent correction
 
----  
+SYSTEM BLOCKS ONLY IF:
 
-## 14. ENFORCEMENT  
+→ No valid contract can be issued
 
-ALL CONTRACTS MUST:  
+---
 
-- Reference this document  
-- Conform to all laws  
-- Refuse execution on ambiguity  
+## 12. RECOVERY LAW
 
----  
+RECOVERY IS CONTRACT-BASED
+
+RULES:
+
+- No state mutation
+- No direct correction
+- No override logic
+
+RECOVERY FLOW:
+
+Failure detected  
+→ Recovery Contract generated  
+→ Executed  
+→ Evaluated  
+
+---
+
+## 13. SIMULATION LAW
+
+Simulation is NON-AUTHORITATIVE but CONTRACT-DRIVEN
+
+RULES:
+
+- Executes contracts in simulation mode
+- Cannot write to ledger
+- Cannot advance real state
+- Produces predicted outputs
+
+---
+
+## 14. INTENT MODULE LAW
+
+Intent Module is contract-driven.
+
+RULES:
+
+- Does NOT complete intent directly
+- Issues communication contracts to complete intent
+- Evaluates responses
+- Re-issues contracts until completion
+
+FLOW:
+
+Missing data  
+→ Communication Contract  
+→ User response  
+→ Evaluate  
+→ Repeat until complete  
+
+---
+
+## 15. COMMUNICATION LAW
+
+ALL COMMUNICATION IS CONTRACT EXECUTION
+
+RULES:
+
+- No free-form AI interaction
+- No uncontrolled prompting
+- No interpretation outside contract
+
+ALL user interaction MUST:
+→ originate from a communication contract  
+→ return structured output  
+
+---
+
+## 16. PAYLOAD SCHEMA LAW (LOCKED)
+
+All event payloads MUST be explicitly defined.
+
+### CONTRACTS_GENERATED
+
+{
+  "contracts": [
+    {
+      "id": String,
+      "name": String,
+      "position": Int
+    }
+  ],
+  "total": Int
+}
+
+CONSTRAINTS:
+- positions MUST be sequential (1..N)
+- total MUST equal contracts.size
+
+### TASK_ASSIGNED
+
+{
+  "contractorId": String,
+  "taskId": String,
+  "position": Int,
+  "total": Int
+}
+
+RULES:
+- No implicit fields
+- No silent schema changes
+- ValidationLayer MUST enforce structure
+
+---
+
+## 17. DEAD CODE LAW
+
+Authority-related components MUST NOT exist unused.
+
+RULES:
+- Unused authority logic MUST be removed OR explicitly disabled
+- No parallel execution paths
+- No shadow orchestrators
+
+---
+
+## 18. SYSTEM INVARIANTS
+
+- Append-only ledger
+- Deterministic replay
+- Single write authority
+- Explicit validation + authorization
+- No hidden mutation
+- No implicit transitions
+- Sequential contract execution integrity
+- Payload truth matches structural reality
+
+EXTENDED:
+
+- All execution is contract-bound
+- All communication is contract-bound
+- All recovery is contract-bound
+- No agent autonomy
+
+---
+
+## 19. ENFORCEMENT
+
+ALL CONTRACTS MUST:
+
+- Reference this document
+- Conform to all laws
+- Refuse execution on ambiguity
+
+MANDATORY:
+
+IF ANY MODULE EXECUTES WITHOUT CONTRACT:
+
+→ BLOCKED: CONTRACT VIOLATION
+
+---
 
 END OF DOCUMENT
