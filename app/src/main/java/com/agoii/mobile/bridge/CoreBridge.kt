@@ -7,6 +7,7 @@ import com.agoii.mobile.execution.ExecutionEntryPoint
 import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.irs.*
 import com.agoii.mobile.observability.ExecutionObservability
+import com.agoii.mobile.observability.ExecutionTimeline
 import com.agoii.mobile.observability.ExecutionTrace
 
 /**
@@ -133,6 +134,10 @@ class CoreBridge(context: Context) {
     /** ✅ Read-only execution trace (observability layer) */
     fun getExecutionTrace(projectId: String): ExecutionTrace =
         observability.trace(projectId)
+
+    /** ✅ Read-only execution timeline (observability layer) */
+    fun getExecutionTimeline(projectId: String): ExecutionTimeline =
+        observability.timeline(projectId)
 
     // ─── IRS delegation (interface only; all logic lives in IrsOrchestrator) ──
 
