@@ -11,10 +11,12 @@ import com.agoii.mobile.core.EventStore
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.core.LedgerAudit
+import com.agoii.mobile.core.LedgerValidationException
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.core.ReplayVerification
+import com.agoii.mobile.core.ValidationLayer
 import com.agoii.mobile.execution.BuildExecutor
 import com.agoii.mobile.irs.EvidenceRef
 import com.agoii.mobile.irs.IrsOrchestrator
@@ -24,14 +26,13 @@ import com.agoii.mobile.irs.StepResult
 import com.agoii.mobile.irs.SwarmConfig
 
 /**
- * CoreBridge — mobile runtime adapter and Execution Authority.
+ * CoreBridge — mobile runtime adapter.
  *
  * Responsibilities:
  *  - Provide a single entry point for the UI layer to call core functions.
- *  - Act as the Execution Authority for contract derivation: when the last ledger
- *    event is [EventTypes.INTENT_SUBMITTED], CoreBridge calls [ContractSystemOrchestrator],
- *    transforms the result into a contracts payload, validates it, and persists
- *    [EventTypes.CONTRACTS_GENERATED] via [EventLedger] before Governor is called.
+ *  - When the last ledger event is [EventTypes.INTENT_SUBMITTED], coordinate the
+ *    Execution Authority pipeline: CSO derivation → [authorizeAndAppendContracts]
+ *    → [EventLedger] write.
  *  - Delegate all subsequent ledger transitions to [Governor.runGovernor].
  *  - When the last event is [EventTypes.CONTRACT_STARTED], delegate to [BuildExecutor]
  *    before the Governor step; block progression if execution fails.
@@ -44,15 +45,16 @@ import com.agoii.mobile.irs.SwarmConfig
  */
 class CoreBridge(context: Context) {
 
-    private val eventStore              = EventStore(context)
-    private val ledger                  = EventLedger(eventStore)
-    private val governor                = Governor(ledger)
-    private val ledgerAudit             = LedgerAudit(ledger)
-    private val replay                  = Replay(ledger)
-    private val replayTest              = ReplayTest(ledger)
-    private val buildExecutor           = BuildExecutor()
-    private val irsOrchestrator         = IrsOrchestrator()
+    private val eventStore                 = EventStore(context)
+    private val ledger                     = EventLedger(eventStore)
+    private val governor                   = Governor(ledger)
+    private val ledgerAudit                = LedgerAudit(ledger)
+    private val replay                     = Replay(ledger)
+    private val replayTest                 = ReplayTest(ledger)
+    private val buildExecutor              = BuildExecutor()
+    private val irsOrchestrator            = IrsOrchestrator()
     private val contractSystemOrchestrator = ContractSystemOrchestrator()
+    private val validationLayer            = ValidationLayer()
 
     companion object {
         private const val DEFAULT_CONSTRAINTS = "standard"
@@ -91,9 +93,9 @@ class CoreBridge(context: Context) {
      * When the last event is [EventTypes.INTENT_SUBMITTED]:
      *  1. Extracts the objective from the event payload.
      *  2. Calls [ContractSystemOrchestrator.evaluate] to derive contracts.
-     *  3. If not [readyForExecution] → returns null (blocks progression).
-     *  4. Maps [ExecutionStep] list to contract descriptors.
-     *  5. Persists [EventTypes.CONTRACTS_GENERATED] via [EventLedger] (Execution Authority).
+     *  3. Maps [ExecutionStep] list to contract descriptors.
+     *  4. Passes the payload through [authorizeAndAppendContracts] (Execution Authority).
+     *  5. On success: persists [EventTypes.CONTRACTS_GENERATED] via [EventLedger].
      *
      * When the last event is [EventTypes.CONTRACT_STARTED]:
      *  1. Resolves the contract name from the ledger.
@@ -129,10 +131,10 @@ class CoreBridge(context: Context) {
 
     /**
      * Derives contracts from [ContractSystemOrchestrator] for the given intent payload,
-     * builds the [EventTypes.CONTRACTS_GENERATED] payload, and persists it via [EventLedger].
+     * builds the [EventTypes.CONTRACTS_GENERATED] payload, and delegates persistence to
+     * [authorizeAndAppendContracts] (the Execution Authority boundary).
      *
-     * Returns a shell [Event] representing the written event, or null if derivation
-     * failed or the orchestrator did not produce a ready-for-execution plan.
+     * Returns the appended [Event], or null if derivation produced no valid steps.
      *
      * Mapping (locked):
      *  - `id`       = "contract_{step.position}"
@@ -153,10 +155,11 @@ class CoreBridge(context: Context) {
         )
 
         val result = contractSystemOrchestrator.evaluate(intent, DEFAULT_AGENT_PROFILE)
-        if (!result.readyForExecution) return null
 
-        // Prefer the adapted plan when the agent matcher returned ADAPT (structural hardening
-        // was applied); fall back to the original derivation plan on a direct ACCEPT.
+        // Prefer the adapted plan when the agent matcher returned ADAPT (the
+        // ContractSystemOrchestrator applied structural hardening — see ContractAdapter);
+        // fall back to the original derivation plan for a direct ACCEPT
+        // (adaptedContract is null, scoredContract holds the final plan).
         val steps = result.adaptedContract?.adaptedPlan?.steps
             ?: result.scoredContract?.derivation?.executionPlan?.steps
             ?: return null
@@ -175,9 +178,80 @@ class CoreBridge(context: Context) {
             "total"     to contracts.size
         )
 
-        // Execution Authority: all writes go through EventLedger.
+        return authorizeAndAppendContracts(projectId, payload)
+    }
+
+    /**
+     * Execution Authority boundary — the ONLY path through which
+     * [EventTypes.CONTRACTS_GENERATED] may be written to the ledger.
+     *
+     * Three sequential phases must ALL succeed before any write occurs:
+     *
+     * **Phase 1 — Validation**
+     * Delegates to [ValidationLayer] to enforce structural correctness,
+     * legal transition, and payload schema rules. Any violation blocks the write.
+     *
+     * **Phase 2 — Authorization**
+     * Enforces business-level rules independently of structural validation:
+     *  - contracts list must be non-empty
+     *  - total must be > 0
+     *  - every contract entry must have non-blank `id`, `name`, and a non-null `position`
+     *
+     * **Phase 3 — Write**
+     * Only reached when both Phase 1 and Phase 2 pass.
+     * Writes the event exclusively through [EventLedger] — the sole write authority.
+     *
+     * Returns the appended [Event], or null if either phase fails.
+     */
+    private fun authorizeAndAppendContracts(
+        projectId: String,
+        payload:   Map<String, Any>
+    ): Event? {
+        // ── Phase 1: Validation ──────────────────────────────────────────────────
+        // Structural correctness, legal transition, and payload schema enforcement.
+        val currentEvents = ledger.loadEvents(projectId)
+        try {
+            validationLayer.validate(
+                projectId     = projectId,
+                type          = EventTypes.CONTRACTS_GENERATED,
+                payload       = payload,
+                currentEvents = currentEvents
+            )
+        } catch (e: LedgerValidationException) {
+            return null
+        }
+
+        // ── Phase 2: Authorization ───────────────────────────────────────────────
+        // Business-rule enforcement: contracts must be non-empty with valid fields.
+        @Suppress("UNCHECKED_CAST")
+        val contracts = payload["contracts"] as? List<Map<String, Any>>
+        if (contracts.isNullOrEmpty()) return null
+
+        val total: Int = resolvePayloadInt(payload["total"]) ?: return null
+        if (total <= 0) return null
+
+        val allFieldsValid = contracts.all { contract ->
+            !contract["id"]?.toString().isNullOrBlank() &&
+            !contract["name"]?.toString().isNullOrBlank() &&
+            contract["position"] != null
+        }
+        if (!allFieldsValid) return null
+
+        // ── Phase 3: Write ───────────────────────────────────────────────────────
+        // EventLedger is the sole write authority; all validation has passed.
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_GENERATED, payload)
         return Event(type = EventTypes.CONTRACTS_GENERATED, payload = payload)
+    }
+
+    /**
+     * Normalises a numeric payload value to [Int]. Accepts [Int], [Long], and [Double]
+     * (Gson serialises all JSON numbers as [Double]). Returns null for any other type.
+     */
+    private fun resolvePayloadInt(value: Any?): Int? = when (value) {
+        is Int    -> value
+        is Long   -> value.toInt()
+        is Double -> value.toInt()
+        else      -> null
     }
 
     /**
