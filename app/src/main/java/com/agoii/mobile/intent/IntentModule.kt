@@ -5,7 +5,7 @@ import com.agoii.mobile.irs.*
 /**
  * IntentModule — the ONLY entry point for raw input → certified intent.
  *
- * CONTRACT: INTENT_MODULE_V1
+ * CONTRACT: INTENT_MODULE_V1_TIGHT
  *   Class:            Structural
  *   Reversibility:    Forward-only
  *   Invariant Surface: Intent → Derivation boundary
@@ -15,7 +15,7 @@ import com.agoii.mobile.irs.*
  *   - NO ledger writes
  *   - NO execution triggering
  *   - NO contract derivation
- *   - NO mutation of IRS internals
+ *   - NO IRS internal leakage (no session, no timestamps, no internal state exposure)
  *   - OUTPUT ONLY: structured [IntentMaster] (via [IntentResult.Accepted]) OR rejection
  *
  * AUTHORITY:
@@ -62,8 +62,7 @@ class IntentModule(
             is OrchestratorResult.Certified -> IntentResult.Accepted(
                 IntentMaster(
                     sessionId  = sessionId,
-                    intentData = stepResult.session.intentData,
-                    session    = stepResult.session
+                    intentData = stepResult.session.intentData
                 )
             )
             is OrchestratorResult.NeedsClarification -> IntentResult.NeedsClarification(result.gaps)

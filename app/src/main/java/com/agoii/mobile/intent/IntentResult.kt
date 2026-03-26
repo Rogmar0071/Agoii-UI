@@ -6,9 +6,10 @@ package com.agoii.mobile.intent
  * Maps one-to-one with [com.agoii.mobile.irs.OrchestratorResult] but lives in the
  * intent boundary so that callers (e.g. CoreBridge) never depend directly on IRS internals.
  *
- * CONTRACT: INTENT_MODULE_V1
+ * CONTRACT: INTENT_MODULE_V1_TIGHT
  *   - NO ledger references
  *   - NO execution references
+ *   - NO IRS internal leakage
  *   - Output-only; immutable
  */
 sealed class IntentResult {
