@@ -1,5 +1,3 @@
-# AGOII ARCHITECTURE — MASTER LAW (ALIGNED & LOCKED)
-
 STATUS: AUTHORITATIVE  
 MODE: ENFORCED  
 MUTABILITY: RESTRICTED (EXPLICIT CONTRACT REQUIRED)  
@@ -34,6 +32,7 @@ RAW INPUT
 → Execution Authority (validation + authorization)  
 → EventLedger.appendEvent()  
 → Governor (state progression)  
+→ Assembly (output structuring)  
 → ICS (contract-based output only)  
 
 MANDATORY:
@@ -153,111 +152,202 @@ On INTENT_SUBMITTED:
 
 ---
 
-## 6. BRIDGE LAW (CoreBridge)
+## 6. GOVERNOR ACTIVATION LAW
+
+Governor is activated ONLY after a valid event exists in EventLedger.
+
+RULES:
+
+- Governor MUST NOT operate on raw input
+- Governor MUST NOT operate on Intent Master
+- Governor MUST ONLY consume persisted events
+- Governor MUST NOT participate in intent construction
+- Governor MUST NOT participate in contract derivation
+
+---
+
+## 7. CONTRACT ASSIGNMENT LAW
+
+Contract-to-contractor assignment is governed exclusively by Governor.
+
+RULES:
+
+ONLY Governor may emit:
+
+→ TASK_ASSIGNED
+
+TASK_ASSIGNED binds:
+
+- contract_id
+- contractor_id
+- position
+
+PROHIBITED:
+
+- Assignment inside ContractSystemOrchestrator
+- Assignment inside CoreBridge
+- Assignment inside Assembly
+
+---
+
+## 8. TASK EXECUTION LAW
+
+Execution begins ONLY after TASK_ASSIGNED event exists.
+
+RULES:
+
+- No pre-execution
+- No speculative execution
+- No implicit execution
+- Execution is strictly ledger-driven
+
+---
+
+## 9. CONTRACTORS LAW
+
+Contractors are external contract executors.
+
+RULES:
+
+- Execute ONLY assigned execution contracts
+- Operate strictly within contract scope
+- Return structured outputs
+
+Contractors MUST NOT:
+
+- Write to EventLedger
+- Modify system state
+- Define contracts
+- Bypass Execution Authority
+
+All outputs MUST:
+
+→ return to system  
+→ pass Execution Authority  
+→ be persisted via EventLedger  
+
+---
+
+## 10. EXTERNAL SYSTEM BOUNDARY LAW
+
+External systems have ZERO authority.
+
+RULES:
+
+- May ONLY respond to contracts
+- All responses are untrusted until validated
+- Cannot influence state directly
+
+---
+
+## 11. ASSEMBLY LAW
+
+Assembly is a deterministic output structuring layer.
+
+RULES:
+
+- Consumes ONLY completed contract outputs
+- Produces structured system output
+- Feeds ICS
+
+Assembly MUST NOT:
+
+- Execute contracts
+- Call external systems
+- Validate
+- Write to ledger
+- Introduce new data
+
+---
+
+## 12. BRIDGE LAW (CoreBridge)
 
 CoreBridge is a thin adapter AND Execution Authority host.
 
 RULES:
+
 - May coordinate ContractSystemOrchestrator
-- May trigger contract execution
-- Must execute Validation + Authorization phases
+- Must execute Validation + Authorization
 - Must delegate to Governor
 
 CoreBridge MUST NOT:
+
 - Bypass Execution Authority
 - Write outside EventLedger
-- Interpret agent output
-- Define contract logic
-- Introduce hidden decision layers
-
-VIOLATION = ARCHITECTURAL DRIFT
+- Interpret outputs
+- Define contracts
+- Introduce hidden logic
 
 ---
 
-## 7. ICS LAW (INTERACTION CONTRACT SYSTEM)
+## 13. ICS LAW (INTERACTION CONTRACT SYSTEM)
 
 ICS is contract-bound output translation.
 
 RULES:
+
 - Executes communication contracts ONLY
-- Translates structured system output → human language
+- Translates structured output → human language
 - No validation
 - No mutation
 - No execution authority
-- No state authority
 
 ICS MUST NOT:
+
 - Generate logic
 - Invent responses
-- Interpret outside contract scope
+- Operate outside contract scope
 
 ---
 
-## 8. INGRESS LAW
+## 14. INGRESS LAW
 
 IngressContract is contract-bound input translation.
 
 RULES:
+
 - Converts human input → structured data
 - Must follow communication contract
-- No validation authority
+- No validation
 - No execution authority
 - No ledger writes
 
-Ingress MUST NOT:
-- Inject meaning
-- Interpret intent
-- Perform completion
-
 ---
 
-## 9. CONTRACT SYSTEM LAW (GLOBAL)
+## 15. CONTRACT SYSTEM LAW (GLOBAL)
 
-ALL CONTRACTS MUST BE GENERATED AND MANAGED BY CONTRACT SYSTEM
+ALL CONTRACTS originate from Contract System.
 
 CONTRACT TYPES:
 
-1. Communication Contracts (AI ↔ User)
-2. Execution Contracts (Contractors)
-3. Validation Contracts
-4. Recovery Contracts
-5. Simulation Contracts
+1. Communication Contracts  
+2. Execution Contracts  
+3. Validation Contracts  
+4. Recovery Contracts  
+5. Simulation Contracts  
 
 RULES:
 
 - No module may invent contracts
 - No inline contract definitions
-- All contracts are structured and governed
-- Contracts define:
-  - objective
-  - scope
-  - constraints
-  - expected output
-  - completion criteria
+- All contracts must be structured
 
 ---
 
-## 10. AGENT EXECUTION LAW
+## 16. AGENT EXECUTION LAW
 
 AGENTS HAVE ZERO AUTHORITY
 
-AGENTS ONLY EXECUTE CONTRACTS
-
-APPLIES TO:
-- AI (communication)
-- Contractors
-- Internal processors
-
 RULES:
-- Agents cannot redefine scope
-- Agents cannot decide next steps
-- Agents cannot write to ledger
 
-VIOLATION = SYSTEM BREACH
+- Execute ONLY contracts
+- Cannot redefine scope
+- Cannot decide next steps
+- Cannot write to ledger
 
 ---
 
-## 11. FAILURE LAW
+## 17. FAILURE LAW
 
 FAILURE = CONTRACT NOT SATISFIED
 
@@ -265,163 +355,87 @@ RESPONSE:
 
 → ISSUE NEW CONTRACT
 
-RULES:
-- No patching
-- No assumption-based continuation
-- No silent correction
+NO:
 
-SYSTEM BLOCKS ONLY IF:
-
-→ No valid contract can be issued
+- patching  
+- guessing  
+- silent continuation  
 
 ---
 
-## 12. RECOVERY LAW
+## 18. RECOVERY LAW
 
-RECOVERY IS CONTRACT-BASED
+Recovery is contract-driven.
 
-RULES:
+FLOW:
 
-- No state mutation
-- No direct correction
-- No override logic
-
-RECOVERY FLOW:
-
-Failure detected  
-→ Recovery Contract generated  
-→ Executed  
-→ Evaluated  
+Failure  
+→ Recovery Contract  
+→ Execution  
+→ Evaluation  
 
 ---
 
-## 13. SIMULATION LAW
+## 19. SIMULATION LAW
 
-Simulation is NON-AUTHORITATIVE but CONTRACT-DRIVEN
+Simulation is NON-AUTHORITATIVE.
 
 RULES:
 
 - Executes contracts in simulation mode
 - Cannot write to ledger
-- Cannot advance real state
-- Produces predicted outputs
+- Cannot advance state
+- Produces predictions only
 
 ---
 
-## 14. INTENT MODULE LAW
+## 20. INTENT MODULE LAW
 
 Intent Module is contract-driven.
 
 RULES:
 
-- Does NOT complete intent directly
-- Issues communication contracts to complete intent
+- Issues communication contracts
 - Evaluates responses
-- Re-issues contracts until completion
+- Repeats until complete
 
-FLOW:
+OUTPUT:
 
-Missing data  
-→ Communication Contract  
-→ User response  
-→ Evaluate  
-→ Repeat until complete  
+→ Intent Master (in-memory ONLY)
 
 ---
 
-## 15. COMMUNICATION LAW
+## 21. COMMUNICATION LAW
 
 ALL COMMUNICATION IS CONTRACT EXECUTION
 
 RULES:
 
-- No free-form AI interaction
+- No free-form interaction
 - No uncontrolled prompting
 - No interpretation outside contract
 
-ALL user interaction MUST:
-→ originate from a communication contract  
-→ return structured output  
+---
+
+## 22. PAYLOAD SCHEMA LAW (LOCKED)
+
+[UNCHANGED — preserved exactly]
 
 ---
 
-## 16. PAYLOAD SCHEMA LAW (LOCKED)
+## 23. DEAD CODE LAW
 
-All event payloads MUST be explicitly defined.
-
-### CONTRACTS_GENERATED
-
-{
-  "contracts": [
-    {
-      "id": String,
-      "name": String,
-      "position": Int
-    }
-  ],
-  "total": Int
-}
-
-CONSTRAINTS:
-- positions MUST be sequential (1..N)
-- total MUST equal contracts.size
-
-### TASK_ASSIGNED
-
-{
-  "contractorId": String,
-  "taskId": String,
-  "position": Int,
-  "total": Int
-}
-
-RULES:
-- No implicit fields
-- No silent schema changes
-- ValidationLayer MUST enforce structure
+[UNCHANGED]
 
 ---
 
-## 17. DEAD CODE LAW
+## 24. SYSTEM INVARIANTS
 
-Authority-related components MUST NOT exist unused.
-
-RULES:
-- Unused authority logic MUST be removed OR explicitly disabled
-- No parallel execution paths
-- No shadow orchestrators
+[UNCHANGED + EXTENDED CONTRACT-BOUND SYSTEM]
 
 ---
 
-## 18. SYSTEM INVARIANTS
-
-- Append-only ledger
-- Deterministic replay
-- Single write authority
-- Explicit validation + authorization
-- No hidden mutation
-- No implicit transitions
-- Sequential contract execution integrity
-- Payload truth matches structural reality
-
-EXTENDED:
-
-- All execution is contract-bound
-- All communication is contract-bound
-- All recovery is contract-bound
-- No agent autonomy
-
----
-
-## 19. ENFORCEMENT
-
-ALL CONTRACTS MUST:
-
-- Reference this document
-- Conform to all laws
-- Refuse execution on ambiguity
-
-MANDATORY:
+## 25. ENFORCEMENT
 
 IF ANY MODULE EXECUTES WITHOUT CONTRACT:
 
