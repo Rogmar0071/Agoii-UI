@@ -4,7 +4,6 @@ import com.agoii.mobile.contracts.AgentProfile
 import com.agoii.mobile.contracts.ContractIntent
 import com.agoii.mobile.contracts.ContractSystemOrchestrator
 import com.agoii.mobile.core.EventLedger
-import com.agoii.mobile.governor.Governor
 
 /**
  * ExecutionEntryPoint — the ONLY component allowed to trigger contract derivation
@@ -14,18 +13,17 @@ import com.agoii.mobile.governor.Governor
  *  1. Receive an intent payload from the orchestration layer.
  *  2. Derive contracts via [ContractSystemOrchestrator].
  *  3. Delegate all validation, authorization, and ledger writes to [ExecutionAuthority].
- *  4. Advance the Governor exactly once after a successful authorization.
  *
  * Rules:
  *  - Contains ZERO validation logic (delegated entirely to [ExecutionAuthority]).
  *  - Contains ZERO authorization logic (delegated entirely to [ExecutionAuthority]).
+ *  - Contains ZERO progression logic — Governor is invoked exclusively by CoreBridge.
  *  - Only orchestration — no decisions.
  *  - Returns a structured [AuthorizationResult] on every path; no silent nulls.
  *  - [ExecutionAuthority] is private and not reachable from any other class.
  */
 class ExecutionEntryPoint(
-    ledger:  EventLedger,
-    private val governor: Governor
+    ledger: EventLedger
 ) {
 
     private val executionAuthority         = ExecutionAuthority(ledger)
@@ -61,8 +59,8 @@ class ExecutionEntryPoint(
      *  2. Call [ContractSystemOrchestrator.evaluate] to derive an [ExecutionPlan].
      *  3. Map [ExecutionStep] list → contract descriptors.
      *  4. Call [ExecutionAuthority.authorize] (sole pre-ledger gate).
-     *  5. If authorized: ledger already written; advance [Governor.runGovernor].
-     *  6. If blocked: return structured failure with status, reason, and stage.
+     *  5. Return [AuthorizationResult] — AUTHORIZED or BLOCKED with reason + stage.
+     *     Governor progression is the exclusive responsibility of the caller (CoreBridge).
      *
      * @param projectId     The project ledger to write to.
      * @param intentPayload The payload of the INTENT_SUBMITTED event.
@@ -111,17 +109,10 @@ class ExecutionEntryPoint(
         }
 
         // ExecutionAuthority is the sole validation + authorization gate.
-        val authResult = executionAuthority.authorize(
+        return executionAuthority.authorize(
             projectId = projectId,
             intentId  = intentId,
             contracts = contracts
         )
-
-        // Only advance the Governor when the ledger write succeeded.
-        if (authResult.authorized) {
-            governor.runGovernor(projectId)
-        }
-
-        return authResult
     }
 }

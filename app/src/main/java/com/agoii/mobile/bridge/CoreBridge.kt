@@ -26,9 +26,9 @@ import com.agoii.mobile.irs.SwarmConfig
  *
  * Responsibilities:
  *  - Provide a single entry point for the UI layer to call core functions.
- *  - When the last ledger event is [EventTypes.INTENT_SUBMITTED], delegate to
- *    [ExecutionEntryPoint] which coordinates CSO derivation → [ExecutionAuthority]
- *    → [EventLedger] write → [Governor] step.
+ *  - When the last ledger event is [EventTypes.INTENT_SUBMITTED], delegate derivation +
+ *    authorization to [ExecutionEntryPoint]; then invoke [Governor.runGovernor] here
+ *    (the ONLY location where Governor progression is triggered).
  *  - Delegate all subsequent ledger transitions to [Governor.runGovernor].
  *  - When the last event is [EventTypes.CONTRACT_STARTED], delegate to [BuildExecutor]
  *    before the Governor step; block progression if execution fails.
@@ -49,7 +49,7 @@ class CoreBridge(context: Context) {
     private val replayTest          = ReplayTest(ledger)
     private val buildExecutor       = BuildExecutor()
     private val irsOrchestrator     = IrsOrchestrator()
-    private val executionEntryPoint = ExecutionEntryPoint(ledger, governor)
+    private val executionEntryPoint = ExecutionEntryPoint(ledger)
 
     /** Append an intent_submitted event directly to the ledger. */
     fun submitIntent(projectId: String, objective: String) {
@@ -62,10 +62,10 @@ class CoreBridge(context: Context) {
      * terminal state, or drift).
      *
      * When the last event is [EventTypes.INTENT_SUBMITTED]:
-     *  - Delegates entirely to [ExecutionEntryPoint.executeIntent], which coordinates
-     *    CSO derivation → [ExecutionAuthority] → ledger write → first Governor step.
-     *  - Returns the persisted [EventTypes.CONTRACTS_GENERATED] event on success, or
-     *    null when [ExecutionEntryPoint] returns a blocked result.
+     *  - Delegates to [ExecutionEntryPoint.executeIntent] for CSO derivation + authorization.
+     *  - On authorized: invokes [Governor.runGovernor] to advance to CONTRACTS_READY; returns
+     *    the persisted [EventTypes.CONTRACTS_GENERATED] event.
+     *  - On blocked: returns null (Governor is NOT called).
      *
      * When the last event is [EventTypes.CONTRACT_STARTED]:
      *  1. Resolves the contract name from the ledger.
@@ -81,6 +81,9 @@ class CoreBridge(context: Context) {
         // ── Delegate contract derivation + authorization to ExecutionEntryPoint ──
         if (lastEvent?.type == EventTypes.INTENT_SUBMITTED) {
             val result = executionEntryPoint.executeIntent(projectId, lastEvent.payload)
+            if (result.authorized) {
+                governor.runGovernor(projectId)
+            }
             return result.event
         }
 
