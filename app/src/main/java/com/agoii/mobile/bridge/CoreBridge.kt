@@ -12,7 +12,6 @@ import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.core.ReplayTest
 import com.agoii.mobile.core.ReplayVerification
-import com.agoii.mobile.execution.BuildExecutor
 import com.agoii.mobile.irs.EvidenceRef
 import com.agoii.mobile.irs.IrsOrchestrator
 import com.agoii.mobile.irs.IrsSession
@@ -25,25 +24,25 @@ import com.agoii.mobile.irs.SwarmConfig
  *
  * Responsibilities:
  *  - Provide a single entry point for the UI layer to call core functions.
- *  - Thin adapter only: reads ledger, calls Governor.nextEvent(), appends result.
- *  - No orchestration logic; no Governor internal state awareness.
- *  - When the last event is contract_started, delegates to BuildExecutor before
- *    calling the Governor. If execution fails, returns null (blocks progression).
+ *  - Thin adapter only: delegates to Governor.runGovernor() which owns all state
+ *    transitions, contract derivation, and event emission.
+ *  - No execution-decision logic in the bridge (V5 compliance).
  *
  * Write authority:
  *  - All writes flow through [EventLedger] — the single write authority.
  *  - [EventStore] is the backing persistence layer; [EventLedger] wraps it with
  *    per-project locking, pre-write validation, and fail-fast integrity checks.
+ *  - [Governor] is wired with [ledger] so that all Governor-driven writes also
+ *    pass through [EventLedger] and its ValidationLayer.
  */
 class CoreBridge(context: Context) {
 
-    private val eventStore    = EventStore(context)
-    private val ledger        = EventLedger(eventStore)
-    private val governor      = Governor()
-    private val ledgerAudit   = LedgerAudit(ledger)
-    private val replay        = Replay(ledger)
-    private val replayTest    = ReplayTest(ledger)
-    private val buildExecutor = BuildExecutor()
+    private val eventStore      = EventStore(context)
+    private val ledger          = EventLedger(eventStore)
+    private val governor        = Governor(ledger)
+    private val ledgerAudit     = LedgerAudit(ledger)
+    private val replay          = Replay(ledger)
+    private val replayTest      = ReplayTest(ledger)
     private val irsOrchestrator = IrsOrchestrator()
 
     /** Append an intent_submitted event directly to the ledger. */
@@ -52,48 +51,16 @@ class CoreBridge(context: Context) {
     }
 
     /**
-     * Trigger one governor step. Returns the next [Event] appended, or null if
-     * the Governor has no transition to emit (wait state, terminal, or drift).
+     * Trigger one governor step. Returns the [Event] appended on ADVANCED, or null if
+     * the Governor has no transition to emit (wait state, terminal, DRIFT, or empty ledger).
      *
-     * When the last event is contract_started:
-     *  1. Resolves the contract name from the ledger.
-     *  2. Calls BuildExecutor.execute(contractName).
-     *  3. If execution fails → returns null (blocks contract_completed).
-     *  4. If execution passes → lets the Governor proceed naturally.
+     * The bridge performs no execution decisions — all logic lives in Governor (V5 compliance).
      */
     fun runGovernorStep(projectId: String): Event? {
-        val events    = ledger.loadEvents(projectId)
-        val lastEvent = events.lastOrNull()
-
-        if (lastEvent?.type == EventTypes.CONTRACT_STARTED) {
-            val contractId   = lastEvent.payload["contract_id"]?.toString() ?: ""
-            val contractName = resolveContractName(events, contractId)
-            val passed       = buildExecutor.execute(contractName)
-            if (!passed) {
-                return null
-            }
-        }
-
-        val next = governor.nextEvent(events)
-        if (next != null) {
-            ledger.appendEvent(projectId, next.type, next.payload)
-        }
-        return next
-    }
-
-    /**
-     * Look up the human-readable contract name for the given contract_id by
-     * reading the contracts list stored in the contracts_generated event payload.
-     * Falls back to the raw contract_id string if the name cannot be resolved.
-     */
-    private fun resolveContractName(events: List<Event>, contractId: String): String {
-        val contractsGenEvent = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
-        val contracts =
-            @Suppress("UNCHECKED_CAST")
-            contractsGenEvent?.payload?.get("contracts") as? List<*>
-        val match = contracts?.filterIsInstance<Map<*, *>>()
-            ?.firstOrNull { it["id"] == contractId }
-        return match?.get("name")?.toString() ?: contractId
+        val result = governor.runGovernor(projectId)
+        return if (result == Governor.GovernorResult.ADVANCED) {
+            ledger.loadEvents(projectId).lastOrNull()
+        } else null
     }
 
     /** Append a contracts_approved event directly to the ledger (explicit governance gate). */

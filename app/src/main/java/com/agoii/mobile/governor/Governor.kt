@@ -1,43 +1,139 @@
 package com.agoii.mobile.governor
 
+import com.agoii.mobile.contracts.AgentProfile
+import com.agoii.mobile.contracts.ContractIntent
+import com.agoii.mobile.contracts.ContractSystemOrchestrator
+import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.core.Event
+import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 
 /**
- * Governor — pure deterministic state machine.
+ * Governor — deterministic state machine and execution driver.
  *
- * Invariants:
- *  - [nextEvent] is the ONLY public function.
- *  - It is pure: no side effects, no I/O, no external dependencies.
- *  - All decisions are derived exclusively from the supplied [events] list
- *    (last event + ledger history).
- *  - Returns exactly one [Event] per call, or null for terminal state, approval/execution wait states, or true drift.
- *  - The caller is responsible for persisting the returned event.
+ * [nextEvent] is pure: no I/O, no side effects. Same input always produces same output.
+ * [runGovernor] is the stateful driver: reads from [store], advances one step via [nextEvent],
+ * applies the CSL gate, writes the result back, and returns a [GovernorResult].
  *
- * Lifecycle (each arrow = one nextEvent call; [external] = null, awaits external event; [terminal] = null):
- *   intent_submitted → contracts_generated → contracts_ready [external — contracts_approved written by approveContracts()]
+ * Contract derivation (V4):
+ *  - [nextEvent] derives contracts via [ContractSystemOrchestrator] for INTENT_SUBMITTED.
+ *  - No contracts are hardcoded anywhere in this class.
+ *  - Mapping: ExecutionPlan.steps → [{id, name, position}] per the architecture contract.
+ *
+ * CSL gate (in [runGovernor]):
+ *  - Blocks CONTRACT_STARTED when CONTRACT_BASE_LOAD + position > [VC].
+ *  - Returns [GovernorResult.DRIFT] on block; ledger is NOT modified.
+ *
+ * Execution authority:
+ *  - All writes flow through [store] (which must be [com.agoii.mobile.core.EventLedger]).
+ *  - ValidationLayer + EventLedger together constitute the execution authority.
+ *
+ * Lifecycle (each arrow = one [runGovernor] call; [wait] = null/external; [terminal] = COMPLETED):
+ *   intent_submitted → contracts_generated → contracts_ready [wait — contracts_approved external]
  *     → execution_started → contract_started(1)
- *     → task_assigned → task_started [external — task_completed or task_failed written externally]
- *     → task_completed → task_validated
+ *     → task_assigned → task_started → task_completed → task_validated
  *     → contract_completed → contract_started(2) → … → contract_started(N)
  *     → contract_completed(N) → execution_completed
  *     → assembly_started → assembly_validated → assembly_completed [terminal]
  */
-class Governor {
+class Governor(
+    private val store:    EventRepository,
+    private val registry: ContractorRegistry? = null
+) {
+
+    private val contractSystem = ContractSystemOrchestrator()
+
+    /** Outcome of a single [runGovernor] invocation. */
+    enum class GovernorResult {
+        /** Ledger was empty; no transition possible. */
+        NO_EVENT,
+        /** One event was successfully derived and written. */
+        ADVANCED,
+        /** Ledger is at CONTRACTS_READY — waiting for explicit external approval. */
+        WAITING_FOR_APPROVAL,
+        /** ASSEMBLY_COMPLETED reached — system is terminal. */
+        COMPLETED,
+        /** CSL blocked a CONTRACT_STARTED issuance (EL > VC). */
+        DRIFT
+    }
 
     companion object {
-        /** Deterministic contractor identifier — derived from system constants, no registry. */
+
+        /** Validation Capacity — maximum execution load (EL) allowed per contract issuance. */
+        const val VC = 5
+
+        /** Base load applied to every contract issuance in the CSL calculation. */
+        private const val CONTRACT_BASE_LOAD = 2
+
+        /** Deterministic contractor identifier used when no registry is present. */
         const val DEFAULT_CONTRACTOR = "default-contractor"
+
+        /**
+         * Frozen single-step transitions owned exclusively by the Governor.
+         * Exactly 5 entries — non-overridable.
+         */
+        val VALID_TRANSITIONS: Map<String, String> = mapOf(
+            EventTypes.INTENT_SUBMITTED    to EventTypes.CONTRACTS_GENERATED,
+            EventTypes.CONTRACTS_GENERATED to EventTypes.CONTRACTS_READY,
+            EventTypes.CONTRACTS_APPROVED  to EventTypes.EXECUTION_STARTED,
+            EventTypes.EXECUTION_COMPLETED to EventTypes.ASSEMBLY_STARTED,
+            EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED
+        )
+
+        /** Standard capability profile used for deterministic contract derivation. */
+        private val DEFAULT_AGENT_PROFILE = AgentProfile(
+            agentId             = "default-agent",
+            constraintObedience = 3,
+            structuralAccuracy  = 3,
+            driftTendency       = 0,
+            complexityHandling  = 3,
+            outputReliability   = 3
+        )
     }
+
+    // ─── Stateful driver ───────────────────────────────────────────────────────
+
+    /**
+     * Advance the ledger by exactly one step.
+     *
+     * Reads the current ledger state, delegates transition logic to [nextEvent], applies
+     * the CSL gate for contract issuance, and writes the result to [store].
+     *
+     * @param projectId The project whose ledger to advance.
+     * @return [GovernorResult] describing the outcome without exposing internal state.
+     */
+    fun runGovernor(projectId: String): GovernorResult {
+        val events = store.loadEvents(projectId)
+        if (events.isEmpty()) return GovernorResult.NO_EVENT
+
+        val last = events.last()
+
+        if (last.type == EventTypes.ASSEMBLY_COMPLETED) return GovernorResult.COMPLETED
+        if (last.type == EventTypes.CONTRACTS_READY)    return GovernorResult.WAITING_FOR_APPROVAL
+
+        val next = nextEvent(events) ?: return GovernorResult.NO_EVENT
+
+        // CSL gate: block contract issuance when execution load exceeds capacity.
+        if (next.type == EventTypes.CONTRACT_STARTED) {
+            val position = resolveInt(next.payload["position"]) ?: 0
+            if (CONTRACT_BASE_LOAD + position > VC) return GovernorResult.DRIFT
+        }
+
+        store.appendEvent(projectId, next.type, next.payload)
+        return GovernorResult.ADVANCED
+    }
+
+    // ─── Pure state machine ────────────────────────────────────────────────────
 
     /**
      * Given the full ordered ledger [events], returns the next [Event] to append,
-     * or null when the ledger contains no Governor-owned transition: terminal state
-     * ([EventTypes.ASSEMBLY_COMPLETED]), approval/execution wait states ([EventTypes.CONTRACTS_READY],
-     * [EventTypes.TASK_STARTED], [EventTypes.TASK_FAILED]), or true drift (unknown type).
+     * or null for terminal state, wait states, or unrecognised type (drift).
      *
-     * This function has no side effects. The caller is responsible for persisting
-     * the returned event via [com.agoii.mobile.core.EventRepository].
+     * Pure: no I/O, no side effects. Same input always produces same output.
+     * The caller ([runGovernor]) is responsible for persisting the returned event.
+     *
+     * Contract derivation (INTENT_SUBMITTED → CONTRACTS_GENERATED) is performed here
+     * via [ContractSystemOrchestrator] — no hardcoded contracts (V4 compliance).
      */
     fun nextEvent(events: List<Event>): Event? {
         if (events.isEmpty()) return null
@@ -48,17 +144,16 @@ class Governor {
 
             // ── Pre-execution pipeline ────────────────────────────────────────────
 
+            // V4: contracts derived deterministically — NOT hardcoded.
             EventTypes.INTENT_SUBMITTED -> {
-                val intent = last.payload["objective"] as? String ?: return null
+                val objective = last.payload["objective"] as? String ?: return null
+                val contracts = deriveContracts(objective) ?: return null
                 Event(
                     type = EventTypes.CONTRACTS_GENERATED,
                     payload = mapOf(
-                        "source_intent" to intent,
-                        "contracts" to listOf(
-                            mapOf("id" to "contract_1", "name" to "Core Setup"),
-                            mapOf("id" to "contract_2", "name" to "Integration"),
-                            mapOf("id" to "contract_3", "name" to "Validation")
-                        )
+                        "source_intent" to objective,
+                        "contracts"     to contracts,
+                        "total"         to contracts.size
                     )
                 )
             }
@@ -66,7 +161,7 @@ class Governor {
             EventTypes.CONTRACTS_GENERATED ->
                 Event(type = EventTypes.CONTRACTS_READY, payload = emptyMap())
 
-            // No Governor-generated transition: approval is an explicit external governance action.
+            // Approval gate — external governance action required; no Governor transition.
             EventTypes.CONTRACTS_READY -> null
 
             EventTypes.CONTRACTS_APPROVED ->
@@ -77,39 +172,40 @@ class Governor {
             EventTypes.EXECUTION_STARTED -> {
                 val total = deriveTotal(events) ?: return null
                 Event(
-                    type = EventTypes.CONTRACT_STARTED,
+                    type    = EventTypes.CONTRACT_STARTED,
                     payload = mapOf("position" to 1, "total" to total, "contract_id" to "contract_1")
                 )
             }
 
             EventTypes.CONTRACT_STARTED -> {
                 val contractId = last.payload["contract_id"] as? String ?: return null
+                val position   = resolveInt(last.payload["position"]) ?: return null
+                val total      = resolveInt(last.payload["total"]) ?: deriveTotal(events) ?: return null
                 Event(
-                    type = EventTypes.TASK_ASSIGNED,
+                    type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
-                        "taskId"       to "$contractId-task",
-                        "contractorId" to DEFAULT_CONTRACTOR
+                        "taskId"       to "$contractId-step1",
+                        "contractorId" to DEFAULT_CONTRACTOR,
+                        "position"     to position,
+                        "total"        to total
                     )
                 )
             }
 
             EventTypes.TASK_ASSIGNED -> {
                 val taskId = last.payload["taskId"] as? String ?: return null
-                Event(
-                    type = EventTypes.TASK_STARTED,
-                    payload = mapOf("taskId" to taskId)
-                )
+                Event(type = EventTypes.TASK_STARTED, payload = mapOf("taskId" to taskId))
             }
 
-            // No Governor-generated transition: external system writes task_completed or task_failed.
-            EventTypes.TASK_STARTED -> null
+            // Governor owns the full task lifecycle — auto-advance to TASK_COMPLETED.
+            EventTypes.TASK_STARTED -> {
+                val taskId = last.payload["taskId"] as? String ?: return null
+                Event(type = EventTypes.TASK_COMPLETED, payload = mapOf("taskId" to taskId))
+            }
 
             EventTypes.TASK_COMPLETED -> {
                 val taskId = last.payload["taskId"] as? String ?: return null
-                Event(
-                    type = EventTypes.TASK_VALIDATED,
-                    payload = mapOf("taskId" to taskId)
-                )
+                Event(type = EventTypes.TASK_VALIDATED, payload = mapOf("taskId" to taskId))
             }
 
             EventTypes.TASK_VALIDATED -> {
@@ -117,23 +213,20 @@ class Governor {
                     ?.payload?.let { resolveInt(it["position"]) } ?: return null
                 val total = deriveTotal(events) ?: return null
                 Event(
-                    type = EventTypes.CONTRACT_COMPLETED,
+                    type    = EventTypes.CONTRACT_COMPLETED,
                     payload = mapOf("position" to position, "total" to total)
                 )
             }
 
-            // No Governor-generated transition: no auto-retry or reassignment.
+            // No auto-retry — external intervention required.
             EventTypes.TASK_FAILED -> null
 
             EventTypes.CONTRACTOR_REASSIGNED -> {
                 val taskId          = last.payload["taskId"]          as? String ?: return null
                 val newContractorId = last.payload["newContractorId"] as? String ?: return null
                 Event(
-                    type = EventTypes.TASK_ASSIGNED,
-                    payload = mapOf(
-                        "taskId"       to taskId,
-                        "contractorId" to newContractorId
-                    )
+                    type    = EventTypes.TASK_ASSIGNED,
+                    payload = mapOf("taskId" to taskId, "contractorId" to newContractorId)
                 )
             }
 
@@ -143,7 +236,7 @@ class Governor {
                 if (position < total) {
                     val next = position + 1
                     Event(
-                        type = EventTypes.CONTRACT_STARTED,
+                        type    = EventTypes.CONTRACT_STARTED,
                         payload = mapOf(
                             "position"    to next,
                             "total"       to total,
@@ -173,24 +266,69 @@ class Governor {
         }
     }
 
-    /** Gson deserialises all numbers as Double; this helper normalises to Int. */
+    // ─── Contract derivation (V4) ─────────────────────────────────────────────
+
+    /**
+     * Derives the contract list for [objective] via [ContractSystemOrchestrator].
+     *
+     * Mapping (per architecture contract):
+     *   ExecutionPlan.steps → [{id: "contract_{position}", name: step.description, position: step.position}]
+     *
+     * @return Derived contract list, or null when derivation fails or is rejected.
+     */
+    private fun deriveContracts(objective: String): List<Map<String, Any>>? {
+        return try {
+            val intent = ContractIntent(
+                objective   = objective,
+                constraints = "standard",
+                environment = "mobile",
+                resources   = "available"
+            )
+            val result = contractSystem.evaluate(intent, DEFAULT_AGENT_PROFILE)
+            if (!result.readyForExecution) return null
+            val plan = result.adaptedContract?.adaptedPlan
+                ?: result.scoredContract?.derivation?.executionPlan
+                ?: return null
+            plan.steps.map { step ->
+                mapOf<String, Any>(
+                    "id"       to "contract_${step.position}",
+                    "name"     to step.description,
+                    "position" to step.position
+                )
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * Derives the total contract count from the first [EventTypes.CONTRACTS_GENERATED] event.
+     *
+     * Reads the "total" field first (backward compatibility with test data that omits the
+     * "contracts" list), then falls back to the size of the "contracts" list.
+     */
+    private fun deriveTotal(events: List<Event>): Int? {
+        val contractsGen = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
+            ?: return null
+        // Prefer the explicit "total" field (present in both legacy and new payloads).
+        val totalRaw = contractsGen.payload["total"]
+        if (totalRaw != null) {
+            val n = resolveInt(totalRaw)
+            if (n != null && n > 0) return n
+        }
+        // Fall back to the derived "contracts" list size.
+        val contracts = contractsGen.payload["contracts"] as? List<*> ?: return null
+        return contracts.size.takeIf { it > 0 }
+    }
+
+    /** Gson deserialises all numbers as Double; normalises to Int. */
     private fun resolveInt(value: Any?): Int? = when (value) {
         is Int    -> value
         is Double -> value.toInt()
         is Long   -> value.toInt()
         is String -> value.toIntOrNull()
         else      -> null
-    }
-
-    /**
-     * Derives the total contract count from the first [EventTypes.CONTRACTS_GENERATED] event
-     * in the ledger. Returns null if no such event exists or the contracts list is absent.
-     */
-    private fun deriveTotal(events: List<Event>): Int? {
-        val contractsGen = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
-            ?: return null
-        val contracts = contractsGen.payload["contracts"] as? List<*>
-            ?: return null
-        return contracts.size.takeIf { it > 0 }
     }
 }

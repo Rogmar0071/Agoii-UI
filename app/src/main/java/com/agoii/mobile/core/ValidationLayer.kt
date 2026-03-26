@@ -443,7 +443,8 @@ class ValidationLayer {
             EventTypes.TASK_VALIDATED
         )
         private val CONTRACT_STARTED_KEYS   = setOf("position", "total", "contract_id")
-        private val TASK_ASSIGNED_KEYS      = setOf("contractorId", "taskId")
+        // position and total are included for traceability (emitted by Governor with CONTRACT_STARTED context).
+        private val TASK_ASSIGNED_KEYS      = setOf("contractorId", "taskId", "position", "total")
         private val TASK_ID_ONLY            = setOf("taskId")
         private val CONTRACT_COMPLETED_KEYS = setOf("position", "total")
     }
