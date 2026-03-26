@@ -12,8 +12,8 @@ import com.agoii.mobile.core.EventTypes
  *  - [runGovernor] is the primary public entry point; it reads from and writes to [store].
  *  - [nextEvent] is a pure projection function: no side effects, no I/O.
  *  - All decisions are derived exclusively from the ledger state.
- *  - CONTRACTS_GENERATED is NOT authored here; it is the Execution Authority's
- *    (CoreBridge) responsibility to derive and persist it before Governor is called.
+ *  - CONTRACTS_GENERATED is NOT authored here; it is the [com.agoii.mobile.execution.ExecutionAuthority]'s
+ *    responsibility to validate, authorize, and persist it before Governor is called.
  *  - Governor NEVER calls ContractSystemOrchestrator or any external system.
  *
  * Lifecycle (each arrow = one [runGovernor] call; [ext] = external event; [terminal] = COMPLETED):
@@ -58,7 +58,7 @@ class Governor(
          * explicitly in [nextEvent].
          *
          * Note: intent_submitted → contracts_generated is NOT listed here because
-         * CONTRACTS_GENERATED is authored by the Execution Authority (CoreBridge),
+         * CONTRACTS_GENERATED is authored by [com.agoii.mobile.execution.ExecutionAuthority],
          * not by the Governor.
          * Note: contracts_ready → contract_started is handled explicitly in [nextEvent]
          * because it requires payload (position, total, contract_id).
@@ -95,7 +95,7 @@ class Governor(
         val last = events.last()
 
         return when (last.type) {
-            // CONTRACTS_GENERATED is authored by the Execution Authority (CoreBridge).
+            // CONTRACTS_GENERATED is authored by ExecutionAuthority — not by Governor.
             // Governor reads from the ledger only; if it has not yet been written, wait.
             EventTypes.INTENT_SUBMITTED    -> GovernorResult.NO_EVENT
 
@@ -271,7 +271,8 @@ class Governor(
      * event in the ledger.
      *
      * Supports two payload formats:
-     *  1. `"contracts"` list — written by CoreBridge via ContractSystemOrchestrator.
+     *  1. `"contracts"` list — written by [com.agoii.mobile.execution.ExecutionAuthority]
+     *     via ContractSystemOrchestrator.
      *  2. `"total"` numeric key — used in test fixtures and legacy ledgers.
      *
      * Returns null if no CONTRACTS_GENERATED event exists or total cannot be derived.
