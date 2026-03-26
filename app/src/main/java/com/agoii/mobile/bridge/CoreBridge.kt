@@ -1,43 +1,31 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
-import com.agoii.mobile.core.AuditResult
-import com.agoii.mobile.core.Event
-import com.agoii.mobile.core.EventLedger
-import com.agoii.mobile.core.EventStore
-import com.agoii.mobile.core.EventTypes
-import com.agoii.mobile.governor.Governor
-import com.agoii.mobile.core.LedgerAudit
-import com.agoii.mobile.core.Replay
-import com.agoii.mobile.core.ReplayStructuralState
-import com.agoii.mobile.core.ReplayTest
-import com.agoii.mobile.core.ReplayVerification
+import com.agoii.mobile.core.*
 import com.agoii.mobile.execution.BuildExecutor
 import com.agoii.mobile.execution.ExecutionEntryPoint
-import com.agoii.mobile.irs.EvidenceRef
-import com.agoii.mobile.irs.IrsOrchestrator
-import com.agoii.mobile.irs.IrsSession
-import com.agoii.mobile.irs.IrsSnapshot
-import com.agoii.mobile.irs.StepResult
-import com.agoii.mobile.irs.SwarmConfig
+import com.agoii.mobile.governor.Governor
+import com.agoii.mobile.irs.*
 
 /**
- * CoreBridge — mobile runtime adapter (transport only).
+ * CoreBridge — mobile runtime adapter.
  *
  * Responsibilities:
  *  - Provide a single entry point for the UI layer to call core functions.
- *  - When the last ledger event is [EventTypes.INTENT_SUBMITTED], delegate derivation +
- *    authorization to [ExecutionEntryPoint]; then invoke [Governor.runGovernor] here
- *    (the ONLY location where Governor progression is triggered).
- *  - Delegate all subsequent ledger transitions to [Governor.runGovernor].
- *  - When the last event is [EventTypes.CONTRACT_STARTED], delegate to [BuildExecutor]
- *    before the Governor step; block progression if execution fails.
+ *  - When the last ledger event is INTENT_SUBMITTED:
+ *      → Delegate derivation + authorization to ExecutionEntryPoint
+ *      → React to ledger state (NOT decision result)
+ *      → Trigger Governor progression ONLY if event was written
+ *  - Delegate all other transitions to Governor
+ *  - Enforce BuildExecutor gate before progression
  *
- * Bridge law:
- *  - CoreBridge makes ZERO authority decisions.
- *  - CoreBridge does NOT call [ExecutionAuthority] or [com.agoii.mobile.contracts.ContractSystemOrchestrator].
- *  - All execution authority flows through [ExecutionEntryPoint].
- *  - All writes flow through [EventLedger] — the single write authority.
+ * Core Law:
+ *  - ZERO validation logic
+ *  - ZERO authorization logic
+ *  - ZERO contract derivation
+ *  - ZERO payload construction
+ *
+ * Bridge reacts to ledger — never interprets execution decisions.
  */
 class CoreBridge(context: Context) {
 
@@ -53,49 +41,47 @@ class CoreBridge(context: Context) {
 
     /** Append an intent_submitted event directly to the ledger. */
     fun submitIntent(projectId: String, objective: String) {
-        ledger.appendEvent(projectId, EventTypes.INTENT_SUBMITTED, mapOf("objective" to objective))
+        ledger.appendEvent(
+            projectId,
+            EventTypes.INTENT_SUBMITTED,
+            mapOf("objective" to objective)
+        )
     }
 
     /**
-     * Trigger one execution step. Returns the [Event] appended, or null if no
-     * transition was made (wait state, derivation failure, execution gate block,
-     * terminal state, or drift).
+     * Trigger one execution step.
      *
-     * When the last event is [EventTypes.INTENT_SUBMITTED]:
-     *  - Delegates to [ExecutionEntryPoint.executeIntent] for CSO derivation + authorization.
-     *  - On authorized: invokes [Governor.runGovernor] to advance to CONTRACTS_READY; returns
-     *    the persisted [EventTypes.CONTRACTS_GENERATED] event.
-     *  - On blocked: returns null (Governor is NOT called).
-     *
-     * When the last event is [EventTypes.CONTRACT_STARTED]:
-     *  1. Resolves the contract name from the ledger.
-     *  2. Calls [BuildExecutor.execute].
-     *  3. If execution fails → returns null (blocks progression).
-     *
-     * All other transitions are delegated to [Governor.runGovernor].
+     * Returns:
+     *  - Event when state advanced
+     *  - null when blocked / waiting / terminal
      */
     fun runGovernorStep(projectId: String): Event? {
         val events    = ledger.loadEvents(projectId)
         val lastEvent = events.lastOrNull()
 
-        // ── Delegate contract derivation + authorization to ExecutionEntryPoint ──
+        // ── Intent → Contracts (ExecutionEntryPoint ONLY) ───────────────────────
         if (lastEvent?.type == EventTypes.INTENT_SUBMITTED) {
             val result = executionEntryPoint.executeIntent(projectId, lastEvent.payload)
-            if (result.authorized) {
+
+            // 🔴 CRITICAL: react to ledger write, not decision
+            if (result.event != null) {
                 governor.runGovernor(projectId)
             }
+
             return result.event
         }
 
-        // ── BuildExecutor gate ────────────────────────────────────────────────────
+        // ── Build gate ──────────────────────────────────────────────────────────
         if (lastEvent?.type == EventTypes.CONTRACT_STARTED) {
-            val contractId   = lastEvent.payload["contract_id"]?.toString() ?: ""
+            val contractId = lastEvent.payload["contract_id"]?.toString() ?: ""
             val contractName = resolveContractName(events, contractId)
+
             if (!buildExecutor.execute(contractName)) return null
         }
 
-        // ── Governor step ─────────────────────────────────────────────────────────
+        // ── Governor progression ────────────────────────────────────────────────
         val result = governor.runGovernor(projectId)
+
         return if (result == Governor.GovernorResult.ADVANCED) {
             ledger.loadEvents(projectId).lastOrNull()
         } else {
@@ -103,17 +89,16 @@ class CoreBridge(context: Context) {
         }
     }
 
-    /**
-     * Look up the human-readable contract name for the given [contractId] by
-     * reading the contracts list stored in the [EventTypes.CONTRACTS_GENERATED] payload.
-     * Falls back to the raw [contractId] string if the name cannot be resolved.
-     */
     private fun resolveContractName(events: List<Event>, contractId: String): String {
-        val contractsGenEvent = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
+        val contractsEvent = events.firstOrNull {
+            it.type == EventTypes.CONTRACTS_GENERATED
+        }
+
         val contracts =
-            @Suppress("UNCHECKED_CAST")
-            contractsGenEvent?.payload?.get("contracts") as? List<*>
-        val match = contracts?.filterIsInstance<Map<*, *>>()
+            contractsEvent?.payload?.get("contracts") as? List<*>
+
+        val match = contracts
+            ?.filterIsInstance<Map<*, *>>()
             ?.firstOrNull { it["id"] == contractId }
         return match?.get("name")?.toString() ?: contractId
     }
