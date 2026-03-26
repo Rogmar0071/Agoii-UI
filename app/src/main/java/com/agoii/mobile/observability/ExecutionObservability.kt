@@ -13,7 +13,7 @@ class ExecutionObservability(
         val last = events.lastOrNull()
 
         val stage = resolveStage(last)
-        val status = resolveStatus(events, last)
+        val (status, failureReason, failureStage) = resolveFailure(events, last)
 
         val contractsTotal = extractContractsTotal(events)
         val contractsCompleted = countCompletedContracts(events)
@@ -26,8 +26,8 @@ class ExecutionObservability(
             totalEvents = events.size,
             contractsTotal = contractsTotal,
             contractsCompleted = contractsCompleted,
-            failureReason = null,
-            failureStage = null
+            failureReason = failureReason,
+            failureStage = failureStage
         )
     }
 
@@ -44,14 +44,54 @@ class ExecutionObservability(
         }
     }
 
-    private fun resolveStatus(events: List<Event>, last: Event?): ExecutionStatus {
-        if (events.isEmpty()) return ExecutionStatus.NOT_STARTED
-
-        if (last?.type == EventTypes.EXECUTION_COMPLETED) {
-            return ExecutionStatus.COMPLETED
+    private fun resolveFailure(
+        events: List<Event>,
+        last: Event?
+    ): Triple<ExecutionStatus, String?, FailureStage> {
+        if (events.isEmpty()) {
+            return Triple(ExecutionStatus.NOT_STARTED, null, FailureStage.NONE)
         }
 
-        return ExecutionStatus.IN_PROGRESS
+        if (last?.type == EventTypes.EXECUTION_COMPLETED) {
+            return Triple(ExecutionStatus.COMPLETED, null, FailureStage.NONE)
+        }
+
+        // B. Authorization Block: intent submitted but contracts never generated
+        if (last?.type == EventTypes.INTENT_SUBMITTED &&
+            events.none { it.type == EventTypes.CONTRACTS_GENERATED }) {
+            return Triple(
+                ExecutionStatus.BLOCKED,
+                "Authorization block: no contracts generated after intent submission",
+                FailureStage.INTENT
+            )
+        }
+
+        // C. Execution Stall: contract started but not yet completed
+        if (last?.type == EventTypes.CONTRACT_STARTED) {
+            return Triple(
+                ExecutionStatus.BLOCKED,
+                "Execution stall: contract started but not completed",
+                FailureStage.CONTRACT_EXECUTION
+            )
+        }
+
+        // D. Lifecycle Dead-End: terminal failure event with no forward transition
+        if (last?.type == EventTypes.CONTRACT_FAILED) {
+            return Triple(
+                ExecutionStatus.BLOCKED,
+                "Lifecycle dead-end: no valid forward transition from '${last.type}'",
+                FailureStage.CONTRACT_EXECUTION
+            )
+        }
+        if (last?.type == EventTypes.TASK_FAILED) {
+            return Triple(
+                ExecutionStatus.BLOCKED,
+                "Lifecycle dead-end: no valid forward transition from '${last.type}'",
+                FailureStage.TASK_EXECUTION
+            )
+        }
+
+        return Triple(ExecutionStatus.IN_PROGRESS, null, FailureStage.NONE)
     }
 
     private fun extractContractsTotal(events: List<Event>): Int? {

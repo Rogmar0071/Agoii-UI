@@ -11,7 +11,7 @@ data class ExecutionTrace(
     val contractsTotal: Int?,
     val contractsCompleted: Int?,
     val failureReason: String?,
-    val failureStage: String?
+    val failureStage: FailureStage
 )
 
 enum class ExecutionStatus {
@@ -29,4 +29,14 @@ enum class ExecutionStage {
     CONTRACT_EXECUTION,
     TASK_EXECUTION,
     COMPLETED
+}
+
+enum class FailureStage {
+    NONE,
+    INTENT,
+    CONTRACT_GENERATION,
+    CONTRACT_APPROVAL,
+    CONTRACT_EXECUTION,
+    TASK_EXECUTION,
+    UNKNOWN
 }
