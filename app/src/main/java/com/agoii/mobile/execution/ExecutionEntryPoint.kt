@@ -4,6 +4,7 @@ import com.agoii.mobile.contracts.AgentProfile
 import com.agoii.mobile.contracts.ContractIntent
 import com.agoii.mobile.contracts.ContractSystemOrchestrator
 import com.agoii.mobile.core.EventLedger
+import java.util.UUID
 
 /**
  * ExecutionEntryPoint — the ONLY component allowed to trigger contract derivation
@@ -43,11 +44,11 @@ class ExecutionEntryPoint(
          */
         private val DEFAULT_AGENT_PROFILE = AgentProfile(
             agentId             = "default-agent",
-            constraintObedience = 3,  // maximum: always follows constraints
-            structuralAccuracy  = 3,  // maximum: always follows structure
-            driftTendency       = 0,  // minimum: zero deviation tendency
-            complexityHandling  = 3,  // maximum: handles complex multi-step plans
-            outputReliability   = 3   // maximum: fully deterministic output
+            constraintObedience = 3,
+            structuralAccuracy  = 3,
+            driftTendency       = 0,
+            complexityHandling  = 3,
+            outputReliability   = 3
         )
     }
 
@@ -75,7 +76,9 @@ class ExecutionEntryPoint(
                 "Intent payload missing 'objective'",
                 "AUTHORIZATION"
             )
-        val intentId = intentPayload["intentId"] as? String ?: objective
+
+        val intentId = intentPayload["intentId"] as? String
+            ?: UUID.nameUUIDFromBytes(objective.toByteArray()).toString()
 
         val intent = ContractIntent(
             objective   = objective,
@@ -86,13 +89,13 @@ class ExecutionEntryPoint(
 
         val csoResult = contractSystemOrchestrator.evaluate(intent, DEFAULT_AGENT_PROFILE)
 
-        // Prefer the adapted plan (ADAPT decision); fall back to the scored plan (ACCEPT).
         val steps = csoResult.adaptedContract?.adaptedPlan?.steps
             ?: csoResult.scoredContract?.derivation?.executionPlan?.steps
             ?: return AuthorizationResult.blocked(
                 "ContractSystemOrchestrator produced no execution plan",
                 "AUTHORIZATION"
             )
+
         if (steps.isEmpty()) {
             return AuthorizationResult.blocked(
                 "ContractSystemOrchestrator produced an empty execution plan",
@@ -108,7 +111,6 @@ class ExecutionEntryPoint(
             )
         }
 
-        // ExecutionAuthority is the sole validation + authorization gate.
         return executionAuthority.authorize(
             projectId = projectId,
             intentId  = intentId,
