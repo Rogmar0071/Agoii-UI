@@ -29,6 +29,9 @@ import com.agoii.mobile.interaction.InteractionEngine
 import com.agoii.mobile.interaction.InteractionInput
 import com.agoii.mobile.interaction.InteractionResult
 import com.agoii.mobile.interaction.OutputType
+import com.agoii.mobile.irs.ConsensusRule
+import com.agoii.mobile.irs.EvidenceRef
+import com.agoii.mobile.irs.SwarmConfig
 import com.agoii.mobile.ui.theme.*
 
 /**
@@ -154,7 +157,26 @@ fun ProjectScreen(projectId: String) {
             onSend    = {
                 val objective = inputText.trim()
                 if (objective.isNotEmpty()) {
-                    bridge.submitIntent(projectId, objective)
+                    bridge.submitIntent(
+                        projectId         = projectId,
+                        rawFields         = mapOf(
+                            "objective"   to objective,
+                            "constraints" to "",
+                            "environment" to "",
+                            "resources"   to ""
+                        ),
+                        evidence          = mapOf(
+                            "objective"   to listOf(EvidenceRef(id = "ev-obj",  source = "user-input")),
+                            "constraints" to listOf(EvidenceRef(id = "ev-cst",  source = "user-input")),
+                            "environment" to listOf(EvidenceRef(id = "ev-env",  source = "user-input")),
+                            "resources"   to listOf(EvidenceRef(id = "ev-res",  source = "user-input"))
+                        ),
+                        swarmConfig       = SwarmConfig(
+                            agentCount    = 2,
+                            consensusRule = ConsensusRule.MAJORITY
+                        ),
+                        objective         = objective
+                    )
                     inputText = ""
                     reload()
                 }

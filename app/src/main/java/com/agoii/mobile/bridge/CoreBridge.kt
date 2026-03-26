@@ -13,22 +13,14 @@ import com.agoii.mobile.observability.ExecutionTrace
 /**
  * CoreBridge — mobile runtime adapter.
  *
- * Responsibilities:
- *  - Provide a single entry point for the UI layer to call core functions.
- *  - When the last ledger event is INTENT_SUBMITTED:
- *      → Delegate derivation + authorization to ExecutionEntryPoint
- *      → React to ledger state (NOT decision result)
- *      → Trigger Governor progression ONLY if event was written
- *  - Delegate all other transitions to Governor
- *  - Enforce BuildExecutor gate before progression
+ * GOVERNANCE RULE (LOCKED):
+ * Intent MUST be certified by IRS BEFORE entering the ledger.
  *
- * Core Law:
- *  - ZERO validation logic
- *  - ZERO authorization logic
- *  - ZERO contract derivation
- *  - ZERO payload construction
+ * Architecture:
+ *   RAW INPUT → IRS (off-ledger) → CERTIFIED → INTENT_SUBMITTED → EXECUTION
  *
- * Bridge reacts to ledger — never interprets execution decisions.
+ * IRS is NOT part of the ledger lifecycle.
+ * Ledger remains the execution authority only.
  */
 class CoreBridge(context: Context) {
 
@@ -42,16 +34,40 @@ class CoreBridge(context: Context) {
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
 
-    // ✅ Read-only observability layer
     private val observability       = ExecutionObservability(ledger)
 
-    /** Append an intent_submitted event directly to the ledger. */
-    fun submitIntent(projectId: String, objective: String) {
+    /**
+     * 🔴 INTENT GATE
+     *
+     * Runs IRS lifecycle OFF-LEDGER.
+     * Only writes INTENT_SUBMITTED if [OrchestratorResult.Certified].
+     *
+     * @return true if intent entered ledger, false if IRS blocked it
+     */
+    fun submitIntent(
+        projectId:         String,
+        rawFields:         Map<String, String>,
+        evidence:          Map<String, List<EvidenceRef>>,
+        swarmConfig:       SwarmConfig,
+        availableEvidence: Map<String, List<EvidenceRef>> = emptyMap(),
+        objective:         String
+    ): Boolean {
+        val sessionId = "$projectId-${java.util.UUID.randomUUID()}"
+        irsOrchestrator.createSession(sessionId, rawFields, evidence, swarmConfig, availableEvidence)
+
+        var stepResult: StepResult
+        do {
+            stepResult = irsOrchestrator.step(sessionId)
+        } while (!stepResult.terminal)
+
+        if (stepResult.orchestratorResult !is OrchestratorResult.Certified) return false
+
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
             mapOf("objective" to objective)
         )
+        return true
     }
 
     /**
@@ -156,3 +172,4 @@ class CoreBridge(context: Context) {
     fun replayIrs(sessionId: String): List<IrsSnapshot> =
         irsOrchestrator.replayHistory(sessionId)
 }
+
