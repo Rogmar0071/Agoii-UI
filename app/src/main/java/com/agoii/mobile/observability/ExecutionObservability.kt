@@ -10,22 +10,21 @@ class ExecutionObservability(
         val events = ledger.loadEvents(projectId)
         val last   = events.lastOrNull()
 
-        val stage = resolveStage(last)
-        val (status, failureReason, failureStage) = resolveFailure(events, last)
+        val stage  = resolveStage(last)
+        val status = resolveStatus(events, last)
+        val failure = resolveFailureSurface(events, last)
 
         val contractsTotal     = extractContractsTotal(events)
         val contractsCompleted = countCompletedContracts(events)
 
         return ExecutionTrace(
             projectId = projectId,
+            stage = stage,
             status = status,
-            currentStage = stage,
-            lastEvent = last,
             totalEvents = events.size,
             contractsTotal = contractsTotal,
             contractsCompleted = contractsCompleted,
-            failureReason = failureReason,
-            failureStage = failureStage
+            failure = failure
         )
     }
 
@@ -41,69 +40,88 @@ class ExecutionObservability(
         }
     }
 
-    private fun resolveFailure(
-        events: List<Event>,
-        last: Event?
-    ): Triple<ExecutionStatus, String?, FailureStage> {
+    private fun resolveStatus(events: List<Event>, last: Event?): ExecutionStatus {
+        if (events.isEmpty()) return ExecutionStatus.NOT_STARTED
+        if (last?.type == EventTypes.EXECUTION_COMPLETED) return ExecutionStatus.COMPLETED
 
-        if (events.isEmpty()) {
-            return Triple(ExecutionStatus.NOT_STARTED, null, FailureStage.NONE)
-        }
-
-        if (last?.type == EventTypes.EXECUTION_COMPLETED) {
-            return Triple(ExecutionStatus.COMPLETED, null, FailureStage.NONE)
-        }
-
-        // ✅ Correct classification — DO NOT CHANGE
-        if (last?.type == EventTypes.INTENT_SUBMITTED) {
-            return Triple(
-                ExecutionStatus.BLOCKED,
-                "Contracts not generated from intent",
-                FailureStage.CONTRACT_GENERATION
-            )
-        }
+        if (last?.type == EventTypes.INTENT_SUBMITTED) return ExecutionStatus.BLOCKED
 
         if (last?.type == EventTypes.CONTRACTS_GENERATED &&
             events.none { it.type == EventTypes.CONTRACTS_APPROVED }) {
-
-            return Triple(
-                ExecutionStatus.BLOCKED,
-                "Contracts generated but not approved",
-                FailureStage.CONTRACT_APPROVAL
-            )
+            return ExecutionStatus.BLOCKED
         }
 
         if (last?.type == EventTypes.CONTRACT_STARTED &&
             events.none { it.type == EventTypes.CONTRACT_COMPLETED }) {
+            return ExecutionStatus.BLOCKED
+        }
 
-            return Triple(
-                ExecutionStatus.BLOCKED,
-                "Contract execution started but not completed",
-                FailureStage.CONTRACT_EXECUTION
+        if (last?.type == EventTypes.CONTRACT_FAILED) return ExecutionStatus.BLOCKED
+        if (last?.type == EventTypes.TASK_FAILED) return ExecutionStatus.BLOCKED
+
+        return ExecutionStatus.IN_PROGRESS
+    }
+
+    private fun resolveFailureSurface(events: List<Event>, last: Event?): FailureSurface {
+        if (events.isEmpty()) {
+            return FailureSurface(FailureType.NONE, null, null)
+        }
+
+        if (last?.type == EventTypes.EXECUTION_COMPLETED) {
+            return FailureSurface(FailureType.NONE, null, null)
+        }
+
+        // INTENT BLOCK (no contracts generated)
+        if (last?.type == EventTypes.INTENT_SUBMITTED) {
+            val hasContracts = events.any { it.type == EventTypes.CONTRACTS_GENERATED }
+            if (!hasContracts) {
+                return FailureSurface(
+                    FailureType.CONTRACT_GENERATION_FAILED,
+                    "No contracts generated from intent",
+                    last.type
+                )
+            }
+        }
+
+        // AUTHORIZATION BLOCK (contracts not approved)
+        if (last?.type == EventTypes.CONTRACTS_GENERATED &&
+            events.none { it.type == EventTypes.CONTRACTS_APPROVED }) {
+            return FailureSurface(
+                FailureType.AUTHORIZATION_FAILED,
+                "Contracts generated but not approved",
+                last.type
             )
         }
 
+        // CONTRACT FAILURE
         if (last?.type == EventTypes.CONTRACT_FAILED) {
-            return Triple(
-                ExecutionStatus.BLOCKED,
+            return FailureSurface(
+                FailureType.CONTRACT_FAILED,
                 "Contract execution failed",
-                FailureStage.CONTRACT_EXECUTION
+                last.type
             )
         }
 
+        // TASK FAILURE
         if (last?.type == EventTypes.TASK_FAILED) {
-            return Triple(
-                ExecutionStatus.BLOCKED,
+            return FailureSurface(
+                FailureType.TASK_FAILED,
                 "Task execution failed",
-                FailureStage.TASK_EXECUTION
+                last.type
             )
         }
 
-        return Triple(
-            ExecutionStatus.IN_PROGRESS,
-            null,
-            FailureStage.NONE
-        )
+        // EXECUTION STALL (stuck in contract, no prior completions)
+        if (last?.type == EventTypes.CONTRACT_STARTED &&
+            events.none { it.type == EventTypes.CONTRACT_COMPLETED }) {
+            return FailureSurface(
+                FailureType.EXECUTION_BLOCKED,
+                "Execution stalled at contract stage",
+                last.type
+            )
+        }
+
+        return FailureSurface(FailureType.NONE, null, null)
     }
 
     fun timeline(projectId: String): ExecutionTimeline {

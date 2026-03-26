@@ -1,17 +1,13 @@
 package com.agoii.mobile.observability
 
-import com.agoii.mobile.core.Event
-
 data class ExecutionTrace(
     val projectId: String,
     val status: ExecutionStatus,
-    val currentStage: ExecutionStage,
-    val lastEvent: Event?,
+    val stage: ExecutionStage,
     val totalEvents: Int,
     val contractsTotal: Int?,
     val contractsCompleted: Int?,
-    val failureReason: String?,
-    val failureStage: FailureStage
+    val failure: FailureSurface
 )
 
 enum class ExecutionStatus {
@@ -29,13 +25,4 @@ enum class ExecutionStage {
     CONTRACT_STARTED,
     CONTRACT_COMPLETED,
     EXECUTION_COMPLETED
-}
-
-enum class FailureStage {
-    NONE,
-    CONTRACT_GENERATION,
-    CONTRACT_APPROVAL,
-    CONTRACT_EXECUTION,
-    TASK_EXECUTION,
-    UNKNOWN
 }
