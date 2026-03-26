@@ -1,406 +1,244 @@
-AGOII MASTER ARCHITECTURE — SYSTEM LAW (LOCKED)
+# AGOII ARCHITECTURE — MASTER LAW (LOCKED)
 
-
----
-
-1. FOUNDATIONAL PRINCIPLE
-
-Agoii is a contract-driven, event-anchored system of sovereign modules.
-
-It is not a pipeline.
-It is not a layered processor.
-It is not an AI workflow.
-
-It is a governed system where authority is strictly controlled and cannot be bypassed.
-
+STATUS: AUTHORITATIVE
+MODE: ENFORCED
+MUTABILITY: RESTRICTED (EXPLICIT CONTRACT REQUIRED)
 
 ---
 
-2. CORE LAW (NON-NEGOTIABLE)
+## 0. SYSTEM IDENTITY
 
-1. Nothing starts without a completed and approved Intent Master
+Agoii is a deterministic orchestration system.
 
-
-2. Only Execution can validate what is allowed to happen
-
-
-3. Only the Ledger records system truth
-
-
-4. Only one authority may write to the Ledger (via Execution)
-
-
-5. Governor advances state strictly from Ledger events
-
-
-6. All interaction occurs through Contracts
-
-
-7. All capabilities are invoked through Contracts
-
-
-8. No parallel authority systems may exist
-
-
-9. No module may bypass another module’s authority
-
-
-10. System behavior must be deterministic from the Ledger forward
-
-
-
-This law is permanent and cannot be overridden.
-
+- All system change originates from events
+- All events are validated before persistence
+- No module may bypass the event pipeline
+- No module may assume authority
 
 ---
 
-3. SYSTEM FLOW (CANONICAL AUTHORITY FLOW)
+## 1. CORE FLOW (NON-NEGOTIABLE)
 
-Intent → Execution → Ledger → Governor → Assembly → ICS
-
-This is not a pipeline.
-This is a sequence of authority transitions.
-
-Each transition must be enforced.
-
+RAW INPUT  
+→ IngressContract (translation only)  
+→ Intent Module (intent completion)  
+→ Contract Derivation (deterministic)  
+→ Execution Authority (validation + authorization)  
+→ EventLedger.appendEvent()  
+→ Governor (state progression)  
+→ ICS (output only)
 
 ---
 
-4. INTENT MODULE (TRUTH CONSTRUCTION)
+## 2. SINGLE WRITE AUTHORITY LAW
+
+ONLY ONE COMPONENT MAY WRITE:
+
+→ EventLedger
+
+RULES:
+- No direct EventStore writes
+- No indirect persistence bypass
+- No module may simulate a write
+
+VIOLATION = SYSTEM BREACH
+
+---
+
+## 3. EXECUTION AUTHORITY LAW
+
+Execution Authority is the ONLY gate before ledger writes.
+
+Execution Authority consists of:
+
+1. Validation (structural + invariant)
+2. Authorization (explicit approval of transition)
+
+RULES:
+- Validation success ≠ authorization
+- Both MUST pass before write
+- If either fails → BLOCK
+
+IMPLEMENTATION NOTE:
+Current implementation may co-locate validation + authorization,
+but they MUST be logically separable.
+
+---
+
+## 4. CONTRACT DERIVATION LAW
+
+Contracts MUST be derived BEFORE entering the ledger.
+
+SOURCE OF TRUTH:
+→ ContractSystemOrchestrator
+
+MAPPING RULE (LOCKED):
+
+ExecutionPlan.steps → CONTRACTS_GENERATED.payload["contracts"]
+
+Each step MUST map as:
+
+- id = "contract_{position}"
+- name = step.description
+- position = step.position
+
+Payload MUST include:
+- contracts: List<Map>
+- total: Int
+
+RULES:
+- No hardcoded contracts
+- No Governor-derived contracts (TARGET STATE)
+- Deterministic: same intent → same contracts
+
+TEMPORARY STATE:
+If derivation occurs inside Governor, it MUST be marked for extraction.
+
+---
+
+## 5. GOVERNOR LAW
+
+Governor is a deterministic state machine.
+
+INPUT:
+→ Event stream ONLY
+
+OUTPUT:
+→ Next event OR null
+
+RULES:
+- No external dependencies for decision making
+- No contract derivation (TARGET STATE)
+- No execution logic
+- No side effects
+
+Governor MUST:
+- Consume ledger state
+- Enforce transition rules
+- Never introduce new information
+
+---
+
+## 6. BRIDGE LAW (CoreBridge)
+
+CoreBridge is a thin adapter.
+
+RULES:
+- No execution logic
+- No validation logic
+- No decision making
+- Only delegates to Governor / Ledger / IRS
+
+VIOLATION = ARCHITECTURAL DRIFT
+
+---
+
+## 7. ICS LAW (INTERACTION LAYER)
+
+ICS is output-only.
+
+RULES:
+- No validation
+- No mutation
+- No execution
+- No state authority
 
 Purpose:
-To construct a complete, structured, and validated Intent Master
-
-Rules:
-
-Raw user input is NOT valid intent
-
-Intent must be actively constructed
-
-Intent must reach structural completeness
-
-Intent must be approved by the user
-
-
-Mechanism:
-
-Uses Contracts to:
-
-Ask questions
-
-Gather missing data
-
-Clarify requirements
-
-Refine structure
-
-
-Invokes Contractors through Contracts:
-
-AI systems
-
-External systems
-
-Internal capabilities
-
-
-
-Output:
-A complete and approved Intent Master
-
+→ Translate system state to user communication
 
 ---
 
-5. INTENT MASTER (SYSTEM ANCHOR)
+## 8. INGRESS LAW
 
-The Intent Master is:
+IngressContract transforms input ONLY.
 
-Complete
-
-Structured
-
-User-approved
-
-Immutable (in-place)
-
-
-Once approved:
-
-It becomes the single reference for all system alignment
-
-All modules must conform to it
-
-It cannot be modified
-
-
-Critical Rule:
-
-No event may be created without an approved Intent Master.
-
-
----
-
-6. CONTRACT SYSTEM (UNIVERSAL INTERFACE)
-
-Contracts are the only interaction mechanism in Agoii.
-
-Used for:
-
-User communication
-
-Module communication
-
-Capability invocation
-
-Execution coordination
-
-
-Contracts are structured and enforceable.
-They are not messages.
-
-
----
-
-7. CONTRACTORS (CAPABILITY PROVIDERS)
-
-Contractors are execution resources accessed via Contracts:
-
-AI agents
-
-Swarm systems
-
-External APIs
-
-Internal engines
-
-
-Modules do NOT call capabilities directly.
-They call Contracts, which invoke Contractors.
-
-
----
-
-8. EXECUTION MODULE (SOLE AUTHORITY)
+RULES:
+- No validation authority
+- No execution authority
+- No ledger writes
 
 Purpose:
-To validate and authorize all system actions
-
-Execution is the only authority that decides what is allowed to happen.
-
-Responsibilities:
-
-Validate contracts
-
-Validate transitions
-
-Validate alignment with Intent Master
-
-Invoke capabilities (reconstruction, simulation, etc.)
-
-Produce a strict outcome:
-
-VALID → proceed
-
-INVALID → block
-
-
-
-Critical Rules:
-
-No other module may validate system truth
-
-No parallel validation systems may exist
-
-All validation capabilities are internal to Execution
-
-
+→ Human → structured input
 
 ---
 
-9. EVENT CREATION (TRUTH GENERATION)
+## 9. PAYLOAD SCHEMA LAW (LOCKED)
 
-An event is created only after Execution validation.
+All event payloads MUST be explicitly defined.
 
-Critical Rules:
+### TASK_ASSIGNED (MANDATORY STRUCTURE)
 
-Events are not user input
+{
+  "contractorId": String,
+  "taskId": String,
+  "position": Int,
+  "total": Int
+}
 
-Events are not intent
-
-Events are validated system truth
-
-
+RULES:
+- No implicit fields
+- No silent schema changes
+- ValidationLayer MUST enforce this structure
 
 ---
 
-10. LEDGER (EVENT STORE — SINGLE SOURCE OF TRUTH)
+## 10. DEAD CODE LAW
+
+Authority-related components MUST NOT exist unused.
+
+RULES:
+- Unused authority logic MUST be removed OR explicitly disabled
+- No parallel execution paths allowed
+- No shadow orchestrators
+
+---
+
+## 11. SIMULATION LAW
+
+Simulation is NON-AUTHORITATIVE.
+
+RULES:
+- Cannot trigger events
+- Cannot advance state
+- Cannot override execution
 
 Purpose:
-To store all system truth as an append-only event log
-
-Rules:
-
-Append-only
-
-Immutable
-
-No mutation
-
-No overwrite
-
-
-Authority:
-
-Only Execution may write (through controlled path)
-
-No other module may write
-
-
+→ Analysis only
 
 ---
 
-11. GOVERNOR (STATE TRANSITION AUTHORITY)
+## 12. FAILURE LAW
 
-Purpose:
-To determine the next system state
+IF ANY STEP FAILS:
 
-Characteristics:
+→ SYSTEM BLOCKS
 
-Fully deterministic
-
-Reads only from the Ledger
-
-No external input
-
-No mutation authority
-
-
-Output:
-Next valid event or wait state
-
+NO:
+- fallback execution
+- silent correction
+- assumption-based continuation
 
 ---
 
-12. ASSEMBLY (SYSTEM CONVERGENCE)
+## 13. SYSTEM INVARIANTS
 
-Purpose:
-To represent completion of execution
-
-Ensures:
-
-All contracts fulfilled
-
-Execution complete
-
-System state valid
-
-
+- Append-only ledger
+- Deterministic replay
+- Single write authority
+- Explicit validation + authorization
+- No hidden mutation
+- No implicit state transitions
 
 ---
 
-13. SIMULATION (SUPPORT CAPABILITY)
+## 14. ENFORCEMENT
 
-Used for:
+ALL CONTRACTS MUST:
 
-Internal validation
-
-Scenario testing
-
-User communication
-
-
-Rules:
-
-Not an authority
-
-Cannot approve or reject
-
-Cannot write to Ledger
-
-
+- Reference this document
+- Conform to all laws
+- Refuse execution on ambiguity
 
 ---
 
-14. ICS (COMMUNICATION LAYER)
-
-Purpose:
-To translate system state into human interaction
-
-Used for:
-
-Communicating results
-
-Presenting simulation
-
-Interfacing with user
-
-
-Rules:
-
-No validation authority
-
-No decision authority
-
-No state mutation
-
-
-
----
-
-15. ARCHITECTURAL CONSTRAINTS
-
-The following are strictly forbidden:
-
-Direct Ledger writes outside Execution
-
-Parallel validation systems (e.g., standalone IRS authority)
-
-Treating raw input as intent
-
-Mutable Intent Master
-
-Bypassing Contracts
-
-Non-deterministic state transitions
-
-Hidden mutation paths
-
-
-
----
-
-16. SYSTEM TRUTH STATEMENT
-
-Intent constructs truth.
-Execution validates truth.
-Ledger records truth.
-Governor advances truth.
-Assembly completes truth.
-ICS communicates truth.
-
-
----
-
-17. ENFORCEMENT
-
-This document is the constitutional law of Agoii.
-
-All:
-
-Code
-
-Agents (Copilot, AI)
-
-Contracts
-
-Features
-
-
-must comply with this architecture.
-
-Any deviation is a system violation and must be rejected.
-
-
----
-
-STATUS: LOCKED — NON-NEGOTIABLE
+END OF DOCUMENT
