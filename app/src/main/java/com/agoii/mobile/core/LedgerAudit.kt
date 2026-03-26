@@ -85,6 +85,8 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (validTransitions[from] == to) return true
             // User-driven: approval after contracts are ready
             if (from == EventTypes.CONTRACTS_READY && to == EventTypes.CONTRACTS_APPROVED) return true
+            // New lifecycle: contracts_ready advances directly to contract_started (no approval gate)
+            if (from == EventTypes.CONTRACTS_READY && to == EventTypes.CONTRACT_STARTED) return true
             // Governor: execution begins — start the first contract
             if (from == EventTypes.EXECUTION_STARTED && to == EventTypes.CONTRACT_STARTED) return true
             // Governor: task lifecycle — contract_started initiates task assignment
@@ -101,6 +103,8 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.TASK_COMPLETED && to == EventTypes.TASK_VALIDATED) return true
             // Governor: task lifecycle — validation failure
             if (from == EventTypes.TASK_COMPLETED && to == EventTypes.TASK_FAILED) return true
+            // New lifecycle: task_completed advances directly to contract_completed (no task_validated step)
+            if (from == EventTypes.TASK_COMPLETED && to == EventTypes.CONTRACT_COMPLETED) return true
             // Governor: task validated → contract can now be completed (critical rule)
             if (from == EventTypes.TASK_VALIDATED && to == EventTypes.CONTRACT_COMPLETED) return true
             // Governor: task failed → retry with same or reassigned contractor

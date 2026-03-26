@@ -178,13 +178,14 @@ class ValidationLayer {
     ) {
         checkGlobalPayload(projectId, type, payload)
         when (type) {
+            EventTypes.CONTRACTS_GENERATED -> checkContractsGenerated(projectId, payload)
             EventTypes.CONTRACT_STARTED    -> checkContractStarted(projectId, payload)
             EventTypes.TASK_ASSIGNED       -> checkTaskAssigned(projectId, payload)
             EventTypes.TASK_STARTED        -> checkTaskStarted(projectId, payload, state)
             EventTypes.TASK_COMPLETED      -> checkTaskCompleted(projectId, payload, state)
             EventTypes.TASK_VALIDATED      -> checkTaskValidated(projectId, payload, state)
             EventTypes.CONTRACT_COMPLETED  -> checkContractCompleted(projectId, payload, state)
-            EventTypes.EXECUTION_COMPLETED -> checkExecutionCompleted(projectId, state)
+            EventTypes.EXECUTION_COMPLETED -> checkExecutionCompleted(projectId, payload, state)
             EventTypes.ASSEMBLY_VALIDATED  -> checkAssemblyValidated(projectId, state)
         }
     }
@@ -219,6 +220,53 @@ class ValidationLayer {
             throw LedgerValidationException(
                 "Unexpected payload keys $unknown for '$type' in '$projectId'"
             )
+        }
+    }
+
+    private fun checkContractsGenerated(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.CONTRACTS_GENERATED, payload, CONTRACTS_GENERATED_KEYS)
+        payload["intentId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACTS_GENERATED missing or blank 'intentId' in '$projectId'"
+            )
+        payload["contractSetId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACTS_GENERATED missing or blank 'contractSetId' in '$projectId'"
+            )
+        val totalRaw = payload["total"]
+            ?: throw LedgerValidationException(
+                "CONTRACTS_GENERATED missing 'total' in '$projectId'"
+            )
+        val total = toInt(totalRaw)
+            ?: throw LedgerValidationException(
+                "CONTRACTS_GENERATED 'total' must be an integer in '$projectId'"
+            )
+        if (total < 1) {
+            throw LedgerValidationException(
+                "CONTRACTS_GENERATED 'total' must be >= 1, got $total in '$projectId'"
+            )
+        }
+        val contracts = payload["contracts"] as? List<*>
+            ?: throw LedgerValidationException(
+                "CONTRACTS_GENERATED missing 'contracts' list in '$projectId'"
+            )
+        if (contracts.isEmpty()) {
+            throw LedgerValidationException(
+                "CONTRACTS_GENERATED 'contracts' list must not be empty in '$projectId'"
+            )
+        }
+        contracts.filterIsInstance<Map<*, *>>().forEachIndexed { i, contract ->
+            val contractId = contract["contractId"]?.toString()
+            if (contractId.isNullOrBlank()) {
+                throw LedgerValidationException(
+                    "CONTRACTS_GENERATED contract[$i] missing or blank 'contractId' in '$projectId'"
+                )
+            }
+            if (contract["position"] == null) {
+                throw LedgerValidationException(
+                    "CONTRACTS_GENERATED contract[$i] missing 'position' in '$projectId'"
+                )
+            }
         }
     }
 
@@ -273,7 +321,7 @@ class ValidationLayer {
         payload: Map<String, Any>,
         state: ValidationState
     ) {
-        requireKeys(projectId, EventTypes.TASK_STARTED, payload, TASK_ID_ONLY)
+        requireKeys(projectId, EventTypes.TASK_STARTED, payload, TASK_WITH_POSITION_KEYS)
         val taskId = payload["taskId"]?.toString()
             ?: throw LedgerValidationException(
                 "TASK_STARTED missing 'taskId' in '$projectId'"
@@ -283,6 +331,7 @@ class ValidationLayer {
                 "TASK_STARTED: taskId '$taskId' not found in TASK_ASSIGNED events in '$projectId'"
             )
         }
+        checkPositionAndTotal(projectId, EventTypes.TASK_STARTED, payload)
     }
 
     private fun checkTaskCompleted(
@@ -290,7 +339,7 @@ class ValidationLayer {
         payload: Map<String, Any>,
         state: ValidationState
     ) {
-        requireKeys(projectId, EventTypes.TASK_COMPLETED, payload, TASK_ID_ONLY)
+        requireKeys(projectId, EventTypes.TASK_COMPLETED, payload, TASK_WITH_POSITION_KEYS)
         val taskId = payload["taskId"]?.toString()
             ?: throw LedgerValidationException(
                 "TASK_COMPLETED missing 'taskId' in '$projectId'"
@@ -300,6 +349,7 @@ class ValidationLayer {
                 "TASK_COMPLETED: taskId '$taskId' not found in TASK_STARTED events in '$projectId'"
             )
         }
+        checkPositionAndTotal(projectId, EventTypes.TASK_COMPLETED, payload)
     }
 
     private fun checkTaskValidated(
@@ -357,14 +407,38 @@ class ValidationLayer {
         }
     }
 
-    private fun checkExecutionCompleted(projectId: String, state: ValidationState) {
-        val total = state.totalContracts
+    private fun checkExecutionCompleted(
+        projectId: String,
+        payload: Map<String, Any>,
+        state: ValidationState
+    ) {
+        requireKeys(projectId, EventTypes.EXECUTION_COMPLETED, payload, EXECUTION_COMPLETED_KEYS)
+        val totalRaw = payload["total"]
+            ?: throw LedgerValidationException(
+                "EXECUTION_COMPLETED missing 'total' in '$projectId'"
+            )
+        val total = toInt(totalRaw)
+            ?: throw LedgerValidationException(
+                "EXECUTION_COMPLETED 'total' must be an integer in '$projectId'"
+            )
+        if (total < 1) {
+            throw LedgerValidationException(
+                "EXECUTION_COMPLETED 'total' must be >= 1, got $total in '$projectId'"
+            )
+        }
+        val stateTotal = state.totalContracts
             ?: throw LedgerValidationException(
                 "EXECUTION_COMPLETED: no CONTRACT_STARTED found in '$projectId'"
             )
-        if (state.completedContracts != total) {
+        if (total != stateTotal) {
             throw LedgerValidationException(
-                "EXECUTION_COMPLETED: expected $total CONTRACT_COMPLETED, " +
+                "EXECUTION_COMPLETED 'total' ($total) does not match CONTRACT_STARTED count " +
+                    "($stateTotal) in '$projectId'"
+            )
+        }
+        if (state.completedContracts != stateTotal) {
+            throw LedgerValidationException(
+                "EXECUTION_COMPLETED: expected $stateTotal CONTRACT_COMPLETED, " +
                     "found ${state.completedContracts} in '$projectId'"
             )
         }
@@ -426,6 +500,40 @@ class ValidationLayer {
 
     // ── HELPERS ───────────────────────────────────────────────────────────────
 
+    /**
+     * Validates position and total invariants for events that carry both fields.
+     *
+     * Global rules:
+     *  - position MUST be >= 1
+     *  - total MUST be >= 1
+     *  - position MUST be <= total
+     */
+    private fun checkPositionAndTotal(projectId: String, type: String, payload: Map<String, Any>) {
+        val position = payload["position"]?.let { toInt(it) }
+            ?: throw LedgerValidationException(
+                "$type missing or invalid 'position' in '$projectId'"
+            )
+        val total = payload["total"]?.let { toInt(it) }
+            ?: throw LedgerValidationException(
+                "$type missing or invalid 'total' in '$projectId'"
+            )
+        if (position < 1) {
+            throw LedgerValidationException(
+                "$type 'position' must be >= 1, got $position in '$projectId'"
+            )
+        }
+        if (total < 1) {
+            throw LedgerValidationException(
+                "$type 'total' must be >= 1, got $total in '$projectId'"
+            )
+        }
+        if (position > total) {
+            throw LedgerValidationException(
+                "$type 'position' ($position) must be <= 'total' ($total) in '$projectId'"
+            )
+        }
+    }
+
     private fun toInt(value: Any?): Int? = when (value) {
         is Int    -> value
         is Long   -> value.toInt()
@@ -442,9 +550,12 @@ class ValidationLayer {
             EventTypes.TASK_COMPLETED,
             EventTypes.TASK_VALIDATED
         )
+        private val CONTRACTS_GENERATED_KEYS = setOf("intentId", "contractSetId", "contracts", "total")
         private val CONTRACT_STARTED_KEYS   = setOf("position", "total", "contract_id")
         private val TASK_ASSIGNED_KEYS      = setOf("contractorId", "taskId")
         private val TASK_ID_ONLY            = setOf("taskId")
+        private val TASK_WITH_POSITION_KEYS = setOf("taskId", "position", "total")
         private val CONTRACT_COMPLETED_KEYS = setOf("position", "total")
+        private val EXECUTION_COMPLETED_KEYS = setOf("total")
     }
 }

@@ -21,7 +21,11 @@ data class ExecutionResult(
 )
 
 /**
- * ExecutionOrchestrator — pure execution worker.
+ * ExecutionOrchestrator — pure execution worker (DEPRECATED — not part of primary flow).
+ *
+ * This class performs task execution and validation as a pure compute step with no event
+ * emission. It is not part of the primary ledger-driven execution flow and should not be
+ * wired into any event-producing pipeline.
  *
  * Responsibilities (only):
  *  - Receive a [Task] and a [ContractorProfile].
@@ -38,6 +42,10 @@ data class ExecutionResult(
  * @property executor  Contractor execution interface.
  * @property validator Result validation engine.
  */
+@Deprecated(
+    message = "Not part of the primary ledger-driven execution flow. Use Governor for lifecycle events.",
+    level = DeprecationLevel.WARNING
+)
 class ExecutionOrchestrator(
     private val executor:  ContractorExecutor = ContractorExecutor(),
     private val validator: ResultValidator    = ResultValidator()

@@ -1,48 +1,27 @@
 package com.agoii.mobile.orchestration
 
 import com.agoii.mobile.core.EventRepository
-import com.agoii.mobile.core.EventTypes
 
-// ─── ExecutionOrchestrator — Closure Authority ────────────────────────────────
+// ─── ExecutionOrchestrator — DISABLED ────────────────────────────────────────
 
 /**
- * ExecutionOrchestrator — sole authority for contract closure events.
+ * ExecutionOrchestrator — DISABLED.
  *
- * Responsibilities:
- *  - Emit CONTRACT_COMPLETED for every contract closure.
- *  - Emit EXECUTION_COMPLETED when the final contract closes
- *    (position == DEFAULT_TOTAL_CONTRACTS).
+ * This class has been disabled to eliminate the shadow execution path it created.
+ * Contract closure and EXECUTION_COMPLETED are now exclusively authored by the Governor,
+ * which is the single write authority for all execution lifecycle events.
  *
- * Rules:
- *  - MUST NOT emit CONTRACT_STARTED.
- *  - MUST NOT control contract sequencing beyond closure decision.
- *  - MUST NOT infer completion from any source other than position.
+ * DO NOT re-enable. DO NOT append events from this class.
+ *
+ * @see com.agoii.mobile.governor.Governor
  */
+@Deprecated(
+    message = "Shadow execution path — disabled. Contract closure is exclusively Governor's responsibility.",
+    level = DeprecationLevel.ERROR
+)
 class ExecutionOrchestrator(
-    private val eventStore: EventRepository
+    @Suppress("UNUSED_PARAMETER") private val eventStore: EventRepository
 ) {
-
-    /**
-     * Close a contract at the given position.
-     *
-     * Always emits CONTRACT_COMPLETED.
-     * Emits EXECUTION_COMPLETED only when position == DEFAULT_TOTAL_CONTRACTS.
-     *
-     * @param projectId  The project ledger to write to.
-     * @param contractId The identifier of the contract being closed.
-     * @param position   The 1-based position of the contract in the execution sequence.
-     */
-    fun closeContract(projectId: String, contractId: String, position: Int) {
-        eventStore.appendEvent(
-            projectId,
-            EventTypes.CONTRACT_COMPLETED,
-            mapOf(
-                "contract_id" to contractId,
-                "position"    to position
-            )
-        )
-        if (position == EventTypes.DEFAULT_TOTAL_CONTRACTS) {
-            eventStore.appendEvent(projectId, EventTypes.EXECUTION_COMPLETED, emptyMap())
-        }
-    }
+    // Disabled: all event emission has been removed to prevent parallel execution paths.
+    // The Governor is the sole authority for CONTRACT_COMPLETED and EXECUTION_COMPLETED.
 }
