@@ -178,6 +178,7 @@ class ValidationLayer {
     ) {
         checkGlobalPayload(projectId, type, payload)
         when (type) {
+            EventTypes.CONTRACTS_GENERATED -> checkContractsGenerated(projectId, payload)
             EventTypes.CONTRACT_STARTED    -> checkContractStarted(projectId, payload)
             EventTypes.TASK_ASSIGNED       -> checkTaskAssigned(projectId, payload)
             EventTypes.TASK_STARTED        -> checkTaskStarted(projectId, payload, state)
@@ -219,6 +220,53 @@ class ValidationLayer {
             throw LedgerValidationException(
                 "Unexpected payload keys $unknown for '$type' in '$projectId'"
             )
+        }
+    }
+
+    private fun checkContractsGenerated(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.CONTRACTS_GENERATED, payload, CONTRACTS_GENERATED_KEYS)
+        payload["intentId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACTS_GENERATED missing or blank 'intentId' in '$projectId'"
+            )
+        payload["contractSetId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACTS_GENERATED missing or blank 'contractSetId' in '$projectId'"
+            )
+        val totalRaw = payload["total"]
+            ?: throw LedgerValidationException(
+                "CONTRACTS_GENERATED missing 'total' in '$projectId'"
+            )
+        val total = toInt(totalRaw)
+            ?: throw LedgerValidationException(
+                "CONTRACTS_GENERATED 'total' must be an integer in '$projectId'"
+            )
+        if (total < 1) {
+            throw LedgerValidationException(
+                "CONTRACTS_GENERATED 'total' must be >= 1, got $total in '$projectId'"
+            )
+        }
+        val contracts = payload["contracts"] as? List<*>
+            ?: throw LedgerValidationException(
+                "CONTRACTS_GENERATED missing 'contracts' list in '$projectId'"
+            )
+        if (contracts.isEmpty()) {
+            throw LedgerValidationException(
+                "CONTRACTS_GENERATED 'contracts' list must not be empty in '$projectId'"
+            )
+        }
+        contracts.filterIsInstance<Map<*, *>>().forEachIndexed { i, contract ->
+            val contractId = contract["contractId"]?.toString()
+            if (contractId.isNullOrBlank()) {
+                throw LedgerValidationException(
+                    "CONTRACTS_GENERATED contract[$i] missing or blank 'contractId' in '$projectId'"
+                )
+            }
+            if (contract["position"] == null) {
+                throw LedgerValidationException(
+                    "CONTRACTS_GENERATED contract[$i] missing 'position' in '$projectId'"
+                )
+            }
         }
     }
 
@@ -502,6 +550,7 @@ class ValidationLayer {
             EventTypes.TASK_COMPLETED,
             EventTypes.TASK_VALIDATED
         )
+        private val CONTRACTS_GENERATED_KEYS = setOf("intentId", "contractSetId", "contracts", "total")
         private val CONTRACT_STARTED_KEYS   = setOf("position", "total", "contract_id")
         private val TASK_ASSIGNED_KEYS      = setOf("contractorId", "taskId")
         private val TASK_ID_ONLY            = setOf("taskId")

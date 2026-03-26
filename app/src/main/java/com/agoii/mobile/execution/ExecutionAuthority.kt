@@ -15,17 +15,22 @@ import java.util.UUID
  * @property event   The [Event] that was persisted, or null when blocked.
  * @property status  "AUTHORIZED" on success; "BLOCKED" on failure.
  * @property reason  Human-readable description of the block reason, or null on success.
+ * @property stage   The pipeline stage at which blocking occurred:
+ *                   "VALIDATION" (Phase 1) or "AUTHORIZATION" (Phase 2), or null on success.
  */
 data class AuthorizationResult(
     val event:  Event?,
     val status: String,
-    val reason: String?
+    val reason: String?,
+    val stage:  String?
 ) {
     val authorized: Boolean get() = status == "AUTHORIZED"
 
     companion object {
-        fun blocked(reason: String) = AuthorizationResult(event = null, status = "BLOCKED", reason = reason)
-        fun authorized(event: Event) = AuthorizationResult(event = event, status = "AUTHORIZED", reason = null)
+        fun blocked(reason: String, stage: String) =
+            AuthorizationResult(event = null, status = "BLOCKED", reason = reason, stage = stage)
+        fun authorized(event: Event) =
+            AuthorizationResult(event = event, status = "AUTHORIZED", reason = null, stage = null)
     }
 }
 
@@ -74,7 +79,7 @@ class ExecutionAuthority(private val ledger: EventLedger) {
 
         // ── Phase 2 pre-check: catch empty input before building payload ──────────
         if (contracts.isEmpty()) {
-            return AuthorizationResult.blocked("contracts list is empty")
+            return AuthorizationResult.blocked("Contracts list is empty", "AUTHORIZATION")
         }
 
         val total = contracts.size
@@ -87,14 +92,16 @@ class ExecutionAuthority(private val ledger: EventLedger) {
         }
         if (!allFieldsValid) {
             return AuthorizationResult.blocked(
-                "one or more contracts has a blank 'id', blank 'name', or null 'position'"
+                "one or more contracts have a blank 'id', blank 'name', or null 'position'",
+                "AUTHORIZATION"
             )
         }
 
         val positions = contracts.mapNotNull { resolveInt(it["position"]) }.sorted()
         if (positions != (1..total).toList()) {
             return AuthorizationResult.blocked(
-                "contract positions do not form exact sequence 1..$total; got $positions"
+                "contract positions do not form exact sequence 1..$total; got $positions",
+                "AUTHORIZATION"
             )
         }
 
@@ -123,7 +130,7 @@ class ExecutionAuthority(private val ledger: EventLedger) {
                 currentEvents = currentEvents
             )
         } catch (e: LedgerValidationException) {
-            return AuthorizationResult.blocked("validation failed: ${e.message}")
+            return AuthorizationResult.blocked("validation failed: ${e.message}", "VALIDATION")
         }
 
         // ── Phase 3: Write ───────────────────────────────────────────────────────
