@@ -119,9 +119,9 @@ class DeterministicMatchingEngine(
             compareBy<ContractorProfile>(
                 {
                     requirements.sumOf { requirement ->
-                        val capability = it.capabilities.firstOrNull { capability ->
+                        val capability = requireNotNull(it.capabilities.firstOrNull { capability ->
                             capability.name == requirement.capability
-                        } ?: return@sumOf 0.0
+                        })
                         requirement.weight *
                             capability.level *
                             it.reliabilityScore *
@@ -184,9 +184,9 @@ class SwarmCompositionEngine {
                         {
                             it.second.sumOf { capabilityName ->
                                 val requirement = requirementMap.getValue(capabilityName)
-                                val capability = it.first.capabilities.firstOrNull { capability ->
+                                val capability = requireNotNull(it.first.capabilities.firstOrNull { capability ->
                                     capability.name == capabilityName
-                                } ?: return@sumOf 0.0
+                                })
                                 requirement.weight *
                                     capability.level *
                                     it.first.reliabilityScore *
