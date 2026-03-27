@@ -767,3 +767,98 @@ EACH CONTRACT MUST INCLUDE:
 
 ```json
 "report_reference": "<report_id>"
+
+update:
+
+## 38. MODULE COMPLETENESS LAW (NEW — CRITICAL)
+
+STATUS: ENFORCED  
+SCOPE: ALL SYSTEM MODULES  
+COMPATIBILITY: GLOBAL (APPLIES TO ALL EXISTING AND FUTURE MODULES)  
+
+---
+
+### PRINCIPLE  
+
+EVERY MODULE MUST BE A CLOSED SYSTEM THAT FULLY ACHIEVES ITS DEFINED OBJECTIVE.  
+
+NO PARTIAL MODULES ARE PERMITTED.  
+
+---
+
+### DEFINITION  
+
+A module is considered COMPLETE ONLY IF:
+
+- it contains ALL logic required to achieve its objective  
+- it does NOT rely on external layers to fulfill its responsibility  
+- it does NOT leak unfinished state downstream  
+
+---
+
+### MANDATORY RULES  
+
+1. OBJECTIVE CONTAINMENT  
+   - all responsibilities required to fulfill the module objective MUST exist inside the module  
+
+2. NO RESPONSIBILITY LEAKAGE  
+   - no required behavior may be deferred to another module unless explicitly defined by system flow  
+
+3. NO PARTIAL IMPLEMENTATION  
+   - a module MUST NOT implement only a subset of its required functionality  
+
+4. NO IMPLICIT DEPENDENCIES  
+   - modules MUST NOT assume external completion of their objective  
+
+---
+
+### ARCHITECTURAL IMPLICATION  
+
+MODULE BOUNDARY = RESPONSIBILITY BOUNDARY  
+
+IF a responsibility exists:
+
+→ it MUST belong to exactly ONE module  
+
+---
+
+### VALIDATION CONDITION  
+
+A module FAILS completeness IF:
+
+- it requires external logic to complete its objective  
+- it outputs incomplete or unresolved state  
+- it depends on implicit behavior outside defined flow  
+
+---
+
+### ENFORCEMENT  
+
+IF ANY MODULE:
+
+- is partially implemented  
+- leaks responsibility  
+- depends on undefined external completion  
+
+→ BLOCKED: ARCHITECTURAL VIOLATION  
+
+---
+
+### SYSTEM EFFECT  
+
+- eliminates fragmented logic  
+- prevents responsibility drift  
+- enforces deterministic module behavior  
+- guarantees structural integrity across layers  
+
+---
+
+### CLASSIFICATION  
+
+- Class: Structural  
+- Reversibility: Forward-only  
+- Invariant Surface: Module Integrity  
+
+---
+
+END SECTION
