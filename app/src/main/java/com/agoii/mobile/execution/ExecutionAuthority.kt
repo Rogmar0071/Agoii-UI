@@ -50,6 +50,12 @@ class ExecutionAuthority {
 
         val contracts = input.contracts
 
+        // ---------- GUARD: INCOMPLETE CONTRACT ----------
+
+        if (contracts.isEmpty()) {
+            return ExecutionAuthorityResult.Blocked("INCOMPLETE_CONTRACT")
+        }
+
         // ---------- RULE 1: NON-EMPTY ----------
 
         if (contracts.isEmpty()) {
