@@ -132,8 +132,9 @@ class CoreBridge(context: Context) {
             // If Governor just emitted TASK_ASSIGNED, invoke ExecutionModule
             if (latestEvent?.type == EventTypes.TASK_ASSIGNED) {
                 executionModule.processState(projectId, latestEvent)
-                // Return the result event (TASK_COMPLETED or TASK_FAILED)
-                return ledger.loadEvents(projectId).lastOrNull()
+                // ExecutionModule appended result event; reload once to get it
+                val updatedEvents = ledger.loadEvents(projectId)
+                return updatedEvents.lastOrNull()
             }
             
             return latestEvent

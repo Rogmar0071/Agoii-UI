@@ -60,6 +60,7 @@ class ExecutionAuthority {
 
     companion object {
         // Execution input templates
+        // Format: taskId (String), position (Int), total (Int)
         private const val TASK_DESCRIPTION_TEMPLATE = "Execute task %s at position %d of %d"
         private const val OUTPUT_SCHEMA_STANDARD = "Standard task execution result with position tracking"
     }

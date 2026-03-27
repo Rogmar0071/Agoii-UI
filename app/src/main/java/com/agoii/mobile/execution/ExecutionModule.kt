@@ -134,8 +134,11 @@ class ExecutionModule(
         /**
          * Default contractor profile used when a contractor is not found in the registry.
          * This allows execution to proceed with minimal but reasonable capabilities.
+         * 
+         * @param contractorId The ID to assign to the default contractor
+         * @return An UNVERIFIED ContractorProfile with minimal capabilities
          */
-        fun createDefaultContractor(contractorId: String): ContractorProfile {
+        private fun createDefaultContractor(contractorId: String): ContractorProfile {
             return ContractorProfile(
                 id = contractorId,
                 capabilities = ContractorCapabilityVector(
