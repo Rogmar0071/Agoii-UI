@@ -262,5 +262,127 @@ IF ANY MODULE:
 → BLOCKED: ARCHITECTURAL VIOLATION
 
 ---
+## 29. CONTRACT CONVERGENCE LAW (NEW — CRITICAL)
 
-END OF APPENDIX
+STATUS: ENFORCED  
+SCOPE: ALL MODULE CONSTRUCTION & MUTATION  
+
+---
+
+### PRINCIPLE
+
+ALL contract execution MUST follow a deterministic convergence loop.
+
+NO module may be accepted after a single generation pass.
+
+---
+
+### MANDATORY LOOP
+
+1. CONTRACT ISSUED  
+   → Defines full surface (no ambiguity)
+
+2. EXECUTION (AGENT OUTPUT)  
+   → Treated as NON-AUTHORITATIVE proposal
+
+3. CONTRACT REPORT (MANDATORY)
+
+   Agent MUST produce a STRUCTURED report of the artifact:
+
+   - Full type inventory  
+   - Function signatures  
+   - Logic flow (stepwise)  
+   - Error conditions  
+   - Trace structure  
+
+   RULE:
+   - Report MUST describe ONLY what exists  
+   - NO interpretation  
+   - NO fixes  
+
+   PURPOSE:
+   → Freeze artifact state for deterministic validation
+
+---
+
+4. VALIDATION (EXECUTION AUTHORITY)
+
+   Validation MUST operate AGAINST the report, not raw code.
+
+   MUST verify:
+
+   - Structural completeness  
+   - Deterministic behavior  
+   - Architecture compliance  
+   - Contract adherence  
+
+   OUTPUT:
+   → PASS or FAIL with explicit violations
+
+---
+
+5. DELTA CONTRACT (MANDATORY ON FAIL)
+
+   IF validation fails:
+
+   - MUST issue DELTA CONTRACT  
+   - MUST embed previous CONTRACT REPORT  
+   - MUST explicitly list:
+     - VERIFIED CORRECT (LOCKED)
+     - VIOLATIONS (ONLY mutable surface)
+
+   RULES:
+
+   - Agent MUST NOT modify any locked sections  
+   - Agent MUST fix ONLY listed violations  
+   - No expansion allowed  
+
+---
+
+6. RE-EXECUTION
+
+   Agent executes DELTA CONTRACT ONLY
+
+---
+
+7. FINAL VALIDATION
+
+   Repeat validation
+
+   IF PASS:
+   → MODULE LOCKED
+
+   IF FAIL:
+   → LOOP continues
+
+---
+
+### STRICT PROHIBITIONS
+
+- No direct rewrite after validation  
+- No re-derivation of full module during delta  
+- No loss of previously validated correctness  
+- No validation without prior report  
+
+---
+
+### SYSTEM EFFECT
+
+This law enforces:
+
+- Deterministic convergence  
+- Zero drift mutation  
+- Minimal token consumption  
+- Guaranteed structural integrity  
+
+---
+
+### CLASSIFICATION
+
+- Class: Governance  
+- Reversibility: Forward-only  
+- Invariant Surface: Contract Integrity + Deterministic Execution  
+
+---
+
+END
