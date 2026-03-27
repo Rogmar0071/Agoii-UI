@@ -187,12 +187,18 @@ class ContractorInvocationLayer(
      *
      * This enforces RRIL-1: report_reference originates from ExecutionEntryPoint
      * and MUST persist across all contracts.
+     *
+     * Field naming: RRIL-1 mandates 'report_reference' as the standard field name.
+     * The 'report_id' variant exists in ExecutionEntryPoint.kt line 168 for backward
+     * compatibility with existing ledger events, but new code should use 'report_reference'.
      */
     private fun deriveReportReference(projectId: String): String? {
         val events = ledger.loadEvents(projectId)
         val contractsGenerated = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
             ?: return null
-        return contractsGenerated.payload["report_id"] as? String
+        // Try report_reference first (RRIL-1 standard), fall back to report_id (legacy)
+        return contractsGenerated.payload["report_reference"] as? String
+            ?: contractsGenerated.payload["report_id"] as? String
     }
 
     /**
@@ -204,13 +210,19 @@ class ContractorInvocationLayer(
     private fun appendResultEvent(projectId: String, result: ContractorResult) {
         when (result) {
             is ContractorResult.Authorized -> {
+                // Extract position and total with validation
+                val position = result.executionOutput.resultArtifact["position"]
+                    ?: throw IllegalStateException("Missing 'position' in execution output")
+                val total = result.executionOutput.resultArtifact["total"]
+                    ?: throw IllegalStateException("Missing 'total' in execution output")
+                
                 val payload = mapOf(
                     "taskId" to result.taskId,
                     "contractorId" to result.contractorId,
                     "reportReference" to result.reportReference,
                     "validationPassed" to result.validationPassed,
-                    "position" to result.executionOutput.resultArtifact["position"],
-                    "total" to result.executionOutput.resultArtifact["total"]
+                    "position" to position,
+                    "total" to total
                 )
                 ledger.appendEvent(projectId, EventTypes.TASK_STARTED, payload)
             }

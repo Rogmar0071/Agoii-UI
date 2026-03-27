@@ -230,7 +230,7 @@ class ExecutionAuthority(
 
         val executionInput = ContractorExecutionInput(
             taskId = contract.taskId,
-            taskDescription = "Execute contract at position ${contract.position}",
+            taskDescription = "Task ${contract.taskId} - Contractor ${contract.contractorId} - Position ${contract.position}/${contract.total}",
             taskPayload = mapOf(
                 "position" to contract.position,
                 "total" to contract.total,
