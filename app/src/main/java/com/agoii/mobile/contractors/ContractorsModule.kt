@@ -60,6 +60,60 @@ sealed class ResolutionResult {
     ) : ResolutionResult()
 }
 
+class SwarmCompositionEngine {
+
+    fun compose(
+        requirements: List<ContractRequirement>,
+        candidates: List<ContractorProfile>,
+        evaluated: List<String>,
+        rejected: List<RejectedContractor>
+    ): ResolutionResult {
+        val remainingRequirements = requirements.toMutableList()
+        val swarmIds = mutableListOf<String>()
+        val available = candidates.toMutableList()
+
+        while (remainingRequirements.isNotEmpty() && available.isNotEmpty()) {
+            val best = available.maxWithOrNull(
+                compareBy<ContractorProfile> { contractor ->
+                    remainingRequirements.count { req ->
+                        contractor.capabilities.any { it.name == req.capability && it.level >= req.requiredLevel }
+                    }.toDouble()
+                }.thenByDescending { it.contractorId }
+            ) ?: break
+
+            val covered = remainingRequirements.filter { req ->
+                best.capabilities.any { it.name == req.capability && it.level >= req.requiredLevel }
+            }
+
+            if (covered.isEmpty()) break
+
+            swarmIds.add(best.contractorId)
+            available.remove(best)
+            remainingRequirements.removeAll(covered.toSet())
+        }
+
+        if (remainingRequirements.isEmpty()) {
+            return ResolutionResult.Swarm(
+                contractorIds = swarmIds,
+                trace = ResolutionTrace(
+                    evaluated = evaluated,
+                    matched = swarmIds,
+                    rejected = rejected
+                )
+            )
+        }
+
+        return ResolutionResult.Blocked(
+            reason = "NO_FEASIBLE_CONTRACTOR",
+            trace = ResolutionTrace(
+                evaluated = evaluated,
+                matched = emptyList(),
+                rejected = rejected
+            )
+        )
+    }
+}
+
 class DeterministicMatchingEngine {
 
     fun resolve(requirements: List<ContractRequirement>, registry: ContractorRegistry): ResolutionResult {
@@ -130,48 +184,11 @@ class DeterministicMatchingEngine {
             )
         }
 
-        val remainingRequirements = requirements.toMutableList()
-        val swarmIds = mutableListOf<String>()
-        val available = allContractors.toMutableList()
-
-        while (remainingRequirements.isNotEmpty() && available.isNotEmpty()) {
-            val best = available.maxWithOrNull(
-                compareBy<ContractorProfile> { contractor ->
-                    remainingRequirements.count { req ->
-                        contractor.capabilities.any { it.name == req.capability && it.level >= req.requiredLevel }
-                    }.toDouble()
-                }.thenByDescending { it.contractorId }
-            ) ?: break
-
-            val covered = remainingRequirements.filter { req ->
-                best.capabilities.any { it.name == req.capability && it.level >= req.requiredLevel }
-            }
-
-            if (covered.isEmpty()) break
-
-            swarmIds.add(best.contractorId)
-            available.remove(best)
-            remainingRequirements.removeAll(covered.toSet())
-        }
-
-        if (remainingRequirements.isEmpty()) {
-            return ResolutionResult.Swarm(
-                contractorIds = swarmIds,
-                trace = ResolutionTrace(
-                    evaluated = allContractors.map { it.contractorId },
-                    matched = swarmIds,
-                    rejected = rejected
-                )
-            )
-        }
-
-        return ResolutionResult.Blocked(
-            reason = "NO_FEASIBLE_CONTRACTOR",
-            trace = ResolutionTrace(
-                evaluated = allContractors.map { it.contractorId },
-                matched = emptyList(),
-                rejected = rejected
-            )
+        return SwarmCompositionEngine().compose(
+            requirements = requirements,
+            candidates = allContractors,
+            evaluated = allContractors.map { it.contractorId },
+            rejected = rejected
         )
     }
 }
