@@ -234,7 +234,7 @@ ExecutionModule appends RESULT event (TASK_COMPLETED or TASK_FAILED)
 
 ### Created
 1. `app/src/main/java/com/agoii/mobile/execution/ExecutionModule.kt` (195 lines)
-2. `app/src/test/java/com/agoii/mobile/ExecutionModuleTest.kt` (203 lines)
+2. `app/src/test/java/com/agoii/mobile/ExecutionModuleTest.kt` (206 lines)
 
 ### Modified
 1. `app/src/main/java/com/agoii/mobile/execution/ExecutionAuthority.kt`

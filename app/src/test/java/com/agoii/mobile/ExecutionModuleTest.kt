@@ -180,7 +180,7 @@ class ExecutionModuleTest {
     // ══════════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `processState - no orchestration: single function call returns immediately`() {
+    fun `processState - no orchestration: single function call blocks until completion`() {
         registry.registerVerified(verifiedContractor())
 
         val taskAssignedEvent = Event(
@@ -193,14 +193,17 @@ class ExecutionModuleTest {
             )
         )
 
-        // Verify synchronous execution: no async constructs, no listeners
-        // ExecutionModule should complete in a single call without spawning threads
-        val threadCountBefore = Thread.activeCount()
-        executionModule.processState("project-1", taskAssignedEvent)
-        val threadCountAfter = Thread.activeCount()
-
-        // No new threads should be spawned for synchronous execution
-        assertEquals("ExecutionModule should not spawn async threads", 
-                     threadCountBefore, threadCountAfter)
+        // Verify synchronous execution: processState() blocks until completion
+        // The result should be immediately available after the call returns
+        val result = executionModule.processState("project-1", taskAssignedEvent)
+        
+        // If execution was async, result might be null or incomplete
+        assertNotNull("processState() must block and return result", result)
+        assertEquals(ExecutionStatus.SUCCESS, result?.status)
+        
+        // Verify event was appended during the call (synchronous write)
+        val events = store.loadEvents("project-1")
+        assertEquals("Event should be written synchronously", 1, events.size)
+        assertEquals(EventTypes.TASK_COMPLETED, events[0].type)
     }
 }
