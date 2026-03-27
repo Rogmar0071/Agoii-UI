@@ -132,11 +132,15 @@ class ExecutionModule(
 
     /**
      * Resolve contractor from registry.
+     * 
+     * Returns the contractor from registry if found, otherwise returns a default
+     * UNVERIFIED contractor profile to allow execution to proceed with minimal capabilities.
      */
     private fun resolveContractor(contractorId: String): ContractorProfile {
-        // Find contractor in registry or return default
+        // Find contractor in registry
         val contractor = registry.allVerified().firstOrNull { it.id == contractorId }
         
+        // Return default unverified contractor if not found in registry
         return contractor ?: ContractorProfile(
             id = contractorId,
             capabilities = ContractorCapabilityVector(
@@ -149,9 +153,9 @@ class ExecutionModule(
             verificationCount = 0,
             successCount = 0,
             failureCount = 0,
-            status = VerificationStatus.VERIFIED,
+            status = VerificationStatus.UNVERIFIED,
             source = "default",
-            notes = listOf("Contractor not found in registry; using default profile")
+            notes = listOf("Contractor not found in registry; using default unverified profile")
         )
     }
 

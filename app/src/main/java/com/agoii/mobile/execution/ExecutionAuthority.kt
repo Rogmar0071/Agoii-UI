@@ -196,6 +196,17 @@ class ExecutionAuthority {
             )
         }
         
+        // Validate position is within bounds [1, total]
+        if (taskContract.position > taskContract.total) {
+            return ContractorResult(
+                taskId = taskContract.taskId,
+                contractorId = taskContract.contractorId,
+                status = ExecutionStatus.FAILURE,
+                artifact = emptyMap(),
+                error = "POSITION_EXCEEDS_TOTAL"
+            )
+        }
+        
         // Validate contractor capability
         if (contractorProfile.capabilities.capabilityScore <= 0) {
             return ContractorResult(
