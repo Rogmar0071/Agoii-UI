@@ -24,7 +24,7 @@ import org.junit.Assert.*
 class FirstExecutionLoopTest {
     
     @Test
-    fun `FEL completes without crash and returns traceable result`() {
+    fun firstExecutionLoop_completes_without_crash_and_returns_traceable_result() {
         // Setup
         val projectId = "fel-test-project"
         val ledger = EventLedger()
@@ -129,7 +129,7 @@ class FirstExecutionLoopTest {
     }
     
     @Test
-    fun `Contractor selection uses DeterministicMatchingEngine correctly`() {
+    fun contractorSelection_uses_DeterministicMatchingEngine_correctly() {
         val registry = RealContractorRegistry()
         val engine = DeterministicMatchingEngine()
         
@@ -160,7 +160,7 @@ class FirstExecutionLoopTest {
     }
     
     @Test
-    fun `ContractorInvocationLayer returns structured result`() {
+    fun contractorInvocationLayer_returns_structured_result() {
         val invocationLayer = ContractorInvocationLayer()
         
         val taskContract = TaskAssignedContract(
@@ -195,7 +195,7 @@ class FirstExecutionLoopTest {
     }
     
     @Test
-    fun `FEL handles blocked assignment correctly`() {
+    fun firstExecutionLoop_handles_blocked_assignment_correctly() {
         val invocationLayer = ContractorInvocationLayer()
         
         val blockedContract = TaskAssignedContract(
