@@ -137,7 +137,7 @@ class CoreBridge(context: Context) {
 
         val match = contracts
             ?.filterIsInstance<Map<*, *>>()
-            ?.firstOrNull { it["id"] == contractId }
+            ?.firstOrNull { it["contractId"] == contractId }
 
         return match?.get("name")?.toString() ?: contractId
     }
