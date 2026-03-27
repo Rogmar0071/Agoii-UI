@@ -38,6 +38,27 @@ interface ContractorRegistry {
     fun getAll(): List<ContractorProfile>
 }
 
+data class ExecutionContract(
+    val contractId: String,
+    val reportReference: String,
+    val position: String
+)
+
+enum class AssignmentMode { MATCHED, SWARM, BLOCKED }
+
+data class Assignment(
+    val contractorIds: List<String>,
+    val mode: AssignmentMode
+)
+
+data class TaskAssignedContract(
+    val contractId: String,
+    val reportReference: String,
+    val position: String,
+    val assignment: Assignment,
+    val trace: ResolutionTrace
+)
+
 data class RejectedContractor(
     val contractorId: String,
     val reason: String
@@ -68,14 +89,21 @@ sealed class ResolutionResult {
 
 class DeterministicMatchingEngine {
     fun resolve(
+        contract: ExecutionContract,
         requirements: List<ContractRequirement>,
         registry: ContractorRegistry
-    ): ResolutionResult {
+    ): TaskAssignedContract {
         // Step 1 — Load
         val contractors = registry.getAll()
         if (contractors.isEmpty()) {
-            return ResolutionResult.Blocked(
-                reason = "REGISTRY_EMPTY",
+            return TaskAssignedContract(
+                contractId = contract.contractId,
+                reportReference = contract.reportReference,
+                position = contract.position,
+                assignment = Assignment(
+                    contractorIds = emptyList(),
+                    mode = AssignmentMode.BLOCKED
+                ),
                 trace = ResolutionTrace(
                     evaluated = emptyList(),
                     matched = emptyList(),
@@ -107,12 +135,44 @@ class DeterministicMatchingEngine {
 
         // Step 4 — No Valid
         if (valid.isEmpty()) {
-            return SwarmCompositionEngine().compose(
+            val swarmResult = SwarmCompositionEngine().compose(
                 requirements,
                 contractors,
                 contractors.map { it.contractorId },
                 rejected
             )
+            return when (swarmResult) {
+                is ResolutionResult.Swarm -> TaskAssignedContract(
+                    contractId = contract.contractId,
+                    reportReference = contract.reportReference,
+                    position = contract.position,
+                    assignment = Assignment(
+                        contractorIds = swarmResult.contractors.map { it.contractorId },
+                        mode = AssignmentMode.SWARM
+                    ),
+                    trace = swarmResult.trace
+                )
+                is ResolutionResult.Blocked -> TaskAssignedContract(
+                    contractId = contract.contractId,
+                    reportReference = contract.reportReference,
+                    position = contract.position,
+                    assignment = Assignment(
+                        contractorIds = swarmResult.trace.matched,
+                        mode = AssignmentMode.BLOCKED
+                    ),
+                    trace = swarmResult.trace
+                )
+                is ResolutionResult.Matched -> TaskAssignedContract(
+                    contractId = contract.contractId,
+                    reportReference = contract.reportReference,
+                    position = contract.position,
+                    assignment = Assignment(
+                        contractorIds = listOf(swarmResult.contractor.contractorId),
+                        mode = AssignmentMode.MATCHED
+                    ),
+                    trace = swarmResult.trace
+                )
+            }
         }
 
         // Steps 5 & 6 — Scoring and Selection
@@ -137,8 +197,14 @@ class DeterministicMatchingEngine {
         }
 
         // Step 7 — Return
-        return ResolutionResult.Matched(
-            contractor = best,
+        return TaskAssignedContract(
+            contractId = contract.contractId,
+            reportReference = contract.reportReference,
+            position = contract.position,
+            assignment = Assignment(
+                contractorIds = listOf(best.contractorId),
+                mode = AssignmentMode.MATCHED
+            ),
             trace = ResolutionTrace(
                 evaluated = evaluated,
                 matched = listOf(best.contractorId),
