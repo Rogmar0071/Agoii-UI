@@ -50,6 +50,8 @@ sealed class ExecutionAuthorityResult {
 
 class ExecutionAuthority {
 
+    private val contractorExecutor = ContractorExecutor()
+
     fun evaluate(input: ExecutionContractInput): ExecutionAuthorityResult {
 
         val reportId  = input.reportId
@@ -201,8 +203,6 @@ class ExecutionAuthority {
         
         // ---------- EXECUTE VIA CONTRACTOR EXECUTOR ----------
         
-        val executor = ContractorExecutor()
-        
         // Build execution input
         val executionInput = ContractorExecutionInput(
             taskId = taskContract.taskId,
@@ -217,7 +217,7 @@ class ExecutionAuthority {
         )
         
         // Execute
-        val executionOutput = executor.execute(executionInput, contractorProfile)
+        val executionOutput = contractorExecutor.execute(executionInput, contractorProfile)
         
         // Convert to ContractorResult
         return ContractorResult(
