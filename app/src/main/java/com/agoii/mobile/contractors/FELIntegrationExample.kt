@@ -6,19 +6,22 @@ import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.execution.ContractorExecutor
 import com.agoii.mobile.execution.ExecutionEntryPoint
-import com.agoii.mobile.execution.ExecutionLifecycle
 import com.agoii.mobile.governor.Governor
 
 /**
  * FEL Integration Example — demonstrates the complete First Execution Loop.
  *
- * UPDATED FOR FEL PASS 2: Now uses ExecutionLifecycle for in-flow contractor invocation.
+ * COMPLIANT PATTERN (Post-Recovery):
+ * - Direct component invocation
+ * - NO orchestration layers (ExecutionLifecycle removed)
+ * - Governor remains sole state authority
  *
  * This example shows how to:
  * 1. Submit an intent
  * 2. Generate contracts via ExecutionEntryPoint
- * 3. Run execution lifecycle with integrated contractor invocation
- * 4. Retrieve traceable results
+ * 3. Progress through Governor states
+ * 4. Execute contractor invocation directly via ContractorExecutor
+ * 5. Retrieve traceable results
  *
  * Usage:
  *   val example = FELIntegrationExample()
@@ -33,8 +36,9 @@ class FELIntegrationExample {
     private val repository = EventRepository(ledger)
     private val registry = RealContractorRegistry()
     private val entryPoint = ExecutionEntryPoint(ledger)
-    private val contractorExecutor = ContractorExecutor(registry)
-    private val lifecycle = ExecutionLifecycle(repository, contractorExecutor, registry)
+    private val governor = Governor(repository, null)
+    private val matchingEngine = DeterministicMatchingEngine()
+    private val invocationLayer = ContractorInvocationLayer()
     
     /**
      * Run the complete FEL flow from intent to contractor result.
@@ -68,22 +72,36 @@ class FELIntegrationExample {
             println("  Contract ${index + 1}: ${c["contractId"]} - ${c["name"]}")
         }
         
-        // Step 3: Run Execution Lifecycle (Governor + Contractor Invocation)
-        println("\n=== FEL Step 3: Execute Lifecycle with Integrated Contractor Invocation ===")
-        println("Running execution lifecycle (Governor + contractor invocation)...")
+        // Step 3: Governor Progression (COMPLIANT - direct calls)
+        println("\n=== FEL Step 3: Governor Progression ===")
         
-        val lifecycleResult = lifecycle.runLifecycle(projectId)
+        // CONTRACTS_GENERATED -> CONTRACTS_READY
+        var result = governor.runGovernor(projectId)
+        println("State transition: CONTRACTS_GENERATED -> CONTRACTS_READY (${result})")
         
-        println("Lifecycle completed: ${lifecycleResult.completed}")
-        println("Final state: ${lifecycleResult.finalState}")
-        println("Contractor invocations: ${lifecycleResult.contractorResults.size}")
+        // CONTRACTS_READY -> CONTRACT_STARTED
+        result = governor.runGovernor(projectId)
+        println("State transition: CONTRACTS_READY -> CONTRACT_STARTED (${result})")
         
-        // Step 4: Result Analysis
-        println("\n=== FEL Step 4: Contractor Execution Result ===")
+        // CONTRACT_STARTED -> TASK_ASSIGNED
+        result = governor.runGovernor(projectId)
+        println("State transition: CONTRACT_STARTED -> TASK_ASSIGNED (${result})")
         
-        val contractorResult = lifecycleResult.contractorResults.firstOrNull()
-            ?: throw IllegalStateException("No contractor result available")
+        // Step 4: DIRECT Contractor Invocation (COMPLIANT PATTERN)
+        println("\n=== FEL Step 4: Contractor Invocation (Direct) ===")
         
+        val events = ledger.loadEvents(projectId)
+        val taskAssignedEvent = events.last { it.type == EventTypes.TASK_ASSIGNED }
+        
+        val taskId = taskAssignedEvent.payload["taskId"] as String
+        println("Task assigned: $taskId")
+        
+        // Direct invocation via ContractorExecutor (NO orchestration layer)
+        val contractorExecutor = ContractorExecutor(registry)
+        val contractorResult = contractorExecutor.executeFromTaskAssigned(events, taskAssignedEvent)
+        
+        // Step 5: Result Analysis
+        println("\n=== FEL Step 5: Contractor Execution Result ===")
         println("Status: ${contractorResult.status}")
         println("Contractor: ${contractorResult.contractor_id}")
         println("Contract ID: ${contractorResult.contract_id}")
@@ -109,11 +127,12 @@ class FELIntegrationExample {
         println("\n=== FEL Complete ===")
         println("✓ Intent accepted")
         println("✓ Contracts derived")
-        println("✓ Contractor selected (WITHIN system flow)")
-        println("✓ Contractor invoked (WITHIN system flow)")
+        println("✓ Governor progression (direct calls)")
+        println("✓ Contractor selected (direct invocation)")
+        println("✓ Contractor invoked (NO orchestration layer)")
         println("✓ Result returned")
         println("✓ No invariant violations")
-        println("✓ Execution lifecycle managed by system, not external tests")
+        println("✓ COMPLIANT PATTERN: Direct component invocation only")
         
         return contractorResult
     }
@@ -178,8 +197,9 @@ fun main() {
     example.demonstrateContractorSelection()
     
     println("\n" + "=".repeat(70))
-    println("RUNNING COMPLETE FIRST EXECUTION LOOP (FEL PASS 2)")
-    println("WITH IN-FLOW CONTRACTOR INVOCATION")
+    println("RUNNING COMPLETE FIRST EXECUTION LOOP (POST-RECOVERY)")
+    println("COMPLIANT PATTERN: Direct component invocation")
+    println("NO ORCHESTRATION LAYERS")
     println("=".repeat(70))
     
     // Then run the complete loop
@@ -187,13 +207,12 @@ fun main() {
     
     // Verify success
     if (result.status == "success") {
-        println("\n✅ FEL PASS 2 SUCCESSFUL")
+        println("\n✅ FEL SUCCESSFUL (COMPLIANT)")
         println("   Contractor ${result.contractor_id} executed contract ${result.contract_id}")
         println("   Report reference: ${result.report_reference}")
-        println("   Invocation happened WITHIN system flow (not external)")
+        println("   Pattern: Direct invocation (NO orchestration)")
     } else {
         println("\n❌ FEL FAILED")
         println("   Error: ${result.error}")
     }
 }
-

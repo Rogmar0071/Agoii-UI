@@ -7,117 +7,28 @@ import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.execution.ContractorExecutor
 import com.agoii.mobile.execution.ExecutionEntryPoint
-import com.agoii.mobile.execution.ExecutionLifecycle
 import com.agoii.mobile.governor.Governor
 import org.junit.Test
 import org.junit.Assert.*
 
 /**
- * FirstExecutionLoopTest — validates the complete FEL flow.
+ * FirstExecutionLoopTest — validates the complete FEL flow using COMPLIANT direct invocation.
+ *
+ * COMPLIANT PATTERN (Post-Recovery):
+ * - Direct Governor.runGovernor() calls
+ * - Direct ContractorExecutor.executeFromTaskAssigned() invocation
+ * - NO orchestration layers (ExecutionLifecycle removed)
+ * - Governor remains sole state authority
  *
  * Tests:
  * 1. Intent creation
  * 2. Contract derivation via ExecutionEntryPoint
- * 3. Governor progression with integrated contractor invocation
- * 4. Contractor selection via ContractorsModule (within system flow)
- * 5. Real contractor invocation (within system flow)
+ * 3. Governor progression to TASK_ASSIGNED
+ * 4. Direct contractor invocation via ContractorExecutor
+ * 5. Real contractor execution
  * 6. Result traceability
  */
 class FirstExecutionLoopTest {
-    
-    @Test
-    fun firstExecutionLoop_completes_with_in_flow_contractor_invocation() {
-        // Setup
-        val projectId = "fel-test-project"
-        val ledger = EventLedger()
-        val repository = EventRepository(ledger)
-        
-        // Create RealContractorRegistry with three contractors
-        val registry = RealContractorRegistry()
-        
-        // Verify registry has contractors
-        val contractors = registry.getAll()
-        assertEquals("Registry should have 3 contractors", 3, contractors.size)
-        assertTrue("Should have OpenAI", contractors.any { it.contractorId == "openai-gpt4" })
-        assertTrue("Should have Gemini", contractors.any { it.contractorId == "gemini-pro" })
-        assertTrue("Should have Copilot", contractors.any { it.contractorId == "github-copilot" })
-        
-        // Step 1: Submit intent
-        val intentPayload = mapOf(
-            "intentId" to "test-intent-1",
-            "objective" to "Implement user authentication system"
-        )
-        ledger.appendEvent(projectId, EventTypes.INTENT_SUBMITTED, intentPayload)
-        
-        // Step 2: Execute intent (derives contracts)
-        val entryPoint = ExecutionEntryPoint(ledger)
-        val authResult = entryPoint.executeIntent(projectId, intentPayload)
-        
-        assertTrue("ExecutionEntryPoint should authorize", authResult.authorized)
-        assertNotNull("Should have event", authResult.event)
-        assertEquals("Should be CONTRACTS_GENERATED", EventTypes.CONTRACTS_GENERATED, authResult.event?.type)
-        
-        // Verify contracts were generated
-        val events = ledger.loadEvents(projectId)
-        val contractsGenerated = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
-        assertNotNull("CONTRACTS_GENERATED event should exist", contractsGenerated)
-        
-        val reportId = contractsGenerated?.payload?.get("report_id") as? String
-        assertNotNull("Should have report_id", reportId)
-        
-        val contracts = contractsGenerated?.payload?.get("contracts") as? List<*>
-        assertNotNull("Should have contracts", contracts)
-        assertTrue("Should have at least one contract", contracts?.isNotEmpty() == true)
-        
-        // Step 3: Run execution lifecycle with integrated contractor invocation
-        // THIS IS THE KEY CHANGE: contractor invocation happens WITHIN the system flow
-        val contractorExecutor = ContractorExecutor(registry)
-        val lifecycle = ExecutionLifecycle(repository, contractorExecutor, registry)
-        
-        val lifecycleResult = lifecycle.runLifecycle(projectId)
-        
-        // Verify lifecycle completed
-        assertTrue("Lifecycle should complete", lifecycleResult.completed)
-        assertEquals("Should reach COMPLETED state", 
-            Governor.GovernorResult.COMPLETED, lifecycleResult.finalState)
-        
-        // Verify contractor invocation happened WITHIN the system flow
-        assertTrue("Should have contractor results", lifecycleResult.contractorResults.isNotEmpty())
-        val contractorResult = lifecycleResult.contractorResults.first()
-        
-        // Verify contractor was invoked successfully
-        assertEquals("Execution should succeed", "success", contractorResult.status)
-        assertNotNull("Should have contractor_id", contractorResult.contractor_id)
-        assertTrue("Contractor should be one of the three", 
-            contractorResult.contractor_id in listOf("openai-gpt4", "gemini-pro", "github-copilot"))
-        
-        // Verify result traceability
-        assertNotNull("Should have contract_id", contractorResult.contract_id)
-        assertTrue("contract_id should not be empty", contractorResult.contract_id.isNotEmpty())
-        
-        assertNotNull("Should have report_reference", contractorResult.report_reference)
-        assertEquals("report_reference should match", reportId, contractorResult.report_reference)
-        
-        // Verify output structure
-        val output = contractorResult.output as? Map<*, *>
-        assertNotNull("Output should be a map", output)
-        
-        assertTrue("Output should indicate contractor was invoked", 
-            output?.get("contractor_invoked") == true)
-        assertEquals("Output should contain correct contractor_id",
-            contractorResult.contractor_id, output?.get("contractor_id"))
-        assertEquals("Output should contain correct contract_id",
-            contractorResult.contract_id, output?.get("contract_id"))
-        assertEquals("Output should contain correct report_reference",
-            contractorResult.report_reference, output?.get("report_reference"))
-        
-        // Verify execution trace is present
-        val executionTrace = output?.get("execution_trace") as? Map<*, *>
-        assertNotNull("Should have execution trace", executionTrace)
-        assertNotNull("Trace should have evaluated contractors", executionTrace?.get("evaluated"))
-        assertNotNull("Trace should have matched contractors", executionTrace?.get("matched"))
-        assertNotNull("Trace should have rejected contractors", executionTrace?.get("rejected"))
-    }
     
     @Test
     fun firstExecutionLoop_completes_without_crash_and_returns_traceable_result() {
@@ -152,7 +63,7 @@ class FirstExecutionLoopTest {
         assertEquals("Should be CONTRACTS_GENERATED", EventTypes.CONTRACTS_GENERATED, authResult.event?.type)
         
         // Verify contracts were generated
-        val events = ledger.loadEvents(projectId)
+        var events = ledger.loadEvents(projectId)
         val contractsGenerated = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
         assertNotNull("CONTRACTS_GENERATED event should exist", contractsGenerated)
         
@@ -163,7 +74,7 @@ class FirstExecutionLoopTest {
         assertNotNull("Should have contracts", contracts)
         assertTrue("Should have at least one contract", contracts?.isNotEmpty() == true)
         
-        // Step 3: Governor progression
+        // Step 3: Governor progression (COMPLIANT - direct calls)
         val governor = Governor(repository, null)
         
         // Advance from CONTRACTS_GENERATED -> CONTRACTS_READY
@@ -178,76 +89,14 @@ class FirstExecutionLoopTest {
         result = governor.runGovernor(projectId)
         assertEquals("Should advance to TASK_ASSIGNED", Governor.GovernorResult.ADVANCED, result)
         
-        // Step 4: Verify TASK_ASSIGNED event exists
-        val updatedEvents = ledger.loadEvents(projectId)
-        val taskAssigned = updatedEvents.firstOrNull { 
-            it.type == EventTypes.TASK_ASSIGNED && 
-            it.payload["position"]?.let { pos -> 
-                when (pos) {
-                    is Int -> pos == 1
-                    is Double -> pos.toInt() == 1
-                    else -> false
-                }
-            } ?: false
-        }
-        assertNotNull("TASK_ASSIGNED event should exist for position 1", taskAssigned)
+        // Step 4: Extract TASK_ASSIGNED event from ledger
+        events = ledger.loadEvents(projectId)
+        val taskAssignedEvent = events.lastOrNull { it.type == EventTypes.TASK_ASSIGNED }
+        assertNotNull("TASK_ASSIGNED event should exist", taskAssignedEvent)
         
-        val taskId = taskAssigned?.payload?.get("taskId") as? String
-        assertNotNull("Should have taskId", taskId)
-        
-        // Step 5: Contractor selection and invocation (proper flow)
-        // Extract contract details from CONTRACTS_GENERATED event
-        val position = when (val pos = taskAssigned?.payload?.get("position")) {
-            is Int -> pos
-            is Double -> pos.toInt()
-            else -> 1
-        }
-        
-        val contractData = contracts?.firstOrNull { contract ->
-            (contract as? Map<*, *>)?.get("position")?.let { p ->
-                when (p) {
-                    is Int -> p == position
-                    is Double -> p.toInt() == position
-                    else -> false
-                }
-            } ?: false
-        } as? Map<*, *>
-        
-        val contractId = contractData?.get("contractId") as? String
-        assertNotNull("Should have contractId", contractId)
-        
-        // Build ExecutionContract for ContractorsModule
-        val executionContract = ExecutionContract(
-            contractId = contractId!!,
-            reportReference = reportId!!,
-            position = position.toString()
-        )
-        
-        // Define contract requirements
-        val requirements = listOf(
-            ContractRequirement("code_generation", 3, 1.0),
-            ContractRequirement("reasoning", 2, 0.5)
-        )
-        
-        // Step 5a: Contractor selection via ContractorsModule
-        val matchingEngine = DeterministicMatchingEngine()
-        val taskContract = matchingEngine.resolve(
-            contract = executionContract,
-            requirements = requirements,
-            registry = registry
-        )
-        
-        // Step 5b: Contractor invocation via ContractorInvocationLayer
-        val contractPayload = mapOf(
-            "taskId" to taskId!!,
-            "contractId" to contractId,
-            "position" to position,
-            "reportReference" to reportId,
-            "objective" to "Execute contract $contractId at position $position"
-        )
-        
-        val invocationLayer = ContractorInvocationLayer()
-        val contractorResult = invocationLayer.invoke(taskContract, contractPayload)
+        // Step 5: DIRECT contractor invocation (COMPLIANT PATTERN - NO orchestration)
+        val contractorExecutor = ContractorExecutor(registry)
+        val contractorResult = contractorExecutor.executeFromTaskAssigned(events, taskAssignedEvent!!)
         
         // Verify contractor was invoked successfully
         assertEquals("Execution should succeed", "success", contractorResult.status)
@@ -255,7 +104,7 @@ class FirstExecutionLoopTest {
         assertTrue("Contractor should be one of the three", 
             contractorResult.contractor_id in listOf("openai-gpt4", "gemini-pro", "github-copilot"))
         
-        // Step 6: Verify result traceability
+        // Step 6: Verify result traceability (RRID preservation)
         assertNotNull("Should have contract_id", contractorResult.contract_id)
         assertTrue("contract_id should not be empty", contractorResult.contract_id.isNotEmpty())
         
