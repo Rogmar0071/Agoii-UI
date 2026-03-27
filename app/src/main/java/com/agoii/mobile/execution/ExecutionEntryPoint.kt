@@ -133,15 +133,18 @@ class ExecutionEntryPoint(
             )
         }
 
+        val reportId = UUID.nameUUIDFromBytes("rrid:$intentId".toByteArray(Charsets.UTF_8)).toString()
+
         val executionContracts = steps.map { step ->
             ExecutionContract(
-                contractId = "contract_${step.position}",
-                name       = step.description,
-                position   = step.position
+                contractId      = "contract_${step.position}",
+                name            = step.description,
+                position        = step.position,
+                reportReference = reportId
             )
         }
 
-        val authorityResult = executionAuthority.evaluate(ExecutionContractInput(executionContracts))
+        val authorityResult = executionAuthority.evaluate(ExecutionContractInput(executionContracts, reportId))
 
         if (authorityResult is ExecutionAuthorityResult.Blocked) {
             return AuthorizationResult.blocked(authorityResult.reason, "AUTHORIZATION")
@@ -153,14 +156,16 @@ class ExecutionEntryPoint(
         val contractSetId = UUID.randomUUID().toString()
         val enrichedContracts: List<Map<String, Any>> = ordered.map { c ->
             mapOf(
-                "contractId" to c.contractId,
-                "name"       to c.name,
-                "position"   to c.position
+                "contractId"       to c.contractId,
+                "name"             to c.name,
+                "position"         to c.position,
+                "report_reference" to reportId
             )
         }
         val payload: Map<String, Any> = mapOf(
             "intentId"      to intentId,
             "contractSetId" to contractSetId,
+            "report_id"     to reportId,
             "contracts"     to enrichedContracts,
             "total"         to total
         )

@@ -20,13 +20,15 @@ package com.agoii.mobile.execution
 // ---------- INPUT ----------
 
 data class ExecutionContractInput(
-    val contracts: List<ExecutionContract>
+    val contracts: List<ExecutionContract>,
+    val reportId: String
 )
 
 data class ExecutionContract(
     val contractId: String,
     val name: String,
-    val position: Int
+    val position: Int,
+    val reportReference: String
 )
 
 // ---------- OUTPUT ----------
@@ -48,7 +50,14 @@ class ExecutionAuthority {
 
     fun evaluate(input: ExecutionContractInput): ExecutionAuthorityResult {
 
+        val reportId  = input.reportId
         val contracts = input.contracts
+
+        // ---------- RULE 0: REPORT ID PRESENT ----------
+
+        if (reportId.isBlank()) {
+            return ExecutionAuthorityResult.Blocked("MISSING_REPORT_ID")
+        }
 
         // ---------- GUARD: INCOMPLETE CONTRACT ----------
 
@@ -76,6 +85,14 @@ class ExecutionAuthority {
 
             if (contract.position <= 0) {
                 return ExecutionAuthorityResult.Blocked("INVALID_FIELD")
+            }
+
+            if (contract.reportReference.isBlank()) {
+                return ExecutionAuthorityResult.Blocked("MISSING_REPORT_REFERENCE")
+            }
+
+            if (contract.reportReference != reportId) {
+                return ExecutionAuthorityResult.Blocked("REPORT_REFERENCE_MISMATCH")
             }
         }
 
