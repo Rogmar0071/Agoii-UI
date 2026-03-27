@@ -29,7 +29,7 @@ data class RejectedContractor(
 )
 
 data class ResolutionTrace(
-    val evaluated: List<ContractorProfile>,
+    val evaluated: List<String>,
     val matched: List<ContractorProfile>,
     val rejected: List<RejectedContractor>
 )
@@ -70,7 +70,7 @@ class DeterministicMatchingEngine {
         }
 
         // Step 2 — Initialize
-        val evaluated = contractors
+        val evaluated = contractors.map { it.contractorId }
         val rejected = mutableListOf<RejectedContractor>()
         val valid = mutableListOf<ContractorProfile>()
 
@@ -157,7 +157,7 @@ class SwarmCompositionEngine {
                 return ResolutionResult.Blocked(
                     reason = "NO_FEASIBLE_CONTRACTOR",
                     trace = ResolutionTrace(
-                        evaluated = candidates,
+                        evaluated = candidates.map { it.contractorId },
                         matched = selected,
                         rejected = rejected
                     )
@@ -180,7 +180,7 @@ class SwarmCompositionEngine {
         return ResolutionResult.Swarm(
             contractors = selected,
             trace = ResolutionTrace(
-                evaluated = candidates,
+                evaluated = candidates.map { it.contractorId },
                 matched = selected,
                 rejected = rejected
             )
