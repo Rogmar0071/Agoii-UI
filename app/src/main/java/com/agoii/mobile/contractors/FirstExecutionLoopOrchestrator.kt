@@ -78,6 +78,9 @@ class FirstExecutionLoopOrchestrator(
         )
         
         // Define contract requirements (minimal for FEL)
+        // Note: In production, these requirements should be derived from the contract
+        // payload or configured based on the objective. For FEL demonstration,
+        // we use basic requirements that all registered contractors can satisfy.
         val requirements = listOf(
             ContractRequirement("code_generation", 3, 1.0),
             ContractRequirement("reasoning", 2, 0.5)

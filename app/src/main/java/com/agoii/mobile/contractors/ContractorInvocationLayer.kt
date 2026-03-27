@@ -62,7 +62,8 @@ class ContractorInvocationLayer {
         }
         
         // For FEL, we use the first contractor (MATCHED mode)
-        // SWARM mode is excluded from FEL scope
+        // Note: SWARM mode is excluded from FEL scope as per contract requirements.
+        // In MATCHED mode, exactly one contractor is selected by DeterministicMatchingEngine.
         val contractorId = contractorIds.first()
         
         return try {

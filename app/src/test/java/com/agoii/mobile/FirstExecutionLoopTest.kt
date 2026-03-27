@@ -84,8 +84,17 @@ class FirstExecutionLoopTest {
         
         // Step 4: Verify TASK_ASSIGNED event exists
         val updatedEvents = ledger.loadEvents(projectId)
-        val taskAssigned = updatedEvents.lastOrNull { it.type == EventTypes.TASK_ASSIGNED }
-        assertNotNull("TASK_ASSIGNED event should exist", taskAssigned)
+        val taskAssigned = updatedEvents.firstOrNull { 
+            it.type == EventTypes.TASK_ASSIGNED && 
+            it.payload["position"]?.let { pos -> 
+                when (pos) {
+                    is Int -> pos == 1
+                    is Double -> pos.toInt() == 1
+                    else -> false
+                }
+            } ?: false
+        }
+        assertNotNull("TASK_ASSIGNED event should exist for position 1", taskAssigned)
         
         val taskId = taskAssigned?.payload?.get("taskId") as? String
         assertNotNull("Should have taskId", taskId)
