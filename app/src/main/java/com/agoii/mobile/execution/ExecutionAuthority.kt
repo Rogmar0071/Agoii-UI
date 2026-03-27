@@ -58,6 +58,12 @@ class ExecutionAuthority {
 
     private val contractorExecutor = ContractorExecutor()
 
+    companion object {
+        // Execution input templates
+        private const val TASK_DESCRIPTION_TEMPLATE = "Execute task %s at position %d of %d"
+        private const val OUTPUT_SCHEMA_STANDARD = "Standard task execution result with position tracking"
+    }
+
     fun evaluate(input: ExecutionContractInput): ExecutionAuthorityResult {
 
         val reportId  = input.reportId
@@ -223,14 +229,19 @@ class ExecutionAuthority {
         // Build execution input
         val executionInput = ContractorExecutionInput(
             taskId = taskContract.taskId,
-            taskDescription = "Execute task ${taskContract.taskId} at position ${taskContract.position}",
+            taskDescription = String.format(
+                TASK_DESCRIPTION_TEMPLATE,
+                taskContract.taskId,
+                taskContract.position,
+                taskContract.total
+            ),
             taskPayload = mapOf(
                 "position" to taskContract.position,
                 "total" to taskContract.total,
                 "reportReference" to (taskContract.reportReference ?: "")
             ),
             contractConstraints = emptyList(),
-            expectedOutputSchema = "Standard task execution result"
+            expectedOutputSchema = OUTPUT_SCHEMA_STANDARD
         )
         
         // Execute

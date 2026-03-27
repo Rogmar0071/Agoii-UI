@@ -130,6 +130,31 @@ class ExecutionModule(
         return result
     }
 
+    companion object {
+        /**
+         * Default contractor profile used when a contractor is not found in the registry.
+         * This allows execution to proceed with minimal but reasonable capabilities.
+         */
+        fun createDefaultContractor(contractorId: String): ContractorProfile {
+            return ContractorProfile(
+                id = contractorId,
+                capabilities = ContractorCapabilityVector(
+                    constraintObedience = 2,
+                    structuralAccuracy = 2,
+                    driftScore = 1,
+                    complexityCapacity = 2,
+                    reliability = 2
+                ),
+                verificationCount = 0,
+                successCount = 0,
+                failureCount = 0,
+                status = VerificationStatus.UNVERIFIED,
+                source = "default",
+                notes = listOf("Contractor not found in registry; using default unverified profile")
+            )
+        }
+    }
+
     /**
      * Resolve contractor from registry.
      * 
@@ -141,22 +166,7 @@ class ExecutionModule(
         val contractor = registry.allVerified().firstOrNull { it.id == contractorId }
         
         // Return default unverified contractor if not found in registry
-        return contractor ?: ContractorProfile(
-            id = contractorId,
-            capabilities = ContractorCapabilityVector(
-                constraintObedience = 2,
-                structuralAccuracy = 2,
-                driftScore = 1,
-                complexityCapacity = 2,
-                reliability = 2
-            ),
-            verificationCount = 0,
-            successCount = 0,
-            failureCount = 0,
-            status = VerificationStatus.UNVERIFIED,
-            source = "default",
-            notes = listOf("Contractor not found in registry; using default unverified profile")
-        )
+        return contractor ?: createDefaultContractor(contractorId)
     }
 
     /**
