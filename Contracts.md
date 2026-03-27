@@ -383,3 +383,43 @@ EACH CONTRACT MUST INCLUDE:
 
 ```json
 "report_reference": "<report_id>"
+
+## 36. REPORT REFERENCE INTEGRITY LAW (RRIL-1)  
+
+STATUS: ENFORCED  
+SCOPE: ALL CONTRACT CHAINS  
+COMPATIBILITY: AERP-1 + RCF-1 + CONTRACT CONVERGENCE LAW  
+
+---  
+
+### PRINCIPLE  
+
+ALL CONTRACT EXECUTION MUST BE ANCHORED TO A SINGLE REPORT REFERENCE ID (RRID).  
+
+THIS ID DEFINES THE IMMUTABLE LINEAGE OF A CONTRACT CHAIN.  
+
+---  
+
+### GENERATION  
+
+RRID MUST:  
+
+- be generated ONCE per execution chain  
+- be deterministic  
+- originate ONLY from ExecutionEntryPoint  
+- be derived from intent_id  
+
+RULE:  
+
+NO OTHER COMPONENT MAY GENERATE RRID  
+
+---  
+
+### PROPAGATION  
+
+RRID MUST BE PROPAGATED TO ALL CONTRACTS:  
+
+EACH CONTRACT MUST INCLUDE:  
+
+```json
+"report_reference": "<report_id>"
