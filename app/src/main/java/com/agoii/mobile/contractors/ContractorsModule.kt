@@ -3,13 +3,22 @@ package com.agoii.mobile.contractors
 data class Capability(
     val name: String,
     val level: Int
-)
+) {
+    init {
+        require(level in 0..5)
+    }
+}
 
 data class ContractRequirement(
     val capability: String,
     val requiredLevel: Int,
     val weight: Double
-)
+) {
+    init {
+        require(requiredLevel in 0..5)
+        require(weight >= 0.0)
+    }
+}
 
 data class ContractorProfile(
     val contractorId: String,
@@ -17,7 +26,13 @@ data class ContractorProfile(
     val reliabilityScore: Double,
     val costScore: Double,
     val availabilityScore: Double
-)
+) {
+    init {
+        require(reliabilityScore in 0.0..1.0)
+        require(costScore in 0.0..1.0)
+        require(availabilityScore in 0.0..1.0)
+    }
+}
 
 interface ContractorRegistry {
     fun getAll(): List<ContractorProfile>
@@ -111,9 +126,15 @@ class DeterministicMatchingEngine {
             val score = capabilityScore * contractor.reliabilityScore * contractor.availabilityScore * (1.0 - contractor.costScore)
             scores[contractor.contractorId] = score
         }
-        val maxScore = scores.values.maxOrNull()!!
-        val topCandidates = valid.filter { scores[it.contractorId] == maxScore }
-        val best = topCandidates.sortedBy { it.contractorId }.first()
+        var best = valid.first()
+        var bestScore = scores[best.contractorId]!!
+        for (contractor in valid) {
+            val score = scores[contractor.contractorId]!!
+            if (score > bestScore || (score == bestScore && contractor.contractorId < best.contractorId)) {
+                best = contractor
+                bestScore = score
+            }
+        }
 
         // Step 7 — Return
         return ResolutionResult.Matched(
