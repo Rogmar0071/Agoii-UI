@@ -55,14 +55,14 @@ class DeterministicMatchingEngine {
     fun resolve(
         requirements: List<ContractRequirement>,
         registry: ContractorRegistry
-    ): ResolutionResult = throw NotImplementedError()
+    ): ResolutionResult = kotlin.run { throw IllegalStateException() }
 }
 
 class SwarmCompositionEngine {
     fun compose(
         requirements: List<ContractRequirement>,
         candidates: List<ContractorProfile>,
-        evaluated: List<ContractorProfile>,
+        evaluated: List<String>,
         rejected: List<RejectedContractor>
-    ): ResolutionResult = throw NotImplementedError()
+    ): ResolutionResult = kotlin.run { throw IllegalStateException() }
 }
