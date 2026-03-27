@@ -154,9 +154,10 @@ class ExecutionEntryPoint(
         val reportId = UUID.nameUUIDFromBytes("rrid:$intentId".toByteArray(Charsets.UTF_8)).toString()
         val enrichedContracts: List<Map<String, Any>> = ordered.map { c ->
             mapOf(
-                "contractId" to c.contractId,
-                "name"       to c.name,
-                "position"   to c.position
+                "contractId"       to c.contractId,
+                "name"             to c.name,
+                "position"         to c.position,
+                "report_reference" to reportId
             )
         }
         val payload: Map<String, Any> = mapOf(
