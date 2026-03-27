@@ -31,7 +31,8 @@ class FELIntegrationExample {
     private val registry = RealContractorRegistry()
     private val governor = Governor(repository, null)
     private val entryPoint = ExecutionEntryPoint(ledger)
-    private val orchestrator = FirstExecutionLoopOrchestrator(registry)
+    private val matchingEngine = DeterministicMatchingEngine()
+    private val invocationLayer = ContractorInvocationLayer()
     
     /**
      * Run the complete FEL flow from intent to contractor result.
@@ -89,8 +90,60 @@ class FELIntegrationExample {
         val taskId = taskAssignedEvent.payload["taskId"] as String
         println("Task assigned: $taskId")
         
-        // Execute via FEL orchestrator
-        val contractorResult = orchestrator.executeTask(events, taskAssignedEvent)
+        // Extract contract details from CONTRACTS_GENERATED event
+        val position = when (val pos = taskAssignedEvent.payload["position"]) {
+            is Int -> pos
+            is Double -> pos.toInt()
+            else -> 1
+        }
+        
+        val contractData = contracts.firstOrNull { contract ->
+            (contract as? Map<*, *>)?.get("position")?.let { p ->
+                when (p) {
+                    is Int -> p == position
+                    is Double -> p.toInt() == position
+                    else -> false
+                }
+            } ?: false
+        } as? Map<*, *>
+        
+        val contractId = contractData?.get("contractId") as String
+        
+        // Build ExecutionContract for ContractorsModule
+        val executionContract = ExecutionContract(
+            contractId = contractId,
+            reportReference = reportId,
+            position = position.toString()
+        )
+        
+        // Define contract requirements
+        val requirements = listOf(
+            ContractRequirement("code_generation", 3, 1.0),
+            ContractRequirement("reasoning", 2, 0.5)
+        )
+        
+        // Step 4a: Contractor selection via ContractorsModule
+        println("Selecting contractor via DeterministicMatchingEngine...")
+        val taskContract = matchingEngine.resolve(
+            contract = executionContract,
+            requirements = requirements,
+            registry = registry
+        )
+        
+        println("Selected contractor: ${taskContract.assignment.contractorIds.firstOrNull() ?: "none"}")
+        println("Assignment mode: ${taskContract.assignment.mode}")
+        
+        // Step 4b: Contractor invocation via ContractorInvocationLayer
+        val contractPayload = mapOf(
+            "taskId" to taskId,
+            "contractId" to contractId,
+            "position" to position,
+            "reportReference" to reportId,
+            "objective" to "Execute contract $contractId at position $position"
+        )
+        
+        println("Invoking contractor...")
+        val contractorResult = invocationLayer.invoke(taskContract, contractPayload)
         
         // Step 5: Result Analysis
         println("\n=== FEL Step 5: Contractor Execution Result ===")

@@ -99,9 +99,59 @@ class FirstExecutionLoopTest {
         val taskId = taskAssigned?.payload?.get("taskId") as? String
         assertNotNull("Should have taskId", taskId)
         
-        // Step 5: Execute task via FEL orchestrator
-        val orchestrator = FirstExecutionLoopOrchestrator(registry)
-        val contractorResult = orchestrator.executeTask(updatedEvents, taskAssigned!!)
+        // Step 5: Contractor selection and invocation (proper flow)
+        // Extract contract details from CONTRACTS_GENERATED event
+        val position = when (val pos = taskAssigned?.payload?.get("position")) {
+            is Int -> pos
+            is Double -> pos.toInt()
+            else -> 1
+        }
+        
+        val contractData = contracts?.firstOrNull { contract ->
+            (contract as? Map<*, *>)?.get("position")?.let { p ->
+                when (p) {
+                    is Int -> p == position
+                    is Double -> p.toInt() == position
+                    else -> false
+                }
+            } ?: false
+        } as? Map<*, *>
+        
+        val contractId = contractData?.get("contractId") as? String
+        assertNotNull("Should have contractId", contractId)
+        
+        // Build ExecutionContract for ContractorsModule
+        val executionContract = ExecutionContract(
+            contractId = contractId!!,
+            reportReference = reportId!!,
+            position = position.toString()
+        )
+        
+        // Define contract requirements
+        val requirements = listOf(
+            ContractRequirement("code_generation", 3, 1.0),
+            ContractRequirement("reasoning", 2, 0.5)
+        )
+        
+        // Step 5a: Contractor selection via ContractorsModule
+        val matchingEngine = DeterministicMatchingEngine()
+        val taskContract = matchingEngine.resolve(
+            contract = executionContract,
+            requirements = requirements,
+            registry = registry
+        )
+        
+        // Step 5b: Contractor invocation via ContractorInvocationLayer
+        val contractPayload = mapOf(
+            "taskId" to taskId!!,
+            "contractId" to contractId,
+            "position" to position,
+            "reportReference" to reportId,
+            "objective" to "Execute contract $contractId at position $position"
+        )
+        
+        val invocationLayer = ContractorInvocationLayer()
+        val contractorResult = invocationLayer.invoke(taskContract, contractPayload)
         
         // Verify contractor was invoked successfully
         assertEquals("Execution should succeed", "success", contractorResult.status)
