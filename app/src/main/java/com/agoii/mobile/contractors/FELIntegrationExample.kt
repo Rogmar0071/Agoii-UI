@@ -11,16 +11,19 @@ import com.agoii.mobile.governor.Governor
 /**
  * FEL Integration Example — demonstrates the complete First Execution Loop.
  *
- * COMPLIANT PATTERN (Post-Recovery):
+ * FEL PASS 3 PATTERN (Embedded State-Resolving Execution):
  * - Direct component invocation
+ * - Embedded execution via ContractorExecutor.attemptExecution()
  * - NO orchestration layers (ExecutionLifecycle removed)
+ * - NO detection systems
  * - Governor remains sole state authority
+ * - Execution triggered by state, not manual invocation
  *
  * This example shows how to:
  * 1. Submit an intent
  * 2. Generate contracts via ExecutionEntryPoint
  * 3. Progress through Governor states
- * 4. Execute contractor invocation directly via ContractorExecutor
+ * 4. Embedded contractor execution via state-resolving function
  * 5. Retrieve traceable results
  *
  * Usage:
@@ -72,7 +75,7 @@ class FELIntegrationExample {
             println("  Contract ${index + 1}: ${c["contractId"]} - ${c["name"]}")
         }
         
-        // Step 3: Governor Progression (COMPLIANT - direct calls)
+        // Step 3: Governor Progression (direct calls)
         println("\n=== FEL Step 3: Governor Progression ===")
         
         // CONTRACTS_GENERATED -> CONTRACTS_READY
@@ -87,18 +90,16 @@ class FELIntegrationExample {
         result = governor.runGovernor(projectId)
         println("State transition: CONTRACT_STARTED -> TASK_ASSIGNED (${result})")
         
-        // Step 4: DIRECT Contractor Invocation (COMPLIANT PATTERN)
-        println("\n=== FEL Step 4: Contractor Invocation (Direct) ===")
+        // Step 4: EMBEDDED Contractor Invocation (FEL PASS 3 - state-resolving)
+        println("\n=== FEL Step 4: Contractor Invocation (Embedded) ===")
         
-        val events = ledger.loadEvents(projectId)
-        val taskAssignedEvent = events.last { it.type == EventTypes.TASK_ASSIGNED }
+        // Embedded execution via state-resolving function
+        val contractorExecutor = ContractorExecutor(ledger, registry)
+        val contractorResult = contractorExecutor.attemptExecution(projectId)
+            ?: throw IllegalStateException("Execution should have occurred (TASK_ASSIGNED is latest state)")
         
-        val taskId = taskAssignedEvent.payload["taskId"] as String
-        println("Task assigned: $taskId")
-        
-        // Direct invocation via ContractorExecutor (NO orchestration layer)
-        val contractorExecutor = ContractorExecutor(registry)
-        val contractorResult = contractorExecutor.executeFromTaskAssigned(events, taskAssignedEvent)
+        println("Execution automatically triggered by TASK_ASSIGNED state")
+        println("Task: ${contractorResult.contract_id}")
         
         // Step 5: Result Analysis
         println("\n=== FEL Step 5: Contractor Execution Result ===")
@@ -128,11 +129,11 @@ class FELIntegrationExample {
         println("✓ Intent accepted")
         println("✓ Contracts derived")
         println("✓ Governor progression (direct calls)")
-        println("✓ Contractor selected (direct invocation)")
+        println("✓ Contractor selected (embedded state-resolving)")
         println("✓ Contractor invoked (NO orchestration layer)")
         println("✓ Result returned")
         println("✓ No invariant violations")
-        println("✓ COMPLIANT PATTERN: Direct component invocation only")
+        println("✓ FEL PASS 3 PATTERN: Embedded state-resolving execution")
         
         return contractorResult
     }
@@ -197,9 +198,9 @@ fun main() {
     example.demonstrateContractorSelection()
     
     println("\n" + "=".repeat(70))
-    println("RUNNING COMPLETE FIRST EXECUTION LOOP (POST-RECOVERY)")
-    println("COMPLIANT PATTERN: Direct component invocation")
-    println("NO ORCHESTRATION LAYERS")
+    println("RUNNING COMPLETE FIRST EXECUTION LOOP (FEL PASS 3)")
+    println("EMBEDDED STATE-RESOLVING EXECUTION PATTERN")
+    println("NO ORCHESTRATION LAYERS · NO DETECTION SYSTEMS")
     println("=".repeat(70))
     
     // Then run the complete loop
@@ -207,10 +208,10 @@ fun main() {
     
     // Verify success
     if (result.status == "success") {
-        println("\n✅ FEL SUCCESSFUL (COMPLIANT)")
+        println("\n✅ FEL SUCCESSFUL (FEL PASS 3)")
         println("   Contractor ${result.contractor_id} executed contract ${result.contract_id}")
         println("   Report reference: ${result.report_reference}")
-        println("   Pattern: Direct invocation (NO orchestration)")
+        println("   Pattern: Embedded state-resolving execution")
     } else {
         println("\n❌ FEL FAILED")
         println("   Error: ${result.error}")

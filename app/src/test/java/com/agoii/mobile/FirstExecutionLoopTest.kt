@@ -227,4 +227,62 @@ class FirstExecutionLoopTest {
         assertEquals("Contractor should be none", "none", result.contractor_id)
         assertNotNull("Should have error", result.error)
     }
+    
+    @Test
+    fun attemptExecution_returns_null_when_state_is_not_TASK_ASSIGNED() {
+        // Setup
+        val projectId = "test-project"
+        val ledger = EventLedger()
+        val registry = RealContractorRegistry()
+        
+        // Submit intent only (not at TASK_ASSIGNED state yet)
+        ledger.appendEvent(projectId, EventTypes.INTENT_SUBMITTED, mapOf(
+            "intentId" to "test-intent",
+            "objective" to "Test objective"
+        ))
+        
+        // Attempt execution with state-resolving function
+        val contractorExecutor = ContractorExecutor(ledger, registry)
+        val result = contractorExecutor.attemptExecution(projectId)
+        
+        // Should return null because latest state is not TASK_ASSIGNED
+        assertNull("Should return null when not at TASK_ASSIGNED state", result)
+    }
+    
+    @Test
+    fun attemptExecution_executes_when_state_is_TASK_ASSIGNED() {
+        // Setup
+        val projectId = "test-exec-project"
+        val ledger = EventLedger()
+        val repository = EventRepository(ledger)
+        val registry = RealContractorRegistry()
+        
+        // Create full FEL setup
+        val entryPoint = ExecutionEntryPoint(ledger)
+        val governor = Governor(repository, null)
+        
+        // 1. Submit intent
+        val intentPayload = mapOf(
+            "intentId" to "test-intent-exec",
+            "objective" to "Test execution"
+        )
+        ledger.appendEvent(projectId, EventTypes.INTENT_SUBMITTED, intentPayload)
+        
+        // 2. Generate contracts
+        entryPoint.executeIntent(projectId, intentPayload)
+        
+        // 3. Progress to TASK_ASSIGNED
+        governor.runGovernor(projectId)  // -> CONTRACTS_READY
+        governor.runGovernor(projectId)  // -> CONTRACT_STARTED
+        governor.runGovernor(projectId)  // -> TASK_ASSIGNED
+        
+        // 4. Attempt execution with state-resolving function
+        val contractorExecutor = ContractorExecutor(ledger, registry)
+        val result = contractorExecutor.attemptExecution(projectId)
+        
+        // Should execute and return result
+        assertNotNull("Should return result when at TASK_ASSIGNED state", result)
+        assertEquals("Should be success", "success", result?.status)
+        assertNotNull("Should have contractor_id", result?.contractor_id)
+    }
 }
