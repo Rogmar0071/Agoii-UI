@@ -55,7 +55,9 @@ class ExecutionEntryPoint(
     private val ledger: EventLedger
 ) {
 
-    private val executionAuthority         = ExecutionAuthority()
+    private val contractorExecutor         = ContractorExecutor()
+    private val resultValidator            = ResultValidator()
+    private val executionAuthority         = ExecutionAuthority(contractorExecutor, resultValidator)
     private val contractSystemOrchestrator = ContractSystemOrchestrator()
     private val validationLayer            = ValidationLayer()
 

@@ -76,6 +76,17 @@ class ContractorRegistry(
     fun allVerified(): List<ContractorProfile> =
         store.values.filter { it.status == VerificationStatus.VERIFIED }
 
+    /**
+     * Find a contractor by ID.
+     *
+     * @param contractorId  Unique contractor identifier.
+     * @return [ContractorProfile] if found and verified, null otherwise.
+     */
+    fun findById(contractorId: String): ContractorProfile? {
+        val profile = store[contractorId]
+        return if (profile?.status == VerificationStatus.VERIFIED) profile else null
+    }
+
     // ─── Profile update ───────────────────────────────────────────────────────
 
     /**
