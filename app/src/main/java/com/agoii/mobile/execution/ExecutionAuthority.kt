@@ -59,7 +59,7 @@ class ExecutionAuthority {
         // ---------- RULE 1: NON-EMPTY ----------
 
         if (contracts.isEmpty()) {
-            return ExecutionAuthorityResult.Blocked("EMPTY_CONTRACT_LIST")
+            return ExecutionAuthorityResult.Blocked("EMPTY_CONTRACTS")
         }
 
         // ---------- RULE 2: FIELD VALIDATION ----------
@@ -67,15 +67,15 @@ class ExecutionAuthority {
         for (contract in contracts) {
 
             if (contract.contractId.isBlank()) {
-                return ExecutionAuthorityResult.Blocked("INVALID_CONTRACT_ID")
+                return ExecutionAuthorityResult.Blocked("INVALID_FIELD")
             }
 
             if (contract.name.isBlank()) {
-                return ExecutionAuthorityResult.Blocked("INVALID_CONTRACT_NAME")
+                return ExecutionAuthorityResult.Blocked("INVALID_FIELD")
             }
 
             if (contract.position <= 0) {
-                return ExecutionAuthorityResult.Blocked("INVALID_POSITION")
+                return ExecutionAuthorityResult.Blocked("INVALID_FIELD")
             }
         }
 
