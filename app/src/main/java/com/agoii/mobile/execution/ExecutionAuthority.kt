@@ -17,6 +17,8 @@
 
 package com.agoii.mobile.execution
 
+import com.agoii.mobile.contractor.ContractorProfile
+
 // ---------- INPUT ----------
 
 data class ExecutionContractInput(
@@ -117,5 +119,113 @@ class ExecutionAuthority {
         // ---------- RULE 5: DETERMINISTIC ORDER ----------
 
         return ExecutionAuthorityResult.Approved(sorted)
+    }
+
+    /**
+     * Authorize and execute contractor for a task assignment.
+     * 
+     * This method is the EXPLICIT INVOCATION path for contractor execution.
+     * Called by ExecutionModule when processing TASK_ASSIGNED events.
+     * 
+     * Flow:
+     * 1. Validate TaskAssignedContract (AERP-1)
+     * 2. Resolve contractor profile
+     * 3. Execute via ContractorExecutor
+     * 4. Return ContractorResult
+     * 
+     * @param taskContract      The task assignment contract.
+     * @param contractorProfile The assigned contractor's profile.
+     * @return                  ContractorResult with execution outcome.
+     */
+    fun authorizeContractorExecution(
+        taskContract: TaskAssignedContract,
+        contractorProfile: ContractorProfile
+    ): ContractorResult {
+        
+        // ---------- AERP-1 VALIDATION ----------
+        
+        // Validate task ID
+        if (taskContract.taskId.isBlank()) {
+            return ContractorResult(
+                taskId = taskContract.taskId,
+                contractorId = taskContract.contractorId,
+                status = ExecutionStatus.FAILURE,
+                artifact = emptyMap(),
+                error = "INVALID_TASK_ID"
+            )
+        }
+        
+        // Validate contractor ID
+        if (taskContract.contractorId.isBlank()) {
+            return ContractorResult(
+                taskId = taskContract.taskId,
+                contractorId = taskContract.contractorId,
+                status = ExecutionStatus.FAILURE,
+                artifact = emptyMap(),
+                error = "INVALID_CONTRACTOR_ID"
+            )
+        }
+        
+        // Validate position
+        if (taskContract.position <= 0) {
+            return ContractorResult(
+                taskId = taskContract.taskId,
+                contractorId = taskContract.contractorId,
+                status = ExecutionStatus.FAILURE,
+                artifact = emptyMap(),
+                error = "INVALID_POSITION"
+            )
+        }
+        
+        // Validate total
+        if (taskContract.total <= 0) {
+            return ContractorResult(
+                taskId = taskContract.taskId,
+                contractorId = taskContract.contractorId,
+                status = ExecutionStatus.FAILURE,
+                artifact = emptyMap(),
+                error = "INVALID_TOTAL"
+            )
+        }
+        
+        // Validate contractor capability
+        if (contractorProfile.capabilities.capabilityScore <= 0) {
+            return ContractorResult(
+                taskId = taskContract.taskId,
+                contractorId = taskContract.contractorId,
+                status = ExecutionStatus.FAILURE,
+                artifact = emptyMap(),
+                error = "INSUFFICIENT_CAPABILITY"
+            )
+        }
+        
+        // ---------- EXECUTE VIA CONTRACTOR EXECUTOR ----------
+        
+        val executor = ContractorExecutor()
+        
+        // Build execution input
+        val executionInput = ContractorExecutionInput(
+            taskId = taskContract.taskId,
+            taskDescription = "Execute task ${taskContract.taskId} at position ${taskContract.position}",
+            taskPayload = mapOf(
+                "position" to taskContract.position,
+                "total" to taskContract.total,
+                "reportReference" to (taskContract.reportReference ?: "")
+            ),
+            contractConstraints = emptyList(),
+            expectedOutputSchema = "Standard task execution result"
+        )
+        
+        // Execute
+        val executionOutput = executor.execute(executionInput, contractorProfile)
+        
+        // Convert to ContractorResult
+        return ContractorResult(
+            taskId = executionOutput.taskId,
+            contractorId = contractorProfile.id,
+            status = executionOutput.status,
+            artifact = executionOutput.resultArtifact,
+            error = executionOutput.error
+        )
     }
 }

@@ -4,11 +4,13 @@ import android.content.Context
 import com.agoii.mobile.core.*
 import com.agoii.mobile.execution.BuildExecutor
 import com.agoii.mobile.execution.ExecutionEntryPoint
+import com.agoii.mobile.execution.ExecutionModule
 import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.irs.*
 import com.agoii.mobile.observability.ExecutionObservability
 import com.agoii.mobile.observability.ExecutionTimeline
 import com.agoii.mobile.observability.ExecutionTrace
+import com.agoii.mobile.contractor.ContractorRegistry
 
 /**
  * CoreBridge — mobile runtime adapter.
@@ -26,7 +28,9 @@ class CoreBridge(context: Context) {
 
     private val eventStore          = EventStore(context)
     private val ledger              = EventLedger(eventStore)
-    private val governor            = Governor(ledger)
+    private val contractorRegistry  = ContractorRegistry()
+    private val governor            = Governor(ledger, contractorRegistry)
+    private val executionModule     = ExecutionModule(ledger, contractorRegistry)
     private val ledgerAudit         = LedgerAudit(ledger)
     private val replay              = Replay(ledger)
     private val replayTest          = ReplayTest(ledger)
@@ -120,11 +124,22 @@ class CoreBridge(context: Context) {
         // ── Governor progression ────────────────────────────────────────────────
         val result = governor.runGovernor(projectId)
 
-        return if (result == Governor.GovernorResult.ADVANCED) {
-            ledger.loadEvents(projectId).lastOrNull()
-        } else {
-            null
+        // ── Execution Module: Process TASK_ASSIGNED ────────────────────────────
+        if (result == Governor.GovernorResult.ADVANCED) {
+            val latestEvents = ledger.loadEvents(projectId)
+            val latestEvent = latestEvents.lastOrNull()
+            
+            // If Governor just emitted TASK_ASSIGNED, invoke ExecutionModule
+            if (latestEvent?.type == EventTypes.TASK_ASSIGNED) {
+                executionModule.processState(projectId, latestEvent)
+                // Return the result event (TASK_COMPLETED or TASK_FAILED)
+                return ledger.loadEvents(projectId).lastOrNull()
+            }
+            
+            return latestEvent
         }
+
+        return null
     }
 
     private fun resolveContractName(events: List<Event>, contractId: String): String {
