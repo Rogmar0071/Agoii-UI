@@ -109,7 +109,10 @@ class DeterministicMatchingEngine {
             Pair(contractor, score)
         }
 
-        val best = scored.sortedWith(compareByDescending<Pair<ContractorProfile, Double>> { it.second }.thenBy { it.first.contractorId }).first()
+        val best = scored.sortedWith(
+            compareByDescending<Pair<ContractorProfile, Double>> { it.second }
+                .thenBy { it.first.contractorId }
+        ).first()
 
         val trace = ResolutionTrace(
             evaluated = evaluated,
