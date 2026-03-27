@@ -12,19 +12,21 @@ import org.junit.Test
 import org.junit.Assert.*
 
 /**
- * FirstExecutionLoopTest — validates the complete FEL flow using COMPLIANT direct invocation.
+ * FirstExecutionLoopTest — validates the complete FEL flow using EMBEDDED execution.
  *
- * COMPLIANT PATTERN (Post-Recovery):
+ * FEL PASS 3 PATTERN (Embedded State-Resolving Execution):
  * - Direct Governor.runGovernor() calls
- * - Direct ContractorExecutor.executeFromTaskAssigned() invocation
+ * - Embedded ContractorExecutor.attemptExecution() reads ledger state
  * - NO orchestration layers (ExecutionLifecycle removed)
+ * - NO external detection systems
  * - Governor remains sole state authority
+ * - Execution triggered by state, not manual invocation
  *
  * Tests:
  * 1. Intent creation
  * 2. Contract derivation via ExecutionEntryPoint
  * 3. Governor progression to TASK_ASSIGNED
- * 4. Direct contractor invocation via ContractorExecutor
+ * 4. Embedded contractor invocation via ContractorExecutor.attemptExecution()
  * 5. Real contractor execution
  * 6. Result traceability
  */
@@ -94,9 +96,11 @@ class FirstExecutionLoopTest {
         val taskAssignedEvent = events.lastOrNull { it.type == EventTypes.TASK_ASSIGNED }
         assertNotNull("TASK_ASSIGNED event should exist", taskAssignedEvent)
         
-        // Step 5: DIRECT contractor invocation (COMPLIANT PATTERN - NO orchestration)
-        val contractorExecutor = ContractorExecutor(registry)
-        val contractorResult = contractorExecutor.executeFromTaskAssigned(events, taskAssignedEvent!!)
+        // Step 5: EMBEDDED contractor invocation (FEL PASS 3 - state-resolving function)
+        // Option A: Embedded execution (reads ledger, detects state)
+        val contractorExecutor = ContractorExecutor(ledger, registry)
+        val contractorResult = contractorExecutor.attemptExecution(projectId)
+            ?: throw IllegalStateException("Execution should have occurred")
         
         // Verify contractor was invoked successfully
         assertEquals("Execution should succeed", "success", contractorResult.status)

@@ -3,6 +3,7 @@ package com.agoii.mobile.execution
 import com.agoii.mobile.contractor.ContractorProfile
 import com.agoii.mobile.contractors.*
 import com.agoii.mobile.core.Event
+import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
 
 // ─── ContractorExecutor ───────────────────────────────────────────────────────
@@ -58,19 +59,57 @@ enum class ExecutionStatus { SUCCESS, FAILURE }
  *  - NO new orchestration layers
  *  - NO modification of Governor logic
  *
- * Flow:
+ * Flow (FEL PASS 3 - Embedded Execution):
  *   Governor → TASK_ASSIGNED event
- *   → ContractorExecutor.executeFromTaskAssigned()
+ *   → ContractorExecutor.attemptExecution(projectId)  [state-resolving function]
+ *     → reads ledger
+ *     → detects TASK_ASSIGNED as latest state
+ *     → executeFromTaskAssigned()
  *   → ContractorsModule.resolve()
  *   → ContractorInvocationLayer.invoke()
  *   → ContractorResult (in-memory)
  *   → Governor continues → TASK_STARTED
  */
 class ContractorExecutor(
+    private val ledger: EventLedger? = null,
     private val registry: ContractorRegistry = RealContractorRegistry(),
     private val matchingEngine: DeterministicMatchingEngine = DeterministicMatchingEngine(),
     private val invocationLayer: ContractorInvocationLayer = ContractorInvocationLayer()
 ) {
+
+    /**
+     * Embedded state-resolving execution function (FEL PASS 3).
+     *
+     * Reads the ledger to detect authoritative state and executes ONLY when
+     * TASK_ASSIGNED is the latest event for the given project.
+     *
+     * This function embeds execution as a direct consequence of system state progression:
+     *  - NO detection system
+     *  - NO orchestration
+     *  - NO lifecycle management
+     *  - Pure state-driven execution
+     *
+     * @param projectId The project to check for execution readiness.
+     * @return ContractorResult if execution occurred, null if TASK_ASSIGNED is not latest state.
+     */
+    fun attemptExecution(projectId: String): ContractorResult? {
+        // Require ledger to be available
+        val eventLedger = ledger 
+            ?: throw IllegalStateException("ContractorExecutor requires EventLedger for attemptExecution()")
+        
+        // Read ledger state
+        val events = eventLedger.loadEvents(projectId)
+        if (events.isEmpty()) return null
+        
+        // Check if latest event is TASK_ASSIGNED (authoritative state)
+        val latestEvent = events.last()
+        if (latestEvent.type != EventTypes.TASK_ASSIGNED) {
+            return null  // Not ready for execution
+        }
+        
+        // Execute contractor invocation directly
+        return executeFromTaskAssigned(events, latestEvent)
+    }
 
     /**
      * Execute contractor invocation triggered by TASK_ASSIGNED event.
