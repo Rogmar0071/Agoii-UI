@@ -153,7 +153,6 @@ class ExecutionEntryPoint(
         val contractSetId = UUID.randomUUID().toString()
         val enrichedContracts: List<Map<String, Any>> = ordered.map { c ->
             mapOf(
-                "id"         to c.contractId, // "id" retained for CoreBridge.resolveContractName compatibility
                 "contractId" to c.contractId,
                 "name"       to c.name,
                 "position"   to c.position
