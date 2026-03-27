@@ -30,7 +30,7 @@ data class RejectedContractor(
 
 data class ResolutionTrace(
     val evaluated: List<String>,
-    val matched: List<ContractorProfile>,
+    val matched: List<String>,
     val rejected: List<RejectedContractor>
 )
 
@@ -120,7 +120,7 @@ class DeterministicMatchingEngine {
             contractor = best,
             trace = ResolutionTrace(
                 evaluated = evaluated,
-                matched = listOf(best),
+                matched = listOf(best.contractorId),
                 rejected = rejected
             )
         )
@@ -158,7 +158,7 @@ class SwarmCompositionEngine {
                     reason = "NO_FEASIBLE_CONTRACTOR",
                     trace = ResolutionTrace(
                         evaluated = candidates.map { it.contractorId },
-                        matched = selected,
+                        matched = selected.map { it.contractorId },
                         rejected = rejected
                     )
                 )
@@ -181,7 +181,7 @@ class SwarmCompositionEngine {
             contractors = selected,
             trace = ResolutionTrace(
                 evaluated = candidates.map { it.contractorId },
-                matched = selected,
+                matched = selected.map { it.contractorId },
                 rejected = rejected
             )
         )
