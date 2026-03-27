@@ -3,18 +3,8 @@ package com.agoii.mobile.intent
 import com.agoii.mobile.contracts.ContractIntent
 import com.agoii.mobile.ingress.ContractStatus
 import com.agoii.mobile.ingress.IngressContract
-import java.util.UUID
 
 // ─── Module-level constants ───────────────────────────────────────────────────
-
-/** Maximum number of Recovery Contracts (RCF-1) before the session is hard-failed. */
-private const val MAX_RECOVERY_ATTEMPTS = 3
-
-/**
- * Number of consecutive interactions targeting the same field, all ending
- * without progress, before stagnation is declared.
- */
-private const val STAGNATION_THRESHOLD = 2
 
 /** Ordered list of all mandatory IntentMaster fields. */
 private val MANDATORY_FIELDS = listOf("objective", "constraints", "environment", "resources")
@@ -22,77 +12,85 @@ private val MANDATORY_FIELDS = listOf("objective", "constraints", "environment",
 // ─── Intent Module ────────────────────────────────────────────────────────────
 
 /**
- * IntentModule — a CLOSED SYSTEM responsible for the full intent lifecycle.
+ * IntentModule — a CLOSED SYSTEM responsible for the intent lifecycle.
  *
- * Responsibilities (non-negotiable, all internal):
- *  1. Intent construction        — builds IntentMaster from a validated IngressContract.
- *  2. Intent state management    — maintained by [IntentStateManager]; append-only.
- *  3. Intent completeness        — enforced by [IntentCompletionEngine].
- *  4. Interaction orchestration  — driven by [InteractionDriver].
- *  5. Convergence control        — guarded by [ConvergenceController].
- *  6. Report generation          — produced by [IntentReportGenerator] (MQP requirement).
- *  7. Recovery triggering        — detected and issued by [RecoveryTrigger] (RCF-1).
- *  8. RRID anchoring             — generated and propagated by [RridAnchorHandler].
+ * Owned responsibilities (all internal, non-negotiable):
+ *  1. Intent construction    — builds IntentMaster from a validated IngressContract
+ *                              and an externally supplied report reference (RRID).
+ *  2. Intent state management — maintained by [IntentStateManager]; validated fields
+ *                              are never overwritten.
+ *  3. Intent completeness    — evaluated by [IntentCompletionEngine] (deterministic,
+ *                              field-ordered).
+ *  4. Interaction contracts  — issued by [InteractionDriver] as typed
+ *                              [CommunicationContract] artifacts; no free-form text.
+ *  5. Report generation      — produced by [IntentReportGenerator] (MQP requirement).
+ *
+ * NOT owned by this module (handled externally):
+ *  - Recovery detection and RCF-1 issuance
+ *  - Convergence enforcement
+ *  - RRID generation (accepted as input; never generated here)
+ *  - Validation beyond field completeness
  *
  * Position in system:
  *   RAW INPUT → IngressContract → IntentModule → ContractSystemOrchestrator
  *
  * Non-negotiable rules:
- *  - All 7 internal components are private nested classes; no external substitution.
- *  - [createSession] constructs an IntentMaster from an ACCEPTED IngressContract.
+ *  - All internal components are private nested classes; no external substitution.
+ *  - [createSession] requires an externally supplied [reportReference]; the module
+ *    stores and propagates it but NEVER generates it.
  *  - [step] executes exactly one interaction cycle per call.
- *  - Validated fields are NEVER overwritten (enforced by [IntentStateManager]).
- *  - All outputs carry the session RRID (enforced by [RridAnchorHandler]).
- *  - Recovery is triggered when stagnation is detected (enforced by [RecoveryTrigger]).
- *  - The module is stateless between sessions; all per-session state is encapsulated
- *    within the [IntentStateManager].
+ *  - All outputs carry the session [reportReference].
+ *  - No direct text interaction — every request is a [CommunicationContract].
  */
 class IntentModule {
 
-    private val stateManager          = IntentStateManager()
-    private val completionEngine      = IntentCompletionEngine()
-    private val interactionDriver     = InteractionDriver()
-    private val convergenceController = ConvergenceController()
-    private val reportGenerator       = IntentReportGenerator()
-    private val recoveryTrigger       = RecoveryTrigger()
-    private val rridAnchorHandler     = RridAnchorHandler()
+    private val stateManager     = IntentStateManager()
+    private val completionEngine = IntentCompletionEngine()
+    private val interactionDriver = InteractionDriver()
+    private val reportGenerator  = IntentReportGenerator()
 
     // ─── Public API ───────────────────────────────────────────────────────────
 
     /**
-     * Create a new Intent session from a validated [IngressContract].
+     * Create a new Intent session from a validated [IngressContract] and an
+     * externally supplied report reference.
      *
      * Pre-populates mandatory fields from [IngressContract.payload.extractedFields]
-     * where available; remaining fields begin empty and are collected via [step].
+     * where available; remaining fields are collected incrementally via [step].
      *
-     * @param ingress  Ingress contract that has passed upstream validation.
-     *                 Must carry [ContractStatus.ACCEPTED].
-     * @return         Initial [IntentMaster] in [IntentStatus.PENDING] state.
-     * @throws IllegalArgumentException if [ingress.status] is not ACCEPTED, or if
-     *                                  a session for the same contractId already exists.
+     * @param ingress         Ingress contract that has passed upstream validation.
+     *                        Must carry [ContractStatus.ACCEPTED].
+     * @param reportReference Externally supplied RRID value. Stored verbatim and
+     *                        propagated to all module outputs. MUST NOT be blank.
+     * @return                Initial [IntentMaster] in [IntentStatus.PENDING] state.
+     * @throws IllegalArgumentException if [ingress.status] is not ACCEPTED, if
+     *                                  [reportReference] is blank, or if a session
+     *                                  for the same contractId already exists.
      */
-    fun createSession(ingress: IngressContract): IntentMaster {
+    fun createSession(ingress: IngressContract, reportReference: String): IntentMaster {
         require(ingress.status == ContractStatus.ACCEPTED) {
             "IngressContract '${ingress.contractId}' must be ACCEPTED before creating an Intent session"
         }
-        val rrid = rridAnchorHandler.generate()
-        return stateManager.init(ingress, rrid)
+        require(reportReference.isNotBlank()) {
+            "reportReference must not be blank"
+        }
+        return stateManager.init(ingress, reportReference)
     }
 
     /**
      * Advance the Intent session by exactly one interaction cycle.
      *
      * Execution flow per call:
-     *   Guard   — [ConvergenceController] blocks drift and exceeded recovery.
      *   Apply   — [InteractionDriver] applies [response] to the last pending field.
      *   Advance — transition PENDING / RECOVERING → IN_PROGRESS.
      *   Check   — [IntentCompletionEngine] evaluates remaining missing fields.
-     *   Report  — [IntentReportGenerator] freezes state when complete.
-     *   Recover — [RecoveryTrigger] issues RCF-1 on stagnation.
-     *   Prompt  — [InteractionDriver] issues the next prompt and logs it.
+     *   Report  — [IntentReportGenerator] freezes the MQP report when complete.
+     *   Contract — [InteractionDriver] issues a [CommunicationContract] for the
+     *              next missing field.
      *
      * @param intentId Session identifier returned by [createSession].
-     * @param response User-supplied answer to the previous prompt; null on first call.
+     * @param response External actor's answer to the previous [CommunicationContract];
+     *                 null on the first call.
      * @return [IntentModuleResult] for this cycle.
      * @throws IllegalArgumentException if no session with [intentId] exists.
      */
@@ -101,7 +99,7 @@ class IntentModule {
         val master = stateManager.get(intentId)
             ?: throw IllegalArgumentException("Intent session '$intentId' not found")
 
-        // ── Terminal guard ────────────────────────────────────────────────────
+        // ── Terminal guard ─────────────────────────────────────────────────────
         when (master.status) {
             IntentStatus.COMPLETE ->
                 return IntentModuleResult.Complete(
@@ -116,71 +114,41 @@ class IntentModule {
             else -> { /* continue */ }
         }
 
-        // ── Step 1: Convergence guard ─────────────────────────────────────────
-        val guard = convergenceController.guard(master)
-        if (!guard.passed) {
-            val failed = stateManager.update(intentId, master.copy(status = IntentStatus.FAILED))
-            return IntentModuleResult.Failed(failed, guard.reason)
-        }
-
-        // ── Step 2: Apply response (when provided) ────────────────────────────
+        // ── Step 1: Apply response (when provided) ─────────────────────────────
         var current = if (response != null) {
             stateManager.update(intentId, interactionDriver.apply(master, response))
         } else {
             master
         }
 
-        // ── Step 3: Advance lifecycle state ───────────────────────────────────
+        // ── Step 2: Advance lifecycle state ────────────────────────────────────
         if (current.status == IntentStatus.PENDING || current.status == IntentStatus.RECOVERING) {
             current = stateManager.update(intentId, current.copy(status = IntentStatus.IN_PROGRESS))
         }
 
-        // ── Step 4: Completeness check ────────────────────────────────────────
+        // ── Step 3: Completeness check ─────────────────────────────────────────
         val completion = completionEngine.evaluate(current)
         if (completion.isComplete) {
-            val report   = reportGenerator.generate(current)
-            val anchored = rridAnchorHandler.anchor(report, current.rrid)
-            val done     = stateManager.update(
+            val report = reportGenerator.generate(current)
+            val done   = stateManager.update(
                 intentId,
                 current.copy(
                     status       = IntentStatus.COMPLETE,
-                    report       = anchored,
+                    report       = report,
                     completeness = 1.0
                 )
             )
-            return IntentModuleResult.Complete(done, anchored, buildContractIntent(done))
+            return IntentModuleResult.Complete(done, report, buildContractIntent(done))
         }
 
-        // ── Step 5: Stagnation → Recovery ─────────────────────────────────────
-        if (recoveryTrigger.shouldRecover(current)) {
-            val newAttempts = current.recoveryAttempts + 1
-            if (newAttempts > MAX_RECOVERY_ATTEMPTS) {
-                val failed = stateManager.update(
-                    intentId,
-                    current.copy(status = IntentStatus.FAILED, recoveryAttempts = newAttempts)
-                )
-                return IntentModuleResult.Failed(
-                    failed,
-                    "Max recovery attempts ($MAX_RECOVERY_ATTEMPTS) exceeded for session '${master.intentId}'"
-                )
-            }
-            val recovering = stateManager.update(
-                intentId,
-                current.copy(status = IntentStatus.RECOVERING, recoveryAttempts = newAttempts)
-            )
-            val rcf      = recoveryTrigger.issue(recovering)
-            val anchored = rridAnchorHandler.anchorRecovery(rcf, recovering.rrid)
-            return IntentModuleResult.Recovering(recovering, anchored)
-        }
-
-        // ── Step 6: Issue next interaction prompt ─────────────────────────────
+        // ── Step 4: Issue Communication Contract for next missing field ─────────
         val nextField = completion.nextMissingField!!
-        val prompt    = interactionDriver.prompt(nextField)
+        val contract  = interactionDriver.contract(current, nextField)
         val withLog   = stateManager.update(
             intentId,
-            interactionDriver.recordPrompt(current, nextField, prompt)
+            interactionDriver.recordContract(current, contract)
         )
-        return IntentModuleResult.NeedsInteraction(withLog, prompt, nextField)
+        return IntentModuleResult.NeedsInteraction(withLog, contract, nextField)
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
@@ -209,16 +177,17 @@ class IntentModule {
 
         private val sessions = mutableMapOf<String, IntentMaster>()
 
-        /** Create and register a new session. Rejects duplicate session IDs. */
-        fun init(ingress: IngressContract, rrid: Rrid): IntentMaster {
+        /** Create and register a new session from [ingress] and [reportReference]. */
+        fun init(ingress: IngressContract, reportReference: String): IntentMaster {
             require(!sessions.containsKey(ingress.contractId)) {
                 "Intent session '${ingress.contractId}' already exists"
             }
+            val rrid   = Rrid(reportReference)
             val fields = ingress.payload.extractedFields
             val master = IntentMaster(
                 intentId         = ingress.contractId,
                 rrid             = rrid,
-                reportReference  = rrid.value,
+                reportReference  = reportReference,
                 status           = IntentStatus.PENDING,
                 objective        = fieldFrom(fields, "objective",
                     fallback = ingress.payload.normalizedIntent),
@@ -240,8 +209,8 @@ class IntentModule {
         /**
          * Persist [updated] as the new master for [intentId].
          *
-         * Completeness validation guard: if an existing field is already validated,
-         * the incoming update for that field is silently discarded.
+         * Validated-field guard: if an existing field is already validated, the
+         * incoming update for that field is silently discarded.
          */
         fun update(intentId: String, updated: IntentMaster): IntentMaster {
             val existing = sessions[intentId]
@@ -317,31 +286,39 @@ class IntentModule {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Issues communication contracts (prompts) and applies user responses back
-     * into the IntentMaster.
+     * Issues typed [CommunicationContract] artifacts and applies external responses
+     * back into the IntentMaster.
      *
      * Rules:
-     *  - [prompt] is deterministic: same field always yields the same prompt text.
+     *  - [contract] is deterministic: same session + field always yields the same
+     *    contract structure (prompt text, type, field name).
+     *  - NO free-form text prompts are used; all interaction is contract-based.
      *  - [apply] writes to the field identified by the last unresolved log record,
      *    falling back to the first still-missing mandatory field.
      *  - A response is validated (validated = true) only when it is non-blank.
-     *  - [recordPrompt] adds a new unresolved entry to the interaction log.
+     *  - [recordContract] adds a new unresolved entry to the interaction log.
      */
     private class InteractionDriver {
 
-        /** Return the standard prompt for [field]. */
-        fun prompt(field: String): String = when (field) {
-            "objective"   -> "Please provide the primary objective for this intent."
-            "constraints" -> "Please specify any constraints that must be respected during execution."
-            "environment" -> "Please describe the target environment for execution."
-            "resources"   -> "Please list the resources required to fulfill this intent."
-            else          -> "Please provide a value for '$field'."
-        }
+        /**
+         * Produce a [CommunicationContract] targeting [field] for the given session.
+         * The contract carries the session's [reportReference] so every interaction
+         * is anchored to the RRID.
+         */
+        fun contract(master: IntentMaster, field: String): CommunicationContract =
+            CommunicationContract(
+                intentId        = master.intentId,
+                reportReference = master.reportReference,
+                type            = "FIELD_REQUEST",
+                fieldRequired   = field,
+                sequence        = master.interactionLog.size + 1,
+                prompt          = promptFor(field)
+            )
 
         /**
          * Apply [response] to the field identified by the last unresolved log record.
-         * When no unresolved record exists (e.g. after recovery), applies to the first
-         * still-missing field and appends a recovery log entry.
+         * When no unresolved record exists, applies to the first still-missing
+         * mandatory field and appends a corrective log entry.
          */
         fun apply(master: IntentMaster, response: String): IntentMaster {
             val lastUnresolved = master.interactionLog.lastOrNull { !it.resolved }
@@ -363,11 +340,10 @@ class IntentModule {
                         record
                 }
             } else {
-                // Recovery scenario: no pending log entry — append a recovery record.
                 master.interactionLog + InteractionRecord(
                     sequence      = master.interactionLog.size + 1,
                     fieldTargeted = targetField,
-                    prompt        = "Recovery input for '$targetField'",
+                    prompt        = promptFor(targetField),
                     response      = response,
                     resolved      = validated
                 )
@@ -385,24 +361,34 @@ class IntentModule {
         }
 
         /**
-         * Append a new unresolved [InteractionRecord] for the given [field] and
-         * return the updated master (log is append-only).
+         * Append a new unresolved [InteractionRecord] derived from [comm] and return
+         * the updated master (log is append-only).
          */
-        fun recordPrompt(master: IntentMaster, field: String, promptText: String): IntentMaster {
+        fun recordContract(master: IntentMaster, comm: CommunicationContract): IntentMaster {
             val record = InteractionRecord(
-                sequence      = master.interactionLog.size + 1,
-                fieldTargeted = field,
-                prompt        = promptText,
+                sequence      = comm.sequence,
+                fieldTargeted = comm.fieldRequired,
+                prompt        = comm.prompt,
                 response      = null,
                 resolved      = false
             )
             return master.copy(interactionLog = master.interactionLog + record)
         }
 
+        // ─── Private helpers ──────────────────────────────────────────────────
+
+        private fun promptFor(field: String): String = when (field) {
+            "objective"   -> "Please provide the primary objective for this intent."
+            "constraints" -> "Please specify any constraints that must be respected during execution."
+            "environment" -> "Please describe the target environment for execution."
+            "resources"   -> "Please list the resources required to fulfill this intent."
+            else          -> "Please provide a value for '$field'."
+        }
+
         private fun setField(
-            master:    IntentMaster,
-            name:      String,
-            state:     IntentFieldState
+            master: IntentMaster,
+            name:   String,
+            state:  IntentFieldState
         ): IntentMaster = when (name) {
             "objective"   -> master.copy(objective   = state)
             "constraints" -> master.copy(constraints = state)
@@ -413,147 +399,63 @@ class IntentModule {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // ─── 4. Convergence Controller ────────────────────────────────────────────
+    // ─── 4. Intent Report Generator (MQP) ─────────────────────────────────────
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Enforces incremental completion and blocks illegal advancement.
-     *
-     * Drift conditions that result in a failed guard:
-     *  - Session is already in [IntentStatus.COMPLETE] (terminal; no re-entry).
-     *  - Session is already in [IntentStatus.FAILED] (terminal; no re-entry).
-     *  - [recoveryAttempts] exceeds [MAX_RECOVERY_ATTEMPTS] (convergence impossible).
-     *
-     * Note: validated fields are additionally protected at the [IntentStateManager]
-     * layer; the Convergence Controller operates at the session-lifecycle level.
-     */
-    private class ConvergenceController {
-
-        data class GuardResult(val passed: Boolean, val reason: String)
-
-        fun guard(master: IntentMaster): GuardResult {
-            if (master.status == IntentStatus.COMPLETE) {
-                return GuardResult(
-                    passed = false,
-                    reason = "Session '${master.intentId}' is already COMPLETE; no further advancement"
-                )
-            }
-            if (master.status == IntentStatus.FAILED) {
-                return GuardResult(
-                    passed = false,
-                    reason = "Session '${master.intentId}' is in terminal FAILED state"
-                )
-            }
-            if (master.recoveryAttempts > MAX_RECOVERY_ATTEMPTS) {
-                return GuardResult(
-                    passed = false,
-                    reason = "Max recovery attempts ($MAX_RECOVERY_ATTEMPTS) exceeded; convergence blocked"
-                )
-            }
-            return GuardResult(passed = true, reason = "")
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ─── 5. Intent Report Generator ───────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Produces the frozen CONTRACT REPORT (MQP requirement) when the IntentMaster
+     * Produces the frozen MQP-compliant CONTRACT REPORT when the IntentMaster
      * reaches [IntentStatus.COMPLETE].
+     *
+     * Report content (MQP requirement — descriptive ONLY; no fixes, no interpretation):
+     *  - Full type inventory: all types used within the session.
+     *  - State structure: resolved field values.
+     *  - Field completeness status: per-field validated flag.
+     *  - Interaction history: full ordered log at freeze time.
+     *  - Error conditions: any incomplete or invalid fields at freeze time.
      *
      * Rules:
      *  - The report captures state at the moment of generation; it is immutable.
-     *  - [completenessAt] is always 1.0 when this generator is invoked (all fields
-     *    validated).
-     *  - RRID anchoring is applied by [RridAnchorHandler] after generation.
+     *  - The RRID and reportReference are copied verbatim from the master; no new
+     *    values are generated.
      */
     private class IntentReportGenerator {
 
-        fun generate(master: IntentMaster): IntentReport = IntentReport(
-            intentId         = master.intentId,
-            rrid             = master.rrid,
-            reportReference  = master.reportReference,
-            objective        = master.objective.value,
-            constraints      = master.constraints.value,
-            environment      = master.environment.value,
-            resources        = master.resources.value,
-            completenessAt   = master.completeness,
-            interactionCount = master.interactionLog.size,
-            recoveryAttempts = master.recoveryAttempts
-        )
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ─── 6. Recovery Trigger ──────────────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Detects interaction stagnation and issues Recovery Contracts (RCF-1).
-     *
-     * Stagnation definition:
-     *   The last [STAGNATION_THRESHOLD] interaction log entries all target the same
-     *   mandatory field AND that field remains incomplete (blank or not validated).
-     *
-     * When stagnation is detected, [issue] produces an RCF-1 Recovery Contract
-     * listing every mandatory field that is still missing.  The RRID is propagated
-     * by [RridAnchorHandler] after issuance.
-     */
-    private class RecoveryTrigger {
-
-        fun shouldRecover(master: IntentMaster): Boolean {
-            val log = master.interactionLog
-            if (log.size < STAGNATION_THRESHOLD) return false
-
-            val lastN        = log.takeLast(STAGNATION_THRESHOLD)
-            val allSameField = lastN.map { it.fieldTargeted }.distinct().size == 1
-            if (!allSameField) return false
-
-            val targetField  = lastN.first().fieldTargeted
-            val fs           = fieldState(master, targetField)
-            return fs.value.isBlank() || !fs.validated
-        }
-
-        fun issue(master: IntentMaster): RecoveryContract {
-            val missing = MANDATORY_FIELDS.filter { name ->
+        fun generate(master: IntentMaster): IntentReport {
+            val errorConditions = MANDATORY_FIELDS.mapNotNull { name ->
                 val fs = fieldState(master, name)
-                fs.value.isBlank() || !fs.validated
+                when {
+                    fs.value.isBlank() -> "Field '$name': value is blank"
+                    !fs.validated      -> "Field '$name': value present but not validated"
+                    else               -> null
+                }
             }
-            return RecoveryContract(
-                intentId      = master.intentId,
-                rrid          = master.rrid,
-                type          = "RCF-1",
-                reason        = "Stagnation detected after ${master.recoveryAttempts} recovery attempt(s) with no progress",
-                missingFields = missing
+            return IntentReport(
+                intentId                = master.intentId,
+                rrid                    = master.rrid,
+                reportReference         = master.reportReference,
+                objective               = master.objective.value,
+                constraints             = master.constraints.value,
+                environment             = master.environment.value,
+                resources               = master.resources.value,
+                completenessAt          = master.completeness,
+                interactionCount        = master.interactionLog.size,
+                recoveryAttempts        = master.recoveryAttempts,
+                typeInventory           = listOf(
+                    "IntentMaster",
+                    "IntentFieldState",
+                    "IntentStatus",
+                    "InteractionRecord",
+                    "CommunicationContract",
+                    "IntentReport",
+                    "Rrid"
+                ),
+                fieldCompletenessStatus = MANDATORY_FIELDS.associateWith { name ->
+                    fieldState(master, name).validated
+                },
+                errorConditions         = errorConditions,
+                interactionHistory      = master.interactionLog.toList()
             )
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ─── 7. RRID Anchor Handler ────────────────────────────────────────────────
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Generates RRID values and anchors them to all module outputs.
-     *
-     * Rules:
-     *  - [generate] produces a unique RRID per session at creation time.
-     *  - [anchor] stamps the RRID onto an [IntentReport], ensuring the
-     *    [IntentReport.reportReference] propagates to downstream systems.
-     *  - [anchorRecovery] stamps the same session RRID onto a [RecoveryContract].
-     */
-    private class RridAnchorHandler {
-
-        /** Generate a new unique RRID for a session. */
-        fun generate(): Rrid = Rrid(UUID.randomUUID().toString())
-
-        /** Apply [rrid] to [report], propagating [IntentReport.reportReference]. */
-        fun anchor(report: IntentReport, rrid: Rrid): IntentReport =
-            report.copy(rrid = rrid, reportReference = rrid.value)
-
-        /** Apply [rrid] to [contract], anchoring the Recovery Contract to the session. */
-        fun anchorRecovery(contract: RecoveryContract, rrid: Rrid): RecoveryContract =
-            contract.copy(rrid = rrid)
     }
 }
 
@@ -562,7 +464,7 @@ class IntentModule {
 /**
  * Return the [IntentFieldState] for [name] from [master].
  *
- * Defined at package level so all seven internal components can use it
+ * Defined at package level so all internal components can use it
  * without duplicating the when-expression.
  */
 internal fun fieldState(master: IntentMaster, name: String): IntentFieldState = when (name) {

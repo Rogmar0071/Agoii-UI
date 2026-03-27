@@ -5,10 +5,14 @@ import com.agoii.mobile.contracts.ContractIntent
 // ─── RRID ─────────────────────────────────────────────────────────────────────
 
 /**
- * Report Reference ID — a stable, unique anchor propagated to every output
+ * Report Reference ID — an externally supplied anchor propagated to every output
  * produced by the Intent Module (IntentReport, RecoveryContract).
  *
- * @property value Opaque string identifier; generated once per session.
+ * The RRID is NEVER generated inside this module.  It is accepted as input at
+ * session creation and stored verbatim so that every output can be traced back
+ * to the originating report reference.
+ *
+ * @property value Opaque string identifier; supplied by the caller at session creation.
  */
 data class Rrid(val value: String)
 
@@ -31,11 +35,11 @@ data class IntentFieldState(
 /**
  * Lifecycle state of an [IntentMaster].
  *
- * Transitions (forward-only):
- *   PENDING → IN_PROGRESS → COMPLETE (success path)
- *   IN_PROGRESS → RECOVERING (stagnation detected)
- *   RECOVERING  → IN_PROGRESS (progress resumed after recovery)
- *   RECOVERING  → FAILED (max recovery attempts exceeded)
+ * Transitions (forward-only, success path):
+ *   PENDING → IN_PROGRESS → COMPLETE
+ *
+ * RECOVERING and FAILED may be set by external orchestration layers; the Intent
+ * Module itself does not drive these transitions.
  */
 enum class IntentStatus {
     /** Constructed from IngressContract; no interaction has occurred yet. */
@@ -47,10 +51,10 @@ enum class IntentStatus {
     /** All mandatory fields collected and validated; report has been frozen. */
     COMPLETE,
 
-    /** Stagnation detected; a Recovery Contract (RCF-1) has been issued. */
+    /** Stagnation detected by an external layer; a Recovery Contract (RCF-1) may have been issued. */
     RECOVERING,
 
-    /** Unrecoverable failure; max recovery attempts exceeded. */
+    /** Terminal failure set by an external layer; max recovery attempts exceeded or unrecoverable error. */
     FAILED
 }
 
@@ -97,6 +101,32 @@ data class RecoveryContract(
     val missingFields: List<String>
 )
 
+// ─── Communication Contract ───────────────────────────────────────────────────
+
+/**
+ * A typed contract issued by the [IntentModule] when a mandatory field requires
+ * an external response.
+ *
+ * The Intent Module MUST NOT use free-form text interaction.  Every request for
+ * missing information MUST be expressed as a [CommunicationContract] so that
+ * downstream systems can validate, route, and audit each interaction cycle.
+ *
+ * @property intentId        Session identifier of the originating IntentMaster.
+ * @property reportReference RRID value propagated from the session anchor.
+ * @property type            Contract kind; always "FIELD_REQUEST" for field collection.
+ * @property fieldRequired   Name of the mandatory field being collected.
+ * @property sequence        1-based position of this contract in the interaction log.
+ * @property prompt          Deterministic, human-readable description of the request.
+ */
+data class CommunicationContract(
+    val intentId:        String,
+    val reportReference: String,
+    val type:            String,
+    val fieldRequired:   String,
+    val sequence:        Int,
+    val prompt:          String
+)
+
 // ─── Intent Report ────────────────────────────────────────────────────────────
 
 /**
@@ -105,31 +135,50 @@ data class RecoveryContract(
  * The report is immutable once generated and carries the full resolved state of
  * all mandatory fields along with traceability metadata.
  *
- * MQP requirement: this report MUST be produced before the ContractIntent is
- * forwarded to the ContractSystemOrchestrator.
+ * MQP requirement — the report MUST include:
+ *  - Full type inventory (all types used within the session).
+ *  - State structure (resolved field values).
+ *  - Field completeness status (per-field validation flag).
+ *  - Interaction history (ordered log of all interaction records).
+ *  - Error conditions (any incomplete or invalid conditions at freeze time).
  *
- * @property intentId          Session identifier.
- * @property rrid              RRID anchor for this report.
- * @property reportReference   String value of the [rrid]; propagated to downstream systems.
- * @property objective         Resolved, validated objective field value.
- * @property constraints       Resolved, validated constraints field value.
- * @property environment       Resolved, validated environment field value.
- * @property resources         Resolved, validated resources field value.
- * @property completenessAt    Completeness ratio at time of report generation (always 1.0).
- * @property interactionCount  Total number of interaction records logged during collection.
- * @property recoveryAttempts  Number of Recovery Contracts issued during the session.
+ * Rules:
+ *  - Descriptive ONLY — no fixes, no interpretation.
+ *  - Produced before the ContractIntent is forwarded to the ContractSystemOrchestrator.
+ *
+ * @property intentId                 Session identifier.
+ * @property rrid                     RRID anchor for this report; equals the externally supplied
+ *                                    report reference.
+ * @property reportReference          String value of the [rrid]; propagated to downstream systems.
+ * @property objective                Resolved, validated objective field value.
+ * @property constraints              Resolved, validated constraints field value.
+ * @property environment              Resolved, validated environment field value.
+ * @property resources                Resolved, validated resources field value.
+ * @property completenessAt           Completeness ratio at time of report generation (always 1.0).
+ * @property interactionCount         Total number of interaction records logged during collection.
+ * @property recoveryAttempts         Number of Recovery Contracts issued during the session.
+ * @property typeInventory            Ordered list of all types used within the IntentMaster at
+ *                                    freeze time; descriptive only.
+ * @property fieldCompletenessStatus  Per-field validation flag keyed by field name.
+ * @property errorConditions          Ordered list of error or incompleteness descriptions detected
+ *                                    at freeze time; empty when all fields are fully validated.
+ * @property interactionHistory       Full ordered copy of the interaction log at freeze time.
  */
 data class IntentReport(
-    val intentId:         String,
-    val rrid:             Rrid,
-    val reportReference:  String,
-    val objective:        String,
-    val constraints:      String,
-    val environment:      String,
-    val resources:        String,
-    val completenessAt:   Double,
-    val interactionCount: Int,
-    val recoveryAttempts: Int
+    val intentId:                String,
+    val rrid:                    Rrid,
+    val reportReference:         String,
+    val objective:               String,
+    val constraints:             String,
+    val environment:             String,
+    val resources:               String,
+    val completenessAt:          Double,
+    val interactionCount:        Int,
+    val recoveryAttempts:        Int,
+    val typeInventory:           List<String>,
+    val fieldCompletenessStatus: Map<String, Boolean>,
+    val errorConditions:         List<String>,
+    val interactionHistory:      List<InteractionRecord>
 )
 
 // ─── Intent Master ────────────────────────────────────────────────────────────
@@ -144,7 +193,8 @@ data class IntentReport(
  * Mandatory fields: objective, constraints, environment, resources.
  *
  * @property intentId         Session identifier (equals the IngressContract.contractId).
- * @property rrid             RRID anchor generated at session creation.
+ * @property rrid             RRID anchor supplied externally at session creation; never
+ *                            generated inside the Intent Module.
  * @property reportReference  String value of [rrid]; propagated to all outputs.
  * @property status           Current lifecycle state.
  * @property objective        Objective field state.
@@ -189,12 +239,10 @@ data class IntentMaster(
  * Terminal or intermediate result returned by [IntentModule.step].
  *
  * The caller inspects the concrete subtype to decide the next action:
- *  - [Complete]          — forward [contractIntent] to ContractSystemOrchestrator.
- *  - [NeedsInteraction]  — present [prompt] to the user and call step() again with
- *                          the user's response.
- *  - [Recovering]        — surface [recoveryContract] to the operator; call step()
- *                          again when the operator provides an answer.
- *  - [Failed]            — terminal; no further advancement is possible.
+ *  - [Complete]         — forward [contractIntent] to ContractSystemOrchestrator.
+ *  - [NeedsInteraction] — process [communicationContract] and call step() again
+ *                         with the external actor's response.
+ *  - [Failed]           — terminal; no further advancement is possible.
  */
 sealed class IntentModuleResult {
 
@@ -211,29 +259,21 @@ sealed class IntentModuleResult {
 
     /**
      * A mandatory field is still missing.
-     * Present [prompt] to the external actor and call step() with the response.
+     * Route [communicationContract] to the external actor and call step() again
+     * with the response.
      *
-     * @property fieldRequired Name of the field being collected.
+     * @property communicationContract Typed contract describing exactly what is needed.
+     * @property fieldRequired         Name of the mandatory field being collected.
      */
     data class NeedsInteraction(
-        val intentMaster:  IntentMaster,
-        val prompt:        String,
-        val fieldRequired: String
+        val intentMaster:          IntentMaster,
+        val communicationContract: CommunicationContract,
+        val fieldRequired:         String
     ) : IntentModuleResult()
 
     /**
-     * Stagnation detected; a Recovery Contract (RCF-1) has been issued.
-     * Surface [recoveryContract] to the operator, then call step() again
-     * with a corrective response.
-     */
-    data class Recovering(
-        val intentMaster:     IntentMaster,
-        val recoveryContract: RecoveryContract
-    ) : IntentModuleResult()
-
-    /**
-     * Unrecoverable failure; max recovery attempts exceeded or a convergence
-     * violation was detected.  No further step() calls are valid.
+     * Unrecoverable failure; the session cannot be advanced further.
+     * No further step() calls are valid.
      *
      * @property reason Human-readable description of why the session failed.
      */
