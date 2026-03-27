@@ -119,9 +119,9 @@ class DeterministicMatchingEngine(
             compareBy<ContractorProfile>(
                 {
                     requirements.sumOf { requirement ->
-                        val capability = it.capabilities.first { capability ->
+                        val capability = it.capabilities.firstOrNull { capability ->
                             capability.name == requirement.capability
-                        }
+                        } ?: return@sumOf 0.0
                         requirement.weight *
                             capability.level *
                             it.reliabilityScore *
@@ -164,9 +164,10 @@ class SwarmCompositionEngine {
         val remaining = requirementMap.keys.toMutableSet()
 
         while (remaining.isNotEmpty()) {
+            val selectedIds = selected.mapTo(mutableSetOf()) { it.contractorId }
             val next = candidates
                 .asSequence()
-                .filter { candidate -> candidate.contractorId !in selected.map { it.contractorId } }
+                .filter { candidate -> candidate.contractorId !in selectedIds }
                 .map { candidate ->
                     val covered = remaining.filter { capabilityName ->
                         val requirement = requirementMap.getValue(capabilityName)
@@ -183,9 +184,9 @@ class SwarmCompositionEngine {
                         {
                             it.second.sumOf { capabilityName ->
                                 val requirement = requirementMap.getValue(capabilityName)
-                                val capability = it.first.capabilities.first { capability ->
+                                val capability = it.first.capabilities.firstOrNull { capability ->
                                     capability.name == capabilityName
-                                }
+                                } ?: return@sumOf 0.0
                                 requirement.weight *
                                     capability.level *
                                     it.first.reliabilityScore *
