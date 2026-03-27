@@ -101,14 +101,19 @@ class DeterministicMatchingEngine {
         }
 
         // Steps 5 & 6 — Scoring and Selection
-        val best = valid.maxWithOrNull(
-            compareBy<ContractorProfile> { contractor ->
-                requirements.sumOf { req ->
-                    val cap = contractor.capabilities.find { it.name == req.capability }!!
-                    req.weight * cap.level
-                } * contractor.reliabilityScore * contractor.availabilityScore * (1.0 - contractor.costScore)
-            }.thenByDescending { it.contractorId }
-        )!!
+        val scores = mutableMapOf<String, Double>()
+        for (contractor in valid) {
+            var capabilityScore = 0.0
+            for (req in requirements) {
+                val cap = contractor.capabilities.find { it.name == req.capability }!!
+                capabilityScore += req.weight * cap.level
+            }
+            val score = capabilityScore * contractor.reliabilityScore * contractor.availabilityScore * (1.0 - contractor.costScore)
+            scores[contractor.contractorId] = score
+        }
+        val maxScore = scores.values.maxOrNull()!!
+        val topCandidates = valid.filter { scores[it.contractorId] == maxScore }
+        val best = topCandidates.sortedBy { it.contractorId }.first()
 
         // Step 7 — Return
         return ResolutionResult.Matched(
@@ -135,22 +140,20 @@ class SwarmCompositionEngine {
 
         // Step 2 — Loop
         while (remaining.isNotEmpty()) {
-            val best = candidates.maxWithOrNull(
-                compareBy<ContractorProfile> { contractor ->
-                    remaining.count { req ->
-                        val cap = contractor.capabilities.find { it.name == req.capability }
-                        cap != null && cap.level >= req.requiredLevel
+            val available = candidates.filter { it !in selected }
+            val coverageMap = mutableMapOf<String, Int>()
+            for (contractor in available) {
+                var count = 0
+                for (req in remaining) {
+                    val cap = contractor.capabilities.find { it.name == req.capability }
+                    if (cap != null && cap.level >= req.requiredLevel) {
+                        count++
                     }
-                }.thenByDescending { it.contractorId }
-            )
-            val covered = if (best != null) {
-                remaining.filter { req ->
-                    val cap = best.capabilities.find { it.name == req.capability }
-                    cap != null && cap.level >= req.requiredLevel
                 }
-            } else emptyList()
-
-            if (best == null || covered.isEmpty()) {
+                coverageMap[contractor.contractorId] = count
+            }
+            val maxCoverage = coverageMap.values.maxOrNull() ?: 0
+            if (maxCoverage == 0) {
                 return ResolutionResult.Blocked(
                     reason = "NO_FEASIBLE_CONTRACTOR",
                     trace = ResolutionTrace(
@@ -160,7 +163,15 @@ class SwarmCompositionEngine {
                     )
                 )
             }
-
+            val topCandidates = available.filter { coverageMap[it.contractorId] == maxCoverage }
+            val best = topCandidates.sortedBy { it.contractorId }.first()
+            val covered = mutableListOf<ContractRequirement>()
+            for (req in remaining) {
+                val cap = best.capabilities.find { it.name == req.capability }
+                if (cap != null && cap.level >= req.requiredLevel) {
+                    covered += req
+                }
+            }
             selected += best
             remaining.removeAll(covered)
         }
