@@ -1,14 +1,9 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
-import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.core.*
 import com.agoii.mobile.execution.BuildExecutor
-import com.agoii.mobile.execution.ContractorExecutor
-import com.agoii.mobile.execution.ContractorInvocationLayer
-import com.agoii.mobile.execution.ExecutionAuthority
 import com.agoii.mobile.execution.ExecutionEntryPoint
-import com.agoii.mobile.execution.ResultValidator
 import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.irs.*
 import com.agoii.mobile.observability.ExecutionObservability
@@ -31,20 +26,13 @@ class CoreBridge(context: Context) {
 
     private val eventStore          = EventStore(context)
     private val ledger              = EventLedger(eventStore)
-    private val contractorRegistry  = ContractorRegistry()
-    private val governor            = Governor(ledger, contractorRegistry)
+    private val governor            = Governor(ledger)
     private val ledgerAudit         = LedgerAudit(ledger)
     private val replay              = Replay(ledger)
     private val replayTest          = ReplayTest(ledger)
     private val buildExecutor       = BuildExecutor()
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
-    
-    // Execution Authority components (contract integration)
-    private val contractorExecutor     = ContractorExecutor()
-    private val resultValidator        = ResultValidator()
-    private val executionAuthority     = ExecutionAuthority(contractorExecutor, resultValidator)
-    private val contractorInvocation   = ContractorInvocationLayer(ledger, executionAuthority, contractorRegistry)
 
     private val observability       = ExecutionObservability(ledger)
 
@@ -127,22 +115,6 @@ class CoreBridge(context: Context) {
             val contractName = resolveContractName(events, contractId)
 
             if (!buildExecutor.execute(contractName)) return null
-        }
-
-        // ── Contractor Invocation (TASK_ASSIGNED re-entry) ─────────────────────
-        if (lastEvent?.type == EventTypes.TASK_ASSIGNED) {
-            // Process through Execution Authority → Contractor Module
-            contractorInvocation.processTaskAssignment(projectId, lastEvent)
-            
-            // Result event already appended by ContractorInvocationLayer
-            // Continue Governor progression
-            val result = governor.runGovernor(projectId)
-            
-            return if (result == Governor.GovernorResult.ADVANCED) {
-                ledger.loadEvents(projectId).lastOrNull()
-            } else {
-                null
-            }
         }
 
         // ── Governor progression ────────────────────────────────────────────────
