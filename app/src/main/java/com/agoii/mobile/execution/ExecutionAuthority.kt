@@ -166,7 +166,7 @@ class ExecutionAuthority {
             )
         }
         
-        // Validate position
+        // Validate position (1-indexed: contracts start at position 1)
         if (taskContract.position <= 0) {
             return ContractorResult(
                 taskId = taskContract.taskId,

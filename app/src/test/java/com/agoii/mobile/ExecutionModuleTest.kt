@@ -193,11 +193,14 @@ class ExecutionModuleTest {
             )
         )
 
-        val startTime = System.currentTimeMillis()
+        // Verify synchronous execution: no async constructs, no listeners
+        // ExecutionModule should complete in a single call without spawning threads
+        val threadCountBefore = Thread.activeCount()
         executionModule.processState("project-1", taskAssignedEvent)
-        val duration = System.currentTimeMillis() - startTime
+        val threadCountAfter = Thread.activeCount()
 
-        // Should complete quickly (no async, no listeners, no external triggers)
-        assert(duration < 1000) { "ExecutionModule took too long: ${duration}ms" }
+        // No new threads should be spawned for synchronous execution
+        assertEquals("ExecutionModule should not spawn async threads", 
+                     threadCountBefore, threadCountAfter)
     }
 }

@@ -152,7 +152,7 @@ class ExecutionModule(
             failureCount = 0,
             status = VerificationStatus.VERIFIED,
             source = "default",
-            notes = listOf("Default contractor profile")
+            notes = listOf("Contractor not found in registry; using default profile")
         )
     }
 
