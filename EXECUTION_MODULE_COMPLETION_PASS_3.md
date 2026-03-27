@@ -233,12 +233,12 @@ ExecutionModule appends RESULT event (TASK_COMPLETED or TASK_FAILED)
 ## Files Changed
 
 ### Created
-1. `app/src/main/java/com/agoii/mobile/execution/ExecutionModule.kt` (195 lines)
-2. `app/src/test/java/com/agoii/mobile/ExecutionModuleTest.kt` (206 lines)
+1. `app/src/main/java/com/agoii/mobile/execution/ExecutionModule.kt` (198 lines)
+2. `app/src/test/java/com/agoii/mobile/ExecutionModuleTest.kt` (209 lines)
 
 ### Modified
 1. `app/src/main/java/com/agoii/mobile/execution/ExecutionAuthority.kt`
-   - Added `authorizeContractorExecution()` method (109 lines)
+   - Added `authorizeContractorExecution()` method (100 lines)
    - Added `ContractorProfile` import
 
 2. `app/src/main/java/com/agoii/mobile/bridge/CoreBridge.kt`
