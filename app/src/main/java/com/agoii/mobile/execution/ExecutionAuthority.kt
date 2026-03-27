@@ -48,6 +48,12 @@ sealed class ExecutionAuthorityResult {
 
 // ---------- EXECUTION AUTHORITY ----------
 
+/**
+ * ExecutionAuthority - validates and executes TaskAssignedContracts.
+ * 
+ * Each ExecutionAuthority instance maintains its own ContractorExecutor
+ * to ensure thread-safety and state isolation across different execution contexts.
+ */
 class ExecutionAuthority {
 
     private val contractorExecutor = ContractorExecutor()

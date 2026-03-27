@@ -85,7 +85,6 @@ class ExecutionModule(
 ) {
 
     private val executionAuthority = ExecutionAuthority()
-    private val contractorExecutor = ContractorExecutor()
 
     /**
      * Process current state and execute if TASK_ASSIGNED.
