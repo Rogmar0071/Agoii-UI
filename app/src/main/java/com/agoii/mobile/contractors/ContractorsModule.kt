@@ -126,9 +126,15 @@ class DeterministicMatchingEngine {
             val score = capabilityScore * contractor.reliabilityScore * contractor.availabilityScore * (1.0 - contractor.costScore)
             scores[contractor.contractorId] = score
         }
-        val maxScore = scores.values.maxOrNull()!!
-        val topCandidates = valid.filter { scores[it.contractorId] == maxScore }
-        val best = topCandidates.sortedBy { it.contractorId }.first()
+        var best = valid.first()
+        var bestScore = scores[best.contractorId]!!
+        for (contractor in valid) {
+            val score = scores[contractor.contractorId]!!
+            if (score > bestScore || (score == bestScore && contractor.contractorId < best.contractorId)) {
+                best = contractor
+                bestScore = score
+            }
+        }
 
         // Step 7 — Return
         return ResolutionResult.Matched(
