@@ -167,8 +167,7 @@ class ExecutionModuleTest {
         )
 
         val result1 = executionModule.processState("project-1", taskAssignedEvent)
-        // Clear ledger for second run
-        store.loadEvents("project-1")
+        // Use different project ID for second run to ensure independence
         val result2 = executionModule.processState("project-2", taskAssignedEvent)
 
         assertEquals(result1?.taskId, result2?.taskId)
