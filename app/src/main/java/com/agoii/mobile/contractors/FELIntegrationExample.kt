@@ -4,18 +4,21 @@ import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.execution.ContractorExecutor
 import com.agoii.mobile.execution.ExecutionEntryPoint
+import com.agoii.mobile.execution.ExecutionLifecycle
 import com.agoii.mobile.governor.Governor
 
 /**
  * FEL Integration Example — demonstrates the complete First Execution Loop.
  *
+ * UPDATED FOR FEL PASS 2: Now uses ExecutionLifecycle for in-flow contractor invocation.
+ *
  * This example shows how to:
  * 1. Submit an intent
  * 2. Generate contracts via ExecutionEntryPoint
- * 3. Progress through Governor states
- * 4. Execute task via contractor
- * 5. Retrieve traceable results
+ * 3. Run execution lifecycle with integrated contractor invocation
+ * 4. Retrieve traceable results
  *
  * Usage:
  *   val example = FELIntegrationExample()
@@ -29,10 +32,9 @@ class FELIntegrationExample {
     private val ledger = EventLedger()
     private val repository = EventRepository(ledger)
     private val registry = RealContractorRegistry()
-    private val governor = Governor(repository, null)
     private val entryPoint = ExecutionEntryPoint(ledger)
-    private val matchingEngine = DeterministicMatchingEngine()
-    private val invocationLayer = ContractorInvocationLayer()
+    private val contractorExecutor = ContractorExecutor(registry)
+    private val lifecycle = ExecutionLifecycle(repository, contractorExecutor, registry)
     
     /**
      * Run the complete FEL flow from intent to contractor result.
@@ -66,87 +68,22 @@ class FELIntegrationExample {
             println("  Contract ${index + 1}: ${c["contractId"]} - ${c["name"]}")
         }
         
-        // Step 3: Governor Progression
-        println("\n=== FEL Step 3: Governor Progression ===")
+        // Step 3: Run Execution Lifecycle (Governor + Contractor Invocation)
+        println("\n=== FEL Step 3: Execute Lifecycle with Integrated Contractor Invocation ===")
+        println("Running execution lifecycle (Governor + contractor invocation)...")
         
-        // CONTRACTS_GENERATED -> CONTRACTS_READY
-        var result = governor.runGovernor(projectId)
-        println("State transition: CONTRACTS_GENERATED -> CONTRACTS_READY (${result})")
+        val lifecycleResult = lifecycle.runLifecycle(projectId)
         
-        // CONTRACTS_READY -> CONTRACT_STARTED
-        result = governor.runGovernor(projectId)
-        println("State transition: CONTRACTS_READY -> CONTRACT_STARTED (${result})")
+        println("Lifecycle completed: ${lifecycleResult.completed}")
+        println("Final state: ${lifecycleResult.finalState}")
+        println("Contractor invocations: ${lifecycleResult.contractorResults.size}")
         
-        // CONTRACT_STARTED -> TASK_ASSIGNED
-        result = governor.runGovernor(projectId)
-        println("State transition: CONTRACT_STARTED -> TASK_ASSIGNED (${result})")
+        // Step 4: Result Analysis
+        println("\n=== FEL Step 4: Contractor Execution Result ===")
         
-        // Step 4: Contractor Selection & Invocation
-        println("\n=== FEL Step 4: Contractor Selection & Invocation ===")
+        val contractorResult = lifecycleResult.contractorResults.firstOrNull()
+            ?: throw IllegalStateException("No contractor result available")
         
-        val events = ledger.loadEvents(projectId)
-        val taskAssignedEvent = events.last { it.type == EventTypes.TASK_ASSIGNED }
-        
-        val taskId = taskAssignedEvent.payload["taskId"] as String
-        println("Task assigned: $taskId")
-        
-        // Extract contract details from CONTRACTS_GENERATED event
-        val position = when (val pos = taskAssignedEvent.payload["position"]) {
-            is Int -> pos
-            is Double -> pos.toInt()
-            else -> 1
-        }
-        
-        val contractData = contracts.firstOrNull { contract ->
-            (contract as? Map<*, *>)?.get("position")?.let { p ->
-                when (p) {
-                    is Int -> p == position
-                    is Double -> p.toInt() == position
-                    else -> false
-                }
-            } ?: false
-        } as? Map<*, *>
-        
-        val contractId = contractData?.get("contractId") as String
-        
-        // Build ExecutionContract for ContractorsModule
-        val executionContract = ExecutionContract(
-            contractId = contractId,
-            reportReference = reportId,
-            position = position.toString()
-        )
-        
-        // Define contract requirements
-        val requirements = listOf(
-            ContractRequirement("code_generation", 3, 1.0),
-            ContractRequirement("reasoning", 2, 0.5)
-        )
-        
-        // Step 4a: Contractor selection via ContractorsModule
-        println("Selecting contractor via DeterministicMatchingEngine...")
-        val taskContract = matchingEngine.resolve(
-            contract = executionContract,
-            requirements = requirements,
-            registry = registry
-        )
-        
-        println("Selected contractor: ${taskContract.assignment.contractorIds.firstOrNull() ?: "none"}")
-        println("Assignment mode: ${taskContract.assignment.mode}")
-        
-        // Step 4b: Contractor invocation via ContractorInvocationLayer
-        val contractPayload = mapOf(
-            "taskId" to taskId,
-            "contractId" to contractId,
-            "position" to position,
-            "reportReference" to reportId,
-            "objective" to "Execute contract $contractId at position $position"
-        )
-        
-        println("Invoking contractor...")
-        val contractorResult = invocationLayer.invoke(taskContract, contractPayload)
-        
-        // Step 5: Result Analysis
-        println("\n=== FEL Step 5: Contractor Execution Result ===")
         println("Status: ${contractorResult.status}")
         println("Contractor: ${contractorResult.contractor_id}")
         println("Contract ID: ${contractorResult.contract_id}")
@@ -172,10 +109,11 @@ class FELIntegrationExample {
         println("\n=== FEL Complete ===")
         println("✓ Intent accepted")
         println("✓ Contracts derived")
-        println("✓ Contractor selected")
-        println("✓ Contractor invoked")
+        println("✓ Contractor selected (WITHIN system flow)")
+        println("✓ Contractor invoked (WITHIN system flow)")
         println("✓ Result returned")
         println("✓ No invariant violations")
+        println("✓ Execution lifecycle managed by system, not external tests")
         
         return contractorResult
     }
@@ -240,7 +178,8 @@ fun main() {
     example.demonstrateContractorSelection()
     
     println("\n" + "=".repeat(70))
-    println("RUNNING COMPLETE FIRST EXECUTION LOOP")
+    println("RUNNING COMPLETE FIRST EXECUTION LOOP (FEL PASS 2)")
+    println("WITH IN-FLOW CONTRACTOR INVOCATION")
     println("=".repeat(70))
     
     // Then run the complete loop
@@ -248,11 +187,13 @@ fun main() {
     
     // Verify success
     if (result.status == "success") {
-        println("\n✅ FEL SUCCESSFUL")
+        println("\n✅ FEL PASS 2 SUCCESSFUL")
         println("   Contractor ${result.contractor_id} executed contract ${result.contract_id}")
         println("   Report reference: ${result.report_reference}")
+        println("   Invocation happened WITHIN system flow (not external)")
     } else {
         println("\n❌ FEL FAILED")
         println("   Error: ${result.error}")
     }
 }
+
