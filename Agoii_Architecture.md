@@ -862,3 +862,240 @@ IF ANY MODULE:
 ---
 
 END SECTION
+
+CONTRACT ID: AGOII_SIMULATION_FRAMEWORK_FORMALIZATION
+MODE: PENDING (NON-EXECUTABLE)
+CLASSIFICATION: STRUCTURAL DEFINITION
+SCOPE: GLOBAL (ALL MODULES)
+
+ARCHITECTURE ANCHOR:
+Agoii Master + AERP-1 + Contract System Law + Module Completeness Law + RRIL-1
+
+REPO ANCHOR:
+agoII-ui (issue to be created: "Simulation Framework — Contract Formalization")
+
+---
+
+OBJECTIVE:
+
+Formally define Simulation as a first-class, contract-bound capability across Agoii.
+
+Simulation MUST be:
+- stage-aware
+- ledger-anchored (via RRID)
+- non-authoritative
+- reusable across modules
+- strictly separated from execution and governance
+
+---
+
+DEFINITION:
+
+Simulation is a deterministic, contract-bound projection process that produces
+a representation of possible, planned, or predicted system states WITHOUT
+modifying the authoritative system state.
+
+Simulation DOES NOT:
+- write to ledger
+- mutate system state
+- bypass validation
+- act as execution
+
+Simulation ONLY:
+- reads state (via RRID)
+- applies projection logic
+- produces output artifacts
+
+---
+
+SIMULATION CONTRACT (ABSTRACT STRUCTURE)
+
+SimulationContract {
+
+  contract_id: String
+  contract_name: "SIMULATION"
+
+  report_reference: String   // RRID (MANDATORY)
+
+  simulation_type: ENUM {
+    INTENT_PROJECTION
+    OPTION_COMPARISON
+    CONTEXT_COMPLETION
+    FEASIBILITY
+    EXECUTION_DRY_RUN
+    REPRESENTATION
+  }
+
+  stage_context: ENUM {
+    INTENT
+    PLANNING
+    SCOUTING
+    PRE_EXECUTION
+    PRE_ASSEMBLY
+    USER_ALIGNMENT
+  }
+
+  input_state: {
+    source: "LEDGER" | "INTENT_ONLY" | "HYBRID"
+    scope: String
+  }
+
+  parameters: {
+    constraints: Map
+    assumptions: Map
+    depth: LOW | MEDIUM | HIGH
+  }
+
+}
+
+---
+
+SIMULATION RESULT (OUTPUT STRUCTURE)
+
+SimulationResult {
+
+  contract_id: String
+  report_reference: String
+
+  simulation_type: ENUM
+  stage_context: ENUM
+
+  output: {
+    artifacts: List<Any>        // diagrams, flows, visuals, data
+    summary: String
+    confidence: LOW | MEDIUM | HIGH
+  }
+
+  trace: {
+    inputs_used: List<String>
+    assumptions_applied: List<String>
+  }
+
+}
+
+---
+
+SIMULATION TYPES (LOCKED CLASSIFICATION)
+
+1. INTENT_PROJECTION
+   → future concept modeling (no real state)
+
+2. OPTION_COMPARISON
+   → evaluate multiple approaches
+
+3. CONTEXT_COMPLETION
+   → fill gaps from incomplete external inputs
+
+4. FEASIBILITY
+   → validate constraints and viability
+
+5. EXECUTION_DRY_RUN
+   → simulate execution before real run
+
+6. REPRESENTATION
+   → visual / user-alignment outputs
+
+---
+
+STAGE DEPENDENCY MODEL
+
+Simulation MUST resolve input_state based on stage:
+
+- INTENT → intent-only state
+- PLANNING → intent + partial contracts
+- SCOUTING → intent + external data
+- PRE_EXECUTION → full ledger state
+- PRE_ASSEMBLY → near-final state
+- USER_ALIGNMENT → representation-focused
+
+---
+
+GOVERNANCE RULES (STRICT)
+
+1. NON-AUTHORITY
+   - Simulation results MUST NOT be treated as truth
+
+2. NO LEDGER WRITE
+   - Simulation MUST NEVER append events
+
+3. RRID ENFORCEMENT
+   - All simulations MUST be bound to report_reference
+
+4. NO STATE MUTATION
+   - Simulation cannot alter system state
+
+5. CONTRACT BOUNDARY
+   - Simulation MUST be invoked via contract only
+
+---
+
+INTEGRATION POINTS
+
+- Intent Module
+  → uses INTENT_PROJECTION
+
+- Contract System
+  → uses OPTION_COMPARISON
+
+- Scouting / External Contracts
+  → uses CONTEXT_COMPLETION
+
+- Pre-Execution Validation
+  → uses FEASIBILITY
+
+- Assembly Preparation
+  → uses EXECUTION_DRY_RUN
+
+- User Platform Layer
+  → uses REPRESENTATION
+
+---
+
+SYSTEM ROLE
+
+Simulation acts as:
+
+→ Bridge between:
+   - known state (ledger)
+   - possible state (future)
+
+It enables:
+- decision support
+- risk reduction
+- user alignment
+
+WITHOUT compromising:
+- determinism
+- governance
+- auditability
+
+---
+
+CONSTRAINT LOCK
+
+- No implementation defined
+- No module ownership assigned
+- No execution path created
+- No mutation surface introduced
+
+This is a STRUCTURAL SPECIFICATION ONLY
+
+---
+
+SUCCESS CONDITION
+
+Simulation is:
+
+- formally defined
+- globally consistent
+- contract-bound
+- ready for future controlled implementation
+
+---
+
+STATUS
+
+PENDING
+(Requires future activation via MQP contract)
+
+---
