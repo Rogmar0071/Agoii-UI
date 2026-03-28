@@ -194,6 +194,10 @@ class ValidationLayer {
             EventTypes.ASSEMBLY_COMPLETED  -> checkAssemblyCompleted(projectId, payload)
             EventTypes.ICS_STARTED         -> checkIcsStarted(projectId, payload)
             EventTypes.ICS_COMPLETED       -> checkIcsCompleted(projectId, payload)
+            // UCS-1 ingestion lifecycle events
+            EventTypes.CONTRACT_CREATED    -> checkContractCreated(projectId, payload)
+            EventTypes.CONTRACT_VALIDATED  -> checkContractValidatedEvent(projectId, payload)
+            EventTypes.CONTRACT_APPROVED   -> checkContractApproved(projectId, payload)
         }
     }
 
@@ -609,6 +613,65 @@ class ValidationLayer {
         }
     }
 
+    // ── UCS-1 ingestion lifecycle event checks ────────────────────────────────
+
+    private fun checkContractCreated(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.CONTRACT_CREATED, payload, CONTRACT_CREATED_KEYS)
+        payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACT_CREATED missing or blank 'contractId' in '$projectId'"
+            )
+        payload["intentId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACT_CREATED missing or blank 'intentId' in '$projectId'"
+            )
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACT_CREATED missing or blank 'report_reference' (RRIL-1) in '$projectId'"
+            )
+        payload["contractClass"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACT_CREATED missing or blank 'contractClass' in '$projectId'"
+            )
+        payload["executionType"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACT_CREATED missing or blank 'executionType' in '$projectId'"
+            )
+        payload["targetDomain"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACT_CREATED missing or blank 'targetDomain' in '$projectId'"
+            )
+        checkPositionAndTotal(projectId, EventTypes.CONTRACT_CREATED, payload)
+    }
+
+    private fun checkContractValidatedEvent(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.CONTRACT_VALIDATED, payload, CONTRACT_VALIDATED_KEYS)
+        payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACT_VALIDATED missing or blank 'contractId' in '$projectId'"
+            )
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACT_VALIDATED missing or blank 'report_reference' (RRIL-1) in '$projectId'"
+            )
+    }
+
+    private fun checkContractApproved(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.CONTRACT_APPROVED, payload, CONTRACT_APPROVED_KEYS)
+        payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACT_APPROVED missing or blank 'contractId' in '$projectId'"
+            )
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACT_APPROVED missing or blank 'report_reference' (RRIL-1) in '$projectId'"
+            )
+        payload["executionRoute"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "CONTRACT_APPROVED missing or blank 'executionRoute' in '$projectId'"
+            )
+    }
+
     // ── 4. INVARIANTS ─────────────────────────────────────────────────────────
 
     private fun checkInvariants(
@@ -740,5 +803,13 @@ class ValidationLayer {
         )
         private val ICS_STARTED_KEYS         = setOf("report_reference", "finalArtifactReference", "taskId")
         private val ICS_COMPLETED_KEYS       = setOf("report_reference", "taskId", "icsOutputReference")
+        // UCS-1 ingestion lifecycle event key sets
+        private val CONTRACT_CREATED_KEYS    = setOf(
+            "contractId", "intentId", "report_reference",
+            "contractClass", "executionType", "targetDomain",
+            "position", "total"
+        )
+        private val CONTRACT_VALIDATED_KEYS  = setOf("contractId", "report_reference")
+        private val CONTRACT_APPROVED_KEYS   = setOf("contractId", "report_reference", "executionRoute")
     }
 }

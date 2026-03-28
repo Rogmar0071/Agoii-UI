@@ -7,7 +7,7 @@
 //
 // PURPOSE:
 // Phase 1 (evaluate):              Validate and authorize execution contracts BEFORE ledger write.
-// Phase 2 (executeFromLedger):     Own the full task execution pipeline from ledger state:
+// Phase 2 (executeFromLedger):     Own the full task execution pipeline from ledger state.
 //   - trigger detection (TASK_STARTED)
 //   - deterministic matching (DeterministicMatchingEngine)
 //   - contractor execution (ContractorExecutor)
@@ -17,17 +17,14 @@
 //   - RCF-1 recovery contract issuance on failure
 // Phase 3 (assembleFromLedger):    Assembly pipeline after EXECUTION_COMPLETED.
 // Phase 4 (runIcsFromLedger):      ICS pipeline after ASSEMBLY_COMPLETED.
-// Phase 5 (route):                 Deterministic routing via UniversalContract execution semantics (UCS-1).
-// Phase 6 (executeUniversalContract): Full UCS-1 closed-system pipeline:
+// Phase 5 (route):                 Deterministic routing via UniversalContract execution semantics (UCS-1 — PURE).
+// Phase 6 (ingestUniversalContract): UCS-1 ingestion pipeline (GOVERNANCE INPUT ONLY):
 //   Surface 2 — validation (UniversalContractValidator)
 //   Surface 3 — normalization (UniversalContractNormalizer)
-//   Surface 4 — routing (route())
-//   Surface 5 — lifecycle governance (ContractLifecycleGovernor)
 //   Surface 6 — enforcement (ContractEnforcementEngine)
-//   Surface 7 — interoperability (UniversalContractInterop)
-//   Surface 8 — failure + recovery (UniversalContractRecovery / RCF-1)
-//   Surface 9 — report integration (UniversalContractReport / AERP-1)
-//   Surface 10 — compatibility with Execution, Assembly, ICS
+//   Lifecycle  — CONTRACT_CREATED / CONTRACT_VALIDATED / CONTRACT_APPROVED (ledger events)
+//   Failure    — RECOVERY_CONTRACT (RCF-1)
+//   NO execution triggered — UniversalContract is a GOVERNANCE INPUT only
 
 package com.agoii.mobile.execution
 
@@ -39,18 +36,13 @@ import com.agoii.mobile.contractors.ContractRequirement
 import com.agoii.mobile.contractors.DeterministicMatchingEngine
 import com.agoii.mobile.contracts.ContractEnforcementEngine
 import com.agoii.mobile.contracts.ContractEnforcementResult
-import com.agoii.mobile.contracts.ContractLifecycleEvent
-import com.agoii.mobile.contracts.ContractLifecycleGovernor
-import com.agoii.mobile.contracts.ContractLifecyclePhase
 import com.agoii.mobile.contracts.ContractValidationResult
 import com.agoii.mobile.contracts.ContractViolation
 import com.agoii.mobile.contracts.ExecutionType
 import com.agoii.mobile.contracts.TargetDomain
 import com.agoii.mobile.contracts.UniversalContract
-import com.agoii.mobile.contracts.UniversalContractInterop
 import com.agoii.mobile.contracts.UniversalContractNormalizer
 import com.agoii.mobile.contracts.UniversalContractRecovery
-import com.agoii.mobile.contracts.UniversalContractReport
 import com.agoii.mobile.contracts.UniversalContractValidator
 import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
@@ -229,48 +221,49 @@ sealed class ExecutionRoute {
     data class SwarmCoordination(override val targetDomain: TargetDomain) : ExecutionRoute()
 }
 
-// ---------- PHASE 6: UNIVERSAL EXECUTION RESULT (UCS-1) ----------
+// ---------- PHASE 6: UNIVERSAL INGESTION RESULT (UCS-1) ----------
 
 /**
- * Result of [ExecutionAuthority.executeUniversalContract].
+ * Result of [ExecutionAuthority.ingestUniversalContract].
  *
- * Each variant corresponds to a possible outcome of the full UCS-1 pipeline:
- *  [Executed]           — contract executed successfully; AERP-1 report produced.
- *  [ValidationFailed]   — Surface 2 structural/semantic validation failed.
- *  [EnforcementFailed]  — Surface 6 enforcement gate blocked execution.
- *  [BlockedWithRecovery]— Execution or matching failed; RCF-1 recovery contracts issued.
- *  [RouteNotSupported]  — The derived [ExecutionRoute] has no live execution handler yet.
+ * [Ingested]          — all three lifecycle events written to ledger; contract is ready for
+ *                        the execution spine.
+ * [ValidationFailed]  — Surface 2 structural/semantic validation failed; RECOVERY_CONTRACT
+ *                        written to ledger.
+ * [EnforcementFailed] — Surface 6 enforcement gate failed; RECOVERY_CONTRACT written to ledger.
+ *
+ * GOVERNANCE RULE: no variant implies execution. [UniversalContract] is a GOVERNANCE INPUT
+ * only. Execution occurs exclusively via [executeFromLedger] when TASK_STARTED is the latest
+ * ledger event.
  */
-sealed class UniversalExecutionResult {
-
-    /** Contract executed and AERP-1 [ContractReport] produced. */
-    data class Executed(
-        val route:  ExecutionRoute,
-        val report: ContractReport
-    ) : UniversalExecutionResult()
-
-    /** Structural or semantic validation failed (Surface 2). */
-    data class ValidationFailed(
-        val violations: List<String>
-    ) : UniversalExecutionResult()
-
-    /** Enforcement gate failed (Surface 6). */
-    data class EnforcementFailed(
-        val violations: List<ContractViolation>
-    ) : UniversalExecutionResult()
+sealed class UniversalIngestionResult {
 
     /**
-     * Execution blocked; RCF-1 recovery contracts issued and ledger-materialized (Surface 8).
+     * Contract ingested — CONTRACT_CREATED, CONTRACT_VALIDATED, CONTRACT_APPROVED written to
+     * ledger.  The contract is now available to the execution spine.
      */
-    data class BlockedWithRecovery(
-        val reason:            String,
-        val recoveryContracts: List<ExecutionRecoveryContract>
-    ) : UniversalExecutionResult()
+    data class Ingested(
+        val contractId:      String,
+        val reportReference: String
+    ) : UniversalIngestionResult()
 
-    /** The derived [ExecutionRoute] type has no live execution handler in this pipeline. */
-    data class RouteNotSupported(
-        val route: ExecutionRoute
-    ) : UniversalExecutionResult()
+    /**
+     * Structural or semantic validation failed (Surface 2); CONTRACT_CREATED and
+     * RECOVERY_CONTRACT written to ledger.
+     */
+    data class ValidationFailed(
+        val violations:       List<String>,
+        val recoveryContract: ExecutionRecoveryContract
+    ) : UniversalIngestionResult()
+
+    /**
+     * Enforcement gate failed (Surface 6); CONTRACT_CREATED, CONTRACT_VALIDATED, and
+     * RECOVERY_CONTRACT written to ledger.
+     */
+    data class EnforcementFailed(
+        val violations:       List<ContractViolation>,
+        val recoveryContract: ExecutionRecoveryContract
+    ) : UniversalIngestionResult()
 }
 
 // ---------- EXECUTION AUTHORITY ----------
@@ -282,8 +275,9 @@ sealed class UniversalExecutionResult {
  * Phase 2 — [executeFromLedger]: owns the full task execution pipeline from ledger state.
  * Phase 3 — [assembleFromLedger]: owns the full assembly pipeline after EXECUTION_COMPLETED.
  * Phase 4 — [runIcsFromLedger]: owns the ICS pipeline after ASSEMBLY_COMPLETED.
- * Phase 5 — [route]: deterministic routing via [UniversalContract] execution semantics (UCS-1).
- * Phase 6 — [executeUniversalContract]: full UCS-1 closed-system pipeline (Surfaces 2–10).
+ * Phase 5 — [route]: deterministic routing via [UniversalContract] execution semantics (UCS-1 — PURE).
+ * Phase 6 — [ingestUniversalContract]: UCS-1 ingestion pipeline; writes lifecycle events to the
+ *            ledger (NO execution triggered; contract is a governance input only).
  *
  * @param contractorRegistry Optional contractor registry for deterministic matching.
  *                           When null, all execution attempts are BLOCKED (RCF-1 issued).
@@ -298,13 +292,11 @@ class ExecutionAuthority(
     private val assemblyModule  = AssemblyModule()
     private val icsModule       = IcsModule()
 
-    // ── UCS-1 closed-system components (Surfaces 2, 3, 5, 6, 8, 9) ──────────
-    private val contractValidator      = UniversalContractValidator()
-    private val contractNormalizer     = UniversalContractNormalizer()
-    private val lifecycleGovernor      = ContractLifecycleGovernor()
-    private val enforcementEngine      = ContractEnforcementEngine()
-    private val contractRecovery       = UniversalContractRecovery()
-    private val contractReportBuilder  = UniversalContractReport()
+    // ── UCS-1 ingestion components (Surfaces 2, 3, 6, 8) ─────────────────────
+    private val contractValidator  = UniversalContractValidator()
+    private val contractNormalizer = UniversalContractNormalizer()
+    private val enforcementEngine  = ContractEnforcementEngine()
+    private val contractRecovery   = UniversalContractRecovery()
 
     companion object {
         /**
@@ -972,218 +964,152 @@ class ExecutionAuthority(
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // PHASE 6 — Universal Contract execution pipeline (UCS-1 CLOSED SYSTEM)
+    // PHASE 6 — Universal Contract ingestion pipeline (UCS-1 GOVERNANCE INPUT)
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
-     * Execute a [UniversalContract] through the full UCS-1 closed-system pipeline.
+     * Ingest a [UniversalContract] through the UCS-1 pipeline (AERP-1 pre-ledger gate).
      *
-     * This is the primary entry point when a contract is represented as a
-     * [UniversalContract] rather than sourced from ledger state.
+     * [UniversalContract] is a GOVERNANCE INPUT ONLY — no execution is triggered here.
+     * Execution occurs exclusively via [executeFromLedger] when `TASK_STARTED` is the
+     * latest ledger event.
      *
-     * Pipeline (locked — all surfaces in order):
-     *  Surface 2 — [UniversalContractValidator]: structural + semantic validation
-     *              → [UniversalExecutionResult.ValidationFailed] on failure
+     * Pipeline (locked — all phases run in full before any write except CONTRACT_CREATED):
+     *  Phase 1 — CONTRACT_CREATED written (records ingestion attempt unconditionally)
+     *  Surface 2 — [UniversalContractValidator]: structural + semantic validation (AERP-1)
+     *              → on failure: RECOVERY_CONTRACT written; returns [UniversalIngestionResult.ValidationFailed]
      *  Surface 3 — [UniversalContractNormalizer]: canonical form production
-     *  Surface 5 — [ContractLifecycleGovernor]: lifecycle state tracking
-     *  Surface 6 — [ContractEnforcementEngine]: pre-execution constraint enforcement
-     *              → [UniversalExecutionResult.EnforcementFailed] on failure
-     *  Surface 4 — [route]: deterministic route derivation from contract semantics
-     *              → [UniversalExecutionResult.RouteNotSupported] for unhandled routes
-     *  Surface 7 — [UniversalContractInterop]: bridge to Phase 2 execution models
-     *  Surface 10 — Compatibility: contractor execution via DeterministicMatchingEngine +
-     *               ContractorExecutor (INTERNAL_EXECUTION/CONTRACTOR path)
-     *  Surface 9 — [UniversalContractReport]: AERP-1 report generation
-     *  Surface 8 — [UniversalContractRecovery]: RCF-1 recovery on failure
+     *  Surface 6 — [ContractEnforcementEngine]: pre-execution enforcement gate
+     *              → on pass:   CONTRACT_VALIDATED written
+     *              → on failure: CONTRACT_VALIDATED written, then RECOVERY_CONTRACT; returns
+     *                            [UniversalIngestionResult.EnforcementFailed]
+     *  Surface 4 — [route]: pure route classification (no ledger write, no side effects)
+     *  Phase end — CONTRACT_APPROVED written; returns [UniversalIngestionResult.Ingested]
      *
-     * GOVERNANCE RULE: only [ExecutionType.INTERNAL_EXECUTION] with
-     * [TargetDomain.CONTRACTOR] is live-executed in this pipeline.
-     * All other routes produce [UniversalExecutionResult.RouteNotSupported].
+     * RRIL-1: [contract.reportReference] is propagated unchanged through every ledger event.
+     * RCF-1: any failure produces exactly one RECOVERY_CONTRACT (one violation surface).
+     * NO partial ingestion: CONTRACT_CREATED is always written (audit trail).
      *
-     * @param contract  The [UniversalContract] to execute.
+     * @param contract  The [UniversalContract] to ingest (governance input).
      * @param projectId Project ledger identifier.
      * @param ledger    EventLedger — single write authority.
-     * @return [UniversalExecutionResult] describing the outcome.
+     * @return [UniversalIngestionResult] describing the outcome.
      */
-    fun executeUniversalContract(
+    fun ingestUniversalContract(
         contract:  UniversalContract,
         projectId: String,
         ledger:    EventLedger
-    ): UniversalExecutionResult {
+    ): UniversalIngestionResult {
 
-        // ── Surface 2: Structural + Semantic Validation ──────────────────────
+        val ingestTaskId = "ingest::${contract.contractId}"
+
+        // ── Phase 1: Record ingestion attempt (CONTRACT_CREATED) ─────────────
+        // Always written first — NO partial ingestion, NO silent drops (RCF-1).
+        try {
+            ledger.appendEvent(
+                projectId,
+                EventTypes.CONTRACT_CREATED,
+                mapOf(
+                    "contractId"       to contract.contractId,
+                    "intentId"         to contract.intentId,
+                    "report_reference" to contract.reportReference,
+                    "contractClass"    to contract.contractClass.name,
+                    "executionType"    to contract.executionType.name,
+                    "targetDomain"     to contract.targetDomain.name,
+                    "position"         to contract.position,
+                    "total"            to contract.total
+                )
+            )
+        } catch (_: Exception) {
+            // Ledger write failure does not suppress ingestion attempt;
+            // downstream writes will also fail and be handled accordingly.
+        }
+
+        // ── Surface 2: Structural + Semantic Validation (AERP-1 pre-ledger gate) ──
         val validationResult = contractValidator.validate(contract)
         if (validationResult is ContractValidationResult.Invalid) {
-            return UniversalExecutionResult.ValidationFailed(validationResult.violations)
-        }
-
-        // ── Surface 3: Normalization ──────────────────────────────────────────
-        val normalized = contractNormalizer.normalize(contract)
-
-        // ── Surface 5: Lifecycle — advance to VALIDATED → NORMALIZED ─────────
-        var lifecyclePhase = lifecycleGovernor.transition(
-            ContractLifecyclePhase.PENDING, ContractLifecycleEvent.VALIDATION_PASSED
-        )
-        lifecyclePhase = lifecycleGovernor.transition(
-            lifecyclePhase, ContractLifecycleEvent.NORMALIZATION_APPLIED
-        )
-
-        // ── Surface 6: Enforcement ────────────────────────────────────────────
-        val enforcementResult = enforcementEngine.enforce(normalized)
-        if (enforcementResult is ContractEnforcementResult.Violated) {
-            lifecycleGovernor.transition(lifecyclePhase, ContractLifecycleEvent.VALIDATION_FAILED)
-            return UniversalExecutionResult.EnforcementFailed(enforcementResult.violations)
-        }
-
-        // ── Surface 4: Routing — derived from contract-declared semantics only ─
-        val executionRoute = route(normalized)
-        lifecyclePhase = lifecycleGovernor.transition(
-            lifecyclePhase, ContractLifecycleEvent.ROUTE_DETERMINED
-        )
-
-        // ── Surface 10: Compatibility gate ────────────────────────────────────
-        // Only INTERNAL_EXECUTION / CONTRACTOR is live-executed in this pipeline.
-        if (executionRoute !is ExecutionRoute.InternalExecution ||
-            normalized.targetDomain != TargetDomain.CONTRACTOR
-        ) {
-            return UniversalExecutionResult.RouteNotSupported(executionRoute)
-        }
-
-        // ── Surface 5: Lifecycle → EXECUTING ─────────────────────────────────
-        lifecyclePhase = lifecycleGovernor.transition(
-            lifecyclePhase, ContractLifecycleEvent.EXECUTION_STARTED
-        )
-
-        // ── Surface 7: Interoperability — bridge to Phase 2 execution models ──
-        val taskId        = UniversalContractInterop.buildTaskId(normalized.contractId)
-        val executionTask = UniversalContractInterop.toExecutionTask(normalized, taskId)
-        val artifactRef   = buildArtifactReference(normalized.reportReference, taskId)
-
-        // ── Registry check ────────────────────────────────────────────────────
-        val registry = contractorRegistry ?: run {
-            lifecyclePhase = lifecycleGovernor.transition(
-                lifecyclePhase, ContractLifecycleEvent.EXECUTION_FAILED
-            )
             val anchorState = AnchorState(
-                reportReference    = normalized.reportReference,
+                reportReference    = contract.reportReference,
                 validatedTypes     = emptyList(),
                 validatedStructure = emptySet(),
                 validatedPaths     = emptyList()
             )
+            val artifactRef      = buildArtifactReference(contract.reportReference, ingestTaskId, "NO_ARTIFACT")
+            val violationSurface = "VALIDATION_FAILED: ${validationResult.violations.joinToString("; ")}"
             val recovery = contractRecovery.issueRecovery(
-                contract         = normalized,
-                taskId           = taskId,
-                failureClass     = "STRUCTURAL",
-                violationSurface = "NO_CONTRACTOR_REGISTRY: matching is impossible",
-                anchorState      = anchorState
-            )
-            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
-            lifecycleGovernor.transition(lifecyclePhase, ContractLifecycleEvent.RECOVERY_ISSUED)
-            return UniversalExecutionResult.BlockedWithRecovery(
-                reason            = "NO_CONTRACTOR_REGISTRY",
-                recoveryContracts = listOf(recovery)
-            )
-        }
-
-        // ── Surface 10: Deterministic matching ────────────────────────────────
-        val matchingContract = com.agoii.mobile.contractors.ExecutionContract(
-            contractId      = executionTask.contractId,
-            reportReference = executionTask.reportReference,
-            position        = executionTask.position.toString()
-        )
-        val requirements  = parseRequirements(executionTask.requirements)
-        val adaptedReg    = adaptRegistry(registry)
-        val assigned      = matchingEngine.resolve(matchingContract, requirements, adaptedReg)
-
-        if (assigned.assignment.mode == com.agoii.mobile.contractors.AssignmentMode.BLOCKED) {
-            lifecyclePhase = lifecycleGovernor.transition(
-                lifecyclePhase, ContractLifecycleEvent.EXECUTION_FAILED
-            )
-            val anchorState = AnchorState(
-                reportReference    = normalized.reportReference,
-                validatedTypes     = emptyList(),
-                validatedStructure = emptySet(),
-                validatedPaths     = emptyList()
-            )
-            val recovery = contractRecovery.issueRecovery(
-                contract         = normalized,
-                taskId           = taskId,
-                failureClass     = "STRUCTURAL",
-                violationSurface = "MATCHING_BLOCKED: no valid contractor found",
-                anchorState      = anchorState
-            )
-            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
-            lifecycleGovernor.transition(lifecyclePhase, ContractLifecycleEvent.RECOVERY_ISSUED)
-            return UniversalExecutionResult.BlockedWithRecovery(
-                reason            = "MATCHING_BLOCKED",
-                recoveryContracts = listOf(recovery)
-            )
-        }
-
-        val contractorId = assigned.assignment.contractorIds.firstOrNull()
-            ?: return UniversalExecutionResult.BlockedWithRecovery(
-                reason            = "MATCHING_NO_CONTRACTOR_ID",
-                recoveryContracts = emptyList()
-            )
-
-        val contractorProfile = registry.allVerified().find { it.id == contractorId }
-            ?: return UniversalExecutionResult.BlockedWithRecovery(
-                reason            = "CONTRACTOR_NOT_IN_REGISTRY: id=$contractorId",
-                recoveryContracts = emptyList()
-            )
-
-        // ── Surface 10: Contractor execution ─────────────────────────────────
-        val executionInput = ContractorExecutionInput(
-            taskId               = taskId,
-            taskDescription      = executionTask.expectedOutput,
-            taskPayload          = mapOf(
-                "contractId" to executionTask.contractId,
-                "position"   to executionTask.position
-            ),
-            contractConstraints  = executionTask.constraints,
-            expectedOutputSchema = executionTask.expectedOutput
-        )
-        val executionOutput = executor.execute(executionInput, contractorProfile)
-
-        // ── Surface 9: AERP-1 report generation ──────────────────────────────
-        val contractReport = contractReportBuilder.generateReport(
-            contract        = normalized,
-            taskId          = taskId,
-            contractorId    = contractorId,
-            executionOutput = executionOutput,
-            trace           = assigned.trace
-        )
-
-        return if (executionOutput.status == ExecutionStatus.SUCCESS) {
-            // ── Surface 5: Lifecycle → EXECUTED → COMPLETED ──────────────────
-            lifecyclePhase = lifecycleGovernor.transition(
-                lifecyclePhase, ContractLifecycleEvent.EXECUTION_SUCCEEDED
-            )
-            lifecycleGovernor.transition(lifecyclePhase, ContractLifecycleEvent.REPORT_GENERATED)
-            UniversalExecutionResult.Executed(
-                route  = executionRoute,
-                report = contractReport
-            )
-        } else {
-            // ── Surface 8: RCF-1 recovery on execution failure ────────────────
-            lifecyclePhase = lifecycleGovernor.transition(
-                lifecyclePhase, ContractLifecycleEvent.EXECUTION_FAILED
-            )
-            val anchorState = contractReportBuilder.extractAnchorState(contractReport)
-            val violationSurface = "EXECUTION_FAILED: ${executionOutput.error ?: "unknown"}"
-            val recovery = contractRecovery.issueRecovery(
-                contract         = normalized,
-                taskId           = taskId,
+                contract         = contract,
+                taskId           = ingestTaskId,
                 failureClass     = "STRUCTURAL",
                 violationSurface = violationSurface,
                 anchorState      = anchorState
             )
             writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
-            lifecycleGovernor.transition(lifecyclePhase, ContractLifecycleEvent.RECOVERY_ISSUED)
-            UniversalExecutionResult.BlockedWithRecovery(
-                reason            = violationSurface,
-                recoveryContracts = listOf(recovery)
+            return UniversalIngestionResult.ValidationFailed(
+                violations       = validationResult.violations,
+                recoveryContract = recovery
             )
         }
+
+        // ── Surface 3: Normalization ──────────────────────────────────────────
+        val normalized = contractNormalizer.normalize(contract)
+
+        // ── Surface 6: Enforcement (blocking pre-execution gate) ──────────────
+        val enforcementResult = enforcementEngine.enforce(normalized)
+
+        // Write CONTRACT_VALIDATED — structural + semantic validation confirmed
+        try {
+            ledger.appendEvent(
+                projectId,
+                EventTypes.CONTRACT_VALIDATED,
+                mapOf(
+                    "contractId"       to normalized.contractId,
+                    "report_reference" to normalized.reportReference
+                )
+            )
+        } catch (_: Exception) { }
+
+        if (enforcementResult is ContractEnforcementResult.Violated) {
+            val anchorState = AnchorState(
+                reportReference    = normalized.reportReference,
+                validatedTypes     = emptyList(),
+                validatedStructure = emptySet(),
+                validatedPaths     = emptyList()
+            )
+            val artifactRef      = buildArtifactReference(normalized.reportReference, ingestTaskId, "NO_ARTIFACT")
+            val violationSurface = "ENFORCEMENT_FAILED: ${enforcementResult.violations.joinToString("; ") { it.description }}"
+            val recovery = contractRecovery.issueRecovery(
+                contract         = normalized,
+                taskId           = ingestTaskId,
+                failureClass     = "STRUCTURAL",
+                violationSurface = violationSurface,
+                anchorState      = anchorState
+            )
+            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
+            return UniversalIngestionResult.EnforcementFailed(
+                violations       = enforcementResult.violations,
+                recoveryContract = recovery
+            )
+        }
+
+        // ── Surface 4: Route (pure — no I/O, no side effects, no ledger write) ─
+        val executionRoute = route(normalized)
+
+        // Write CONTRACT_APPROVED — enforcement passed and route classified
+        try {
+            ledger.appendEvent(
+                projectId,
+                EventTypes.CONTRACT_APPROVED,
+                mapOf(
+                    "contractId"       to normalized.contractId,
+                    "report_reference" to normalized.reportReference,
+                    "executionRoute"   to (executionRoute::class.simpleName ?: "Unknown")
+                )
+            )
+        } catch (_: Exception) { }
+
+        return UniversalIngestionResult.Ingested(
+            contractId      = normalized.contractId,
+            reportReference = normalized.reportReference
+        )
     }
 }

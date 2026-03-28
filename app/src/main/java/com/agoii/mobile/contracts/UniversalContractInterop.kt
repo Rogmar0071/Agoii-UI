@@ -1,7 +1,6 @@
 package com.agoii.mobile.contracts
 
 import com.agoii.mobile.execution.ExecutionContract
-import com.agoii.mobile.execution.ExecutionTask
 
 // AGOII CONTRACT — UNIVERSAL CONTRACT INTEROP (UCS-1)
 // SURFACE 7: CONTRACT INTEROPERABILITY
@@ -12,8 +11,13 @@ import com.agoii.mobile.execution.ExecutionTask
 // - Mutation Authority: Tier C
 //
 // PURPOSE:
-// Bridges [UniversalContract] to and from the execution system's internal models
-// ([ExecutionContract], [ExecutionTask]).
+// Bridges [UniversalContract] to and from the execution system's internal models.
+//
+// GOVERNANCE RULE (UCS-1 SPINE ALIGN):
+//   UniversalContract is a GOVERNANCE INPUT ONLY.
+//   These mapping functions MUST NOT trigger execution or call ContractorExecutor.
+//   All execution occurs exclusively via executeFromLedger() when TASK_STARTED is
+//   the latest ledger event.
 //
 // INTEROP RULES:
 //   I1 — [UniversalContract] is the SSOT; existing models derive FROM it.
@@ -25,13 +29,13 @@ import com.agoii.mobile.execution.ExecutionTask
 
 /**
  * UniversalContractInterop — deterministic bridge between [UniversalContract] and the
- * execution system's internal models ([ExecutionContract], [ExecutionTask]).
+ * execution system's internal models ([ExecutionContract]).
  *
  * All methods are pure functions: no I/O, no state, no side effects.
+ * NO execution is triggered by any method in this class.
  *
  * INTEROP DIRECTION RULE (I1):
  *   [UniversalContract] → [ExecutionContract]  via [toExecutionContract]
- *   [UniversalContract] → [ExecutionTask]       via [toExecutionTask]
  *   [ExecutionContract] → [UniversalContract]   via [fromExecutionContract]
  */
 object UniversalContractInterop {
@@ -58,39 +62,6 @@ object UniversalContractInterop {
             contractId      = contract.contractId,
             name            = contract.outputDefinition.expectedType,
             position        = contract.position,
-            reportReference = contract.reportReference
-        )
-
-    // ── UniversalContract → ExecutionTask (Phase 2 model) ─────────────────────
-
-    /**
-     * Map [contract] to the Phase 2 [ExecutionTask] model.
-     *
-     * Used to inject a [UniversalContract] into the contractor execution pipeline
-     * without requiring a TASK_ASSIGNED ledger event as the source.
-     *
-     * Mapping:
-     *  contractId                      → contractId
-     *  position / total                → position / total
-     *  requirements                    → requirements (opaque list, preserved as-is)
-     *  constraints (String items only) → constraints
-     *  outputDefinition.expectedType   → expectedOutput
-     *  reportReference                 → reportReference (RRIL-1, I4)
-     *
-     * @param contract The [UniversalContract] to bridge.
-     * @param taskId   Deterministic task identifier; must be supplied by the caller
-     *                 (typically built as "<contractId>-step1" or via [buildTaskId]).
-     * @return [ExecutionTask] derived from [contract].
-     */
-    fun toExecutionTask(contract: UniversalContract, taskId: String): ExecutionTask =
-        ExecutionTask(
-            taskId          = taskId,
-            contractId      = contract.contractId,
-            position        = contract.position,
-            total           = contract.total,
-            requirements    = contract.requirements,
-            constraints     = contract.constraints.filterIsInstance<String>(),
-            expectedOutput  = contract.outputDefinition.expectedType,
             reportReference = contract.reportReference
         )
 
@@ -151,3 +122,4 @@ object UniversalContractInterop {
     fun buildTaskId(contractId: String): String =
         "$contractId-step1"
 }
+
