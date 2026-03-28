@@ -26,6 +26,8 @@ import com.agoii.mobile.contractors.ContractRequirement
 import com.agoii.mobile.contractors.DeterministicMatchingEngine
 import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.ics.IcsExecutionResult
+import com.agoii.mobile.ics.IcsModule
 import com.agoii.mobile.tasks.Task
 import com.agoii.mobile.tasks.TaskAssignmentStatus
 
@@ -169,11 +171,12 @@ sealed class ExecutionAuthorityExecutionResult {
 // ---------- EXECUTION AUTHORITY ----------
 
 /**
- * ExecutionAuthority — sole authority for contract validation, task execution, and assembly.
+ * ExecutionAuthority — sole authority for contract validation, task execution, assembly, and ICS.
  *
  * Phase 1 — [evaluate]: validates and authorises execution contracts before ledger write.
  * Phase 2 — [executeFromLedger]: owns the full task execution pipeline from ledger state.
  * Phase 3 — [assembleFromLedger]: owns the full assembly pipeline after EXECUTION_COMPLETED.
+ * Phase 4 — [runIcsFromLedger]: owns the ICS pipeline after ASSEMBLY_COMPLETED.
  *
  * @param contractorRegistry Optional contractor registry for deterministic matching.
  *                           When null, all execution attempts are BLOCKED (RCF-1 issued).
@@ -186,6 +189,7 @@ class ExecutionAuthority(
     private val executor        = ContractorExecutor()
     private val validator       = ResultValidator()
     private val assemblyModule  = AssemblyModule()
+    private val icsModule       = IcsModule()
 
     companion object {
         /**
@@ -541,6 +545,32 @@ class ExecutionAuthority(
         projectId: String,
         ledger:    EventLedger
     ): AssemblyExecutionResult = assemblyModule.assemble(projectId, ledger)
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PHASE 4 — ICS pipeline (post-ASSEMBLY_COMPLETED ledger state)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Execute the ICS processing pipeline triggered by ASSEMBLY_COMPLETED.
+     *
+     * Delegates exclusively to [IcsModule], which:
+     *  - enforces all trigger conditions (last event == ASSEMBLY_COMPLETED, required payload fields,
+     *    no duplicate ICS_COMPLETED for same report_reference)
+     *  - reconstructs [com.agoii.mobile.ics.IcsInput] from ledger only (RRIL-1)
+     *  - appends ICS_STARTED and ICS_COMPLETED to [ledger]
+     *  - returns the structured [com.agoii.mobile.ics.IcsOutput]
+     *
+     * GOVERNANCE RULE: Governor MUST NOT call this method.
+     * Only ExecutionAuthority is permitted to invoke ICS (via [com.agoii.mobile.bridge.CoreBridge]).
+     *
+     * @param projectId Project ledger identifier.
+     * @param ledger    EventLedger — single write authority.
+     * @return [IcsExecutionResult] describing the pipeline outcome.
+     */
+    fun runIcsFromLedger(
+        projectId: String,
+        ledger:    EventLedger
+    ): IcsExecutionResult = icsModule.process(projectId, ledger)
 
     // ── Private helpers ───────────────────────────────────────────────────────
 

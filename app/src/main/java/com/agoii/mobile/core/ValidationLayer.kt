@@ -93,8 +93,8 @@ class ValidationLayer {
                 firstSeqViolationAt  = i
             }
 
-            // Terminal detection — ASSEMBLY_COMPLETED anywhere in simulated
-            if (ev.type == EventTypes.ASSEMBLY_COMPLETED) isTerminal = true
+            // Terminal detection — ICS_COMPLETED anywhere in simulated
+            if (ev.type == EventTypes.ICS_COMPLETED) isTerminal = true
 
             // Contract tracking
             when (ev.type) {
@@ -192,6 +192,8 @@ class ValidationLayer {
             EventTypes.ASSEMBLY_STARTED    -> checkAssemblyStarted(projectId, payload)
             EventTypes.ASSEMBLY_VALIDATED  -> checkAssemblyValidated(projectId, state)
             EventTypes.ASSEMBLY_COMPLETED  -> checkAssemblyCompleted(projectId, payload)
+            EventTypes.ICS_STARTED         -> checkIcsStarted(projectId, payload)
+            EventTypes.ICS_COMPLETED       -> checkIcsCompleted(projectId, payload)
         }
     }
 
@@ -509,6 +511,38 @@ class ValidationLayer {
         }
     }
 
+    private fun checkIcsStarted(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.ICS_STARTED, payload, ICS_STARTED_KEYS)
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ICS_STARTED missing or blank 'report_reference' in '$projectId'"
+            )
+        payload["finalArtifactReference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ICS_STARTED missing or blank 'finalArtifactReference' in '$projectId'"
+            )
+        payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ICS_STARTED missing or blank 'taskId' in '$projectId'"
+            )
+    }
+
+    private fun checkIcsCompleted(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.ICS_COMPLETED, payload, ICS_COMPLETED_KEYS)
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ICS_COMPLETED missing or blank 'report_reference' in '$projectId'"
+            )
+        payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ICS_COMPLETED missing or blank 'taskId' in '$projectId'"
+            )
+        payload["icsOutputReference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ICS_COMPLETED missing or blank 'icsOutputReference' in '$projectId'"
+            )
+    }
+
     private fun checkAssemblyStarted(projectId: String, payload: Map<String, Any>) {
         requireKeys(projectId, EventTypes.ASSEMBLY_STARTED, payload, ASSEMBLY_STARTED_KEYS)
         payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
@@ -611,11 +645,11 @@ class ValidationLayer {
         // Invariant 4 — Contract Coverage: delegated to checkExecutionCompleted (payload layer)
         // Invariant 5 — No Skipped Lifecycle: delegated to checkTransition via LedgerAudit
 
-        // Invariant 6 — Terminal Lock: ASSEMBLY_COMPLETED in simulated and candidate is not itself
-        // ASSEMBLY_COMPLETED means the ledger was already terminal before this candidate arrived.
-        if (state.isTerminal && type != EventTypes.ASSEMBLY_COMPLETED) {
+        // Invariant 6 — Terminal Lock: ICS_COMPLETED in simulated and candidate is not itself
+        // ICS_COMPLETED means the ledger was already terminal before this candidate arrived.
+        if (state.isTerminal && type != EventTypes.ICS_COMPLETED) {
             throw LedgerValidationException(
-                "Invariant 6: terminal state reached (ASSEMBLY_COMPLETED) — " +
+                "Invariant 6: terminal state reached (ICS_COMPLETED) — " +
                     "no further events are permitted in '$projectId'"
             )
         }
@@ -704,5 +738,7 @@ class ValidationLayer {
             "report_reference", "contractSetId", "totalContracts",
             "finalArtifactReference", "taskId"
         )
+        private val ICS_STARTED_KEYS         = setOf("report_reference", "finalArtifactReference", "taskId")
+        private val ICS_COMPLETED_KEYS       = setOf("report_reference", "taskId", "icsOutputReference")
     }
 }

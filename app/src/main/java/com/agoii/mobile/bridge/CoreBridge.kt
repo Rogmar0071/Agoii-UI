@@ -134,6 +134,11 @@ class CoreBridge(context: Context) {
                     executionAuthority.assembleFromLedger(projectId, ledger)
                 }
             }
+            // After assembly writes ASSEMBLY_COMPLETED, ExecutionAuthority owns the ICS pipeline.
+            val latestAfterPipeline = ledger.loadEvents(projectId).lastOrNull()
+            if (latestAfterPipeline?.type == EventTypes.ASSEMBLY_COMPLETED) {
+                executionAuthority.runIcsFromLedger(projectId, ledger)
+            }
             return ledger.loadEvents(projectId).lastOrNull()
         }
 

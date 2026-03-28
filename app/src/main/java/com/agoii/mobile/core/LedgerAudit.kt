@@ -72,7 +72,9 @@ class LedgerAudit(private val eventStore: EventRepository) {
             EventTypes.CONTRACTS_APPROVED  to EventTypes.EXECUTION_STARTED,
             EventTypes.EXECUTION_COMPLETED to EventTypes.ASSEMBLY_STARTED,
             EventTypes.ASSEMBLY_STARTED    to EventTypes.ASSEMBLY_VALIDATED,
-            EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED
+            EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED,
+            EventTypes.ASSEMBLY_COMPLETED  to EventTypes.ICS_STARTED,
+            EventTypes.ICS_STARTED         to EventTypes.ICS_COMPLETED
         )
 
         /**
