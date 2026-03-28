@@ -45,8 +45,9 @@ object UniversalContractInterop {
     /**
      * Map [contract] to the Phase 1 [ExecutionContract] model.
      *
-     * Used to feed [com.agoii.mobile.execution.ExecutionAuthority.evaluate] with a
-     * [UniversalContract] without modifying the Phase 1 pipeline.
+     * Use this to feed [com.agoii.mobile.execution.ExecutionAuthority.evaluate] with a
+     * [UniversalContract] as the Phase 1 pre-ledger gate input. This is a PURE
+     * mapping only — it MUST NOT be used to bypass the ledger or trigger execution.
      *
      * Mapping:
      *  contractId      → contractId

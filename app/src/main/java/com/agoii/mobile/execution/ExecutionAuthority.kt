@@ -17,7 +17,8 @@
 //   - RCF-1 recovery contract issuance on failure
 // Phase 3 (assembleFromLedger):    Assembly pipeline after EXECUTION_COMPLETED.
 // Phase 4 (runIcsFromLedger):      ICS pipeline after ASSEMBLY_COMPLETED.
-// Phase 5 (route):                 Deterministic routing via UniversalContract execution semantics (UCS-1 — PURE).
+// Phase 5 (route):                 Deterministic routing via UniversalContract execution
+//                                  semantics (UCS-1 — PURE, no side effects).
 // Phase 6 (ingestUniversalContract): UCS-1 ingestion pipeline (GOVERNANCE INPUT ONLY):
 //   Surface 2 — validation (UniversalContractValidator)
 //   Surface 3 — normalization (UniversalContractNormalizer)
@@ -1005,25 +1006,22 @@ class ExecutionAuthority(
 
         // ── Phase 1: Record ingestion attempt (CONTRACT_CREATED) ─────────────
         // Always written first — NO partial ingestion, NO silent drops (RCF-1).
-        try {
-            ledger.appendEvent(
-                projectId,
-                EventTypes.CONTRACT_CREATED,
-                mapOf(
-                    "contractId"       to contract.contractId,
-                    "intentId"         to contract.intentId,
-                    "report_reference" to contract.reportReference,
-                    "contractClass"    to contract.contractClass.name,
-                    "executionType"    to contract.executionType.name,
-                    "targetDomain"     to contract.targetDomain.name,
-                    "position"         to contract.position,
-                    "total"            to contract.total
-                )
+        // If this write fails (wrong ledger state), the exception propagates to the
+        // caller; the ingestion cannot proceed without the audit anchor event.
+        ledger.appendEvent(
+            projectId,
+            EventTypes.CONTRACT_CREATED,
+            mapOf(
+                "contractId"       to contract.contractId,
+                "intentId"         to contract.intentId,
+                "report_reference" to contract.reportReference,
+                "contractClass"    to contract.contractClass.name,
+                "executionType"    to contract.executionType.name,
+                "targetDomain"     to contract.targetDomain.name,
+                "position"         to contract.position,
+                "total"            to contract.total
             )
-        } catch (_: Exception) {
-            // Ledger write failure does not suppress ingestion attempt;
-            // downstream writes will also fail and be handled accordingly.
-        }
+        )
 
         // ── Surface 2: Structural + Semantic Validation (AERP-1 pre-ledger gate) ──
         val validationResult = contractValidator.validate(contract)
@@ -1057,16 +1055,14 @@ class ExecutionAuthority(
         val enforcementResult = enforcementEngine.enforce(normalized)
 
         // Write CONTRACT_VALIDATED — structural + semantic validation confirmed
-        try {
-            ledger.appendEvent(
-                projectId,
-                EventTypes.CONTRACT_VALIDATED,
-                mapOf(
-                    "contractId"       to normalized.contractId,
-                    "report_reference" to normalized.reportReference
-                )
+        ledger.appendEvent(
+            projectId,
+            EventTypes.CONTRACT_VALIDATED,
+            mapOf(
+                "contractId"       to normalized.contractId,
+                "report_reference" to normalized.reportReference
             )
-        } catch (_: Exception) { }
+        )
 
         if (enforcementResult is ContractEnforcementResult.Violated) {
             val anchorState = AnchorState(
@@ -1095,17 +1091,15 @@ class ExecutionAuthority(
         val executionRoute = route(normalized)
 
         // Write CONTRACT_APPROVED — enforcement passed and route classified
-        try {
-            ledger.appendEvent(
-                projectId,
-                EventTypes.CONTRACT_APPROVED,
-                mapOf(
-                    "contractId"       to normalized.contractId,
-                    "report_reference" to normalized.reportReference,
-                    "executionRoute"   to (executionRoute::class.simpleName ?: "Unknown")
-                )
+        ledger.appendEvent(
+            projectId,
+            EventTypes.CONTRACT_APPROVED,
+            mapOf(
+                "contractId"       to normalized.contractId,
+                "report_reference" to normalized.reportReference,
+                "executionRoute"   to (executionRoute::class.simpleName ?: "Unknown")
             )
-        } catch (_: Exception) { }
+        )
 
         return UniversalIngestionResult.Ingested(
             contractId      = normalized.contractId,

@@ -8,6 +8,16 @@ package com.agoii.mobile.contracts
 // - Execution Scope: Both
 // - Mutation Authority: Tier C
 //
+// GOVERNANCE NOTICE (AGOII-UCS1-SPINE-ALIGN-001):
+// In-memory lifecycle tracking by [ExecutionAuthority] has been REPLACED by ledger events:
+//   CONTRACT_CREATED   (EventTypes.CONTRACT_CREATED)
+//   CONTRACT_VALIDATED (EventTypes.CONTRACT_VALIDATED)
+//   CONTRACT_APPROVED  (EventTypes.CONTRACT_APPROVED)
+//
+// [ContractLifecycleGovernor] remains available as a PURE utility for callers that need
+// the canonical (state, event) → nextState function independent of the ledger.
+// ExecutionAuthority MUST NOT use this class for internal lifecycle tracking.
+//
 // PURPOSE:
 // Deterministic lifecycle state machine for [UniversalContract] instances.
 //
