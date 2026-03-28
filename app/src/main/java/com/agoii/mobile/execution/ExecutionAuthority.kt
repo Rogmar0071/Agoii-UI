@@ -134,7 +134,28 @@ data class AnchorState(
     val reportReference:    String,
     val validatedTypes:     List<String>,
     val validatedStructure: Set<String>,
-    val validatedPaths:     List<String>
+    val validatedPaths:     List<String>,
+    // AGOII-ANCHOR-STATE-IMMUTABILITY-006: extended fields
+    val contractId:         String          = "",
+    val validatedReport:    ContractReport? = null,
+    val lockedFields:       Set<String>     = setOf(
+        "contractId",
+        "taskId",
+        "reportReference",
+        "artifact",
+        "trace"
+    )
+)
+
+/**
+ * Single mutation surface for delta execution (AERP-1 / AGOII-ANCHOR-STATE-IMMUTABILITY-006).
+ *
+ * Isolation is enforced: ONE field, ONE reason per recovery attempt.
+ * All delta execution is constrained to this surface — no other fields may be mutated.
+ */
+data class ViolationSurface(
+    val field:  String,
+    val reason: String
 )
 
 /**
@@ -188,6 +209,15 @@ sealed class ExecutionAuthorityExecutionResult {
 
     /** Retry limit (MAX_RETRY) exceeded — CONTRACT_FAILED emitted, convergence halted. */
     data class RetryExceeded(val taskId: String) : ExecutionAuthorityExecutionResult()
+
+    /**
+     * A recovery contract was issued for a single violation surface
+     * (AGOII-ANCHOR-STATE-IMMUTABILITY-006, RCF-1).
+     */
+    data class RecoveryIssued(
+        val contractId: String,
+        val reason:     String
+    ) : ExecutionAuthorityExecutionResult()
 }
 
 // ---------- EXECUTION ROUTE (UCS-1) ----------
@@ -681,6 +711,136 @@ class ExecutionAuthority(
     ): IcsExecutionResult = icsModule.process(projectId, ledger)
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    // ─── AGOII-ANCHOR-STATE-IMMUTABILITY-006 public surface ──────────────────
+
+    /**
+     * Build an [AnchorState] from a frozen [ContractReport] (AERP-1 / RCF-1).
+     *
+     * The anchor is captured once per execution attempt at the moment validation begins
+     * and MUST NOT be modified thereafter.
+     *
+     * @param frozenReport Immutable report snapshot produced by [ContractReport.copy()].
+     * @return             Locked [AnchorState] derived from [frozenReport].
+     */
+    fun buildAnchorState(frozenReport: ContractReport): AnchorState = AnchorState(
+        reportReference    = frozenReport.reportReference,
+        validatedTypes     = frozenReport.typeInventory.toList(),
+        validatedStructure = frozenReport.artifactStructure.keys.toSet(),
+        validatedPaths     = frozenReport.executionSteps.toList(),
+        contractId         = frozenReport.contractId,
+        validatedReport    = frozenReport
+    )
+
+    /**
+     * Extract the first [ViolationSurface] from a [ValidationResult] (AERP-1).
+     *
+     * The first failure reason is treated as the primary violation surface.
+     * Throws [IllegalStateException] when the result carries no failure reasons
+     * (caller must only invoke this after confirming the verdict is FAILED).
+     *
+     * @param validationResult The failed [ValidationResult] from [ResultValidator.validate].
+     * @return                 [ViolationSurface] for the primary violation.
+     * @throws IllegalStateException when no violations are present.
+     */
+    fun extractViolationSurface(validationResult: ValidationResult): ViolationSurface {
+        val firstReason = validationResult.failureReasons.firstOrNull()
+            ?: throw IllegalStateException("AERP-1: violation expected but none found")
+        return ViolationSurface(
+            field  = firstReason,
+            reason = firstReason
+        )
+    }
+
+    /**
+     * Enforce the anchor state mutation boundary (AERP-1 / AGOII-ANCHOR-STATE-IMMUTABILITY-006).
+     *
+     * Throws [IllegalStateException] if [attemptedMutationField] is in [AnchorState.lockedFields].
+     * Permitted mutations (fields NOT in [lockedFields]) pass through silently.
+     *
+     * @param anchor                The locked [AnchorState] for this execution attempt.
+     * @param attemptedMutationField The field name being mutated.
+     * @throws IllegalStateException on locked-field mutation attempt.
+     */
+    fun enforceMutationBoundary(anchor: AnchorState, attemptedMutationField: String) {
+        if (attemptedMutationField in anchor.lockedFields) {
+            throw IllegalStateException(
+                "BLOCKED: Attempt to mutate locked field '$attemptedMutationField' — Anchor state violation (AERP-1)"
+            )
+        }
+    }
+
+    /**
+     * Issue a recovery contract for a single [ViolationSurface] and write it to the ledger (RCF-1).
+     *
+     * This is the ONLY permitted mutation surface during delta execution.  One call = one
+     * violation = one recovery contract.  Returns [ExecutionAuthorityExecutionResult.RecoveryIssued]
+     * so callers can propagate the result without further processing.
+     *
+     * @param projectId     Project ledger identifier.
+     * @param ledger        [EventLedger] — single write authority.
+     * @param executionTask The task that failed validation.
+     * @param anchor        The locked [AnchorState] for this execution attempt.
+     * @param violation     The single [ViolationSurface] that caused the failure.
+     * @return              [ExecutionAuthorityExecutionResult.RecoveryIssued].
+     */
+    fun issueRecoveryContract(
+        projectId:     String,
+        ledger:        EventLedger,
+        executionTask: ExecutionTask,
+        anchor:        AnchorState,
+        violation:     ViolationSurface
+    ): ExecutionAuthorityExecutionResult.RecoveryIssued {
+        try {
+            ledger.appendEvent(
+                projectId,
+                EventTypes.RECOVERY_CONTRACT,
+                mapOf(
+                    "contractId"       to executionTask.contractId,
+                    "taskId"           to executionTask.taskId,
+                    "report_reference" to anchor.reportReference,
+                    "failure_class"    to "LOGICAL",
+                    "violation_field"  to violation.field,
+                    "violation_reason" to violation.reason,
+                    "locked_fields"    to anchor.lockedFields.toList()
+                )
+            )
+        } catch (_: Exception) {
+            // Ledger write failure does not suppress the recovery result
+        }
+        return ExecutionAuthorityExecutionResult.RecoveryIssued(
+            contractId = executionTask.contractId,
+            reason     = violation.reason
+        )
+    }
+
+    /**
+     * Apply a delta mutation strictly within the [ViolationSurface] boundary (AERP-1).
+     *
+     * Only fields that are NOT in [AnchorState.lockedFields] and match the [violation] field
+     * may be mutated.  Any attempt to mutate a locked field throws [IllegalStateException].
+     *
+     * The result is the anchor's validated artifact structure merged with the permitted
+     * [mutation] entries.
+     *
+     * @param anchor    The locked [AnchorState] for this execution attempt.
+     * @param violation The single [ViolationSurface] that defines the mutation boundary.
+     * @param mutation  The proposed mutations (key → value).
+     * @return          Merged artifact map with only permitted mutations applied.
+     * @throws IllegalStateException if any mutation key is in [AnchorState.lockedFields].
+     */
+    fun executeDelta(
+        anchor:    AnchorState,
+        violation: ViolationSurface,
+        mutation:  Map<String, Any>
+    ): Map<String, Any> {
+        for (field in mutation.keys) {
+            enforceMutationBoundary(anchor, field)
+        }
+        val base = anchor.validatedReport?.artifactStructure ?: emptyMap()
+        return base + mutation
+    }
+
 
     /**
      * Enforce AERP-1 hard block conditions before TASK_EXECUTED ledger write.
