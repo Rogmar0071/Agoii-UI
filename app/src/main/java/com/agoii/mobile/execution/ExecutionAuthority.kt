@@ -404,6 +404,8 @@ class ExecutionAuthority(
                 else -> "LOGICAL"
             }
             val recovery = issueRecoveryContract(executionTask, failureClass, failureReason)
+            // VIOLATION 3: RecoveryContract MUST be ledger-materialized (RCF-1) — no silent recovery
+            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
             ExecutionAuthorityExecutionResult.BlockedWithRecovery(failureReason, recovery)
         }
     }
@@ -461,6 +463,12 @@ class ExecutionAuthority(
         reason:        String
     ): ExecutionAuthorityExecutionResult.BlockedWithRecovery {
 
+        // VIOLATION 4: artifactReference must always be deterministic and referenceable — never "NONE"
+        val artifactRef = if (task != null)
+            "report:${task.reportReference}:${task.taskId}:NO_ARTIFACT"
+        else
+            "report:UNKNOWN:UNKNOWN:NO_ARTIFACT"
+
         // Emit TASK_EXECUTED(FAILURE) when we have enough context
         if (task != null) {
             try {
@@ -471,7 +479,7 @@ class ExecutionAuthority(
                         "taskId"            to task.taskId,
                         "contractId"        to task.contractId,
                         "contractorId"      to "NONE",
-                        "artifactReference" to "NONE",
+                        "artifactReference" to artifactRef,
                         "executionStatus"   to "FAILURE",
                         "validationStatus"  to "FAILED",
                         "validationReasons" to listOf(reason),
@@ -486,6 +494,8 @@ class ExecutionAuthority(
         }
 
         val recovery = issueRecoveryContract(task, failureClass, reason)
+        // VIOLATION 3: RecoveryContract MUST be ledger-materialized (RCF-1)
+        writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
         return ExecutionAuthorityExecutionResult.BlockedWithRecovery(reason, recovery)
     }
 
@@ -533,6 +543,36 @@ class ExecutionAuthority(
         constraintLock      = "ANCHOR_STATE is IMMUTABLE — no modification to validated fields permitted",
         successCondition    = "TASK_EXECUTED written with executionStatus=SUCCESS AND validationStatus=VALIDATED"
     )
+
+    /**
+     * Write [ExecutionRecoveryContract] to the ledger as a RECOVERY_CONTRACT event (RCF-1).
+     * All recovery MUST be ledger-materialized; in-memory recovery is PROHIBITED.
+     */
+    private fun writeRecoveryContractToLedger(
+        projectId:  String,
+        ledger:     EventLedger,
+        recovery:   ExecutionRecoveryContract,
+        artifactRef: String
+    ) {
+        try {
+            ledger.appendEvent(
+                projectId,
+                EventTypes.RECOVERY_CONTRACT,
+                mapOf(
+                    "contractId"          to recovery.contractId,
+                    "contractType"        to recovery.contractType,
+                    "executionPosition"   to recovery.executionPosition,
+                    "failureClass"        to recovery.failureClass,
+                    "violationSurface"    to recovery.violationSurface,
+                    "correctionDirective" to recovery.correctionDirective,
+                    "successCondition"    to recovery.successCondition,
+                    "artifactReference"   to artifactRef
+                )
+            )
+        } catch (_: Exception) {
+            // Ledger write failure is recorded but does not suppress the block result
+        }
+    }
 
     /** Parse raw requirements list from TASK_ASSIGNED payload into [ContractRequirement] list. */
     private fun parseRequirements(rawRequirements: List<Any>): List<ContractRequirement> =

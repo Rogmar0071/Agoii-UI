@@ -186,6 +186,7 @@ class ValidationLayer {
             EventTypes.TASK_EXECUTED       -> checkTaskExecuted(projectId, payload, state)
             EventTypes.TASK_COMPLETED      -> checkTaskCompleted(projectId, payload, state)
             EventTypes.TASK_VALIDATED      -> checkTaskValidated(projectId, payload, state)
+            EventTypes.RECOVERY_CONTRACT   -> checkRecoveryContract(projectId, payload)
             EventTypes.CONTRACT_COMPLETED  -> checkContractCompleted(projectId, payload, state)
             EventTypes.EXECUTION_COMPLETED -> checkExecutionCompleted(projectId, payload, state)
             EventTypes.ASSEMBLY_VALIDATED  -> checkAssemblyValidated(projectId, state)
@@ -308,10 +309,6 @@ class ValidationLayer {
 
     private fun checkTaskAssigned(projectId: String, payload: Map<String, Any>) {
         requireKeys(projectId, EventTypes.TASK_ASSIGNED, payload, TASK_ASSIGNED_KEYS)
-        payload["contractorId"]
-            ?: throw LedgerValidationException(
-                "TASK_ASSIGNED missing 'contractorId' in '$projectId'"
-            )
         payload["taskId"]
             ?: throw LedgerValidationException(
                 "TASK_ASSIGNED missing 'taskId' in '$projectId'"
@@ -413,6 +410,26 @@ class ValidationLayer {
                 "TASK_VALIDATED: taskId '$taskId' not found in TASK_COMPLETED events in '$projectId'"
             )
         }
+    }
+
+    private fun checkRecoveryContract(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.RECOVERY_CONTRACT, payload, RECOVERY_CONTRACT_KEYS)
+        payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "RECOVERY_CONTRACT missing or blank 'contractId' in '$projectId'"
+            )
+        payload["failureClass"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "RECOVERY_CONTRACT missing or blank 'failureClass' in '$projectId'"
+            )
+        payload["violationSurface"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "RECOVERY_CONTRACT missing or blank 'violationSurface' in '$projectId'"
+            )
+        payload["artifactReference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "RECOVERY_CONTRACT missing or blank 'artifactReference' in '$projectId'"
+            )
     }
 
     private fun checkContractCompleted(
@@ -603,7 +620,7 @@ class ValidationLayer {
         )
         private val CONTRACT_STARTED_KEYS   = setOf("position", "total", "contract_id")
         private val TASK_ASSIGNED_KEYS      = setOf(
-            "contractorId", "taskId",
+            "taskId",
             "position", "total",
             "contractId", "report_reference", "requirements", "constraints"
         )
@@ -611,6 +628,11 @@ class ValidationLayer {
             "taskId", "contractId", "contractorId", "artifactReference",
             "executionStatus", "validationStatus", "validationReasons",
             "report_reference", "position", "total"
+        )
+        private val RECOVERY_CONTRACT_KEYS  = setOf(
+            "contractId", "contractType", "executionPosition",
+            "failureClass", "violationSurface", "correctionDirective",
+            "successCondition", "artifactReference"
         )
         private val TASK_ID_ONLY            = setOf("taskId")
         private val TASK_WITH_POSITION_KEYS = setOf("taskId", "position", "total")

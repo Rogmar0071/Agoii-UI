@@ -28,6 +28,7 @@ object EventTypes {
     const val TASK_FAILED             = "task_failed"
     const val CONTRACTOR_REASSIGNED   = "contractor_reassigned"
     const val CONTRACT_FAILED         = "contract_failed"
+    const val RECOVERY_CONTRACT       = "recovery_contract"
 
     val ALL: Set<String> = setOf(
         INTENT_SUBMITTED,
@@ -49,7 +50,8 @@ object EventTypes {
         TASK_VALIDATED,
         TASK_FAILED,
         CONTRACTOR_REASSIGNED,
-        CONTRACT_FAILED
+        CONTRACT_FAILED,
+        RECOVERY_CONTRACT
     )
 
     /** Default number of contracts generated per intent. */

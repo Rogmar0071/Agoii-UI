@@ -48,9 +48,6 @@ class Governor(
         /** Base execution load contributed by every contract regardless of position. */
         const val CONTRACT_BASE_LOAD = 2
 
-        /** Default contractor identifier used when no [ContractorRegistry] is provided. */
-        const val DEFAULT_CONTRACTOR = "default-contractor"
-
         /**
          * Simple passthrough transitions driven automatically by the Governor.
          * Each entry maps a terminal event type to the single event type that follows it,
@@ -159,7 +156,6 @@ class Governor(
                     type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
                         "taskId"           to "$contractId-step1",
-                        "contractorId"     to DEFAULT_CONTRACTOR,
                         "contractId"       to contractId,
                         "position"         to position,
                         "total"            to total,
@@ -224,7 +220,7 @@ class Governor(
                 val newContractorId = last.payload["newContractorId"] as? String ?: return null
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
-                    payload = mapOf("taskId" to taskId, "contractorId" to newContractorId)
+                    payload = mapOf("taskId" to taskId)
                 )
             }
 

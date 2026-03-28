@@ -114,7 +114,7 @@ class CoreTest {
             Event("execution_started",   mapOf("total_contracts" to 1.0)),
             Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
             Event("task_created",        mapOf("taskId" to "contract_1-step1")),
-            Event("task_assigned",       mapOf("taskId" to "contract_1-step1", "contractorId" to "c1")),
+            Event("task_assigned",       mapOf("taskId" to "contract_1-step1")),
             Event("task_completed",      mapOf("taskId" to "contract_1-step1")),
             Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1))
         )
@@ -136,7 +136,7 @@ class CoreTest {
             Event("execution_started",   mapOf("total_contracts" to 1.0)),
             Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
             Event("task_created",        mapOf("taskId" to "contract_1-step1")),
-            Event("task_assigned",       mapOf("taskId" to "contract_1-step1", "contractorId" to "c1")),
+            Event("task_assigned",       mapOf("taskId" to "contract_1-step1")),
             Event("task_completed",      mapOf("taskId" to "contract_1-step1")),
             Event("task_validated",      mapOf("taskId" to "contract_1-step1")),
             Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
@@ -160,7 +160,7 @@ class CoreTest {
             Event("execution_started",   mapOf("total_contracts" to 1.0)),
             Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
             Event("task_created",        mapOf("taskId" to "contract_1-step1")),
-            Event("task_assigned",       mapOf("taskId" to "contract_1-step1", "contractorId" to "c1")),
+            Event("task_assigned",       mapOf("taskId" to "contract_1-step1")),
             Event("task_completed",      mapOf("taskId" to "contract_1-step1")),
             Event("task_validated",      mapOf("taskId" to "contract_1-step1")),
             Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
@@ -493,7 +493,7 @@ class CoreTest {
             Event("contracts_generated", mapOf("total" to 1.0)),
             Event("contracts_ready",     emptyMap()),
             Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1)),
-            Event("task_assigned",       mapOf("taskId" to "t1", "contractorId" to "c1", "position" to 1, "total" to 1)),
+            Event("task_assigned",       mapOf("taskId" to "t1", "position" to 1, "total" to 1)),
             Event("task_started",        mapOf("taskId" to "t1", "position" to 1, "total" to 1)),
             Event("task_completed",      mapOf("taskId" to "t1", "position" to 1, "total" to 1)),
             Event("contract_completed",  mapOf("position" to 1, "total" to 1)),
@@ -656,7 +656,7 @@ class CoreTest {
      * (11 core pipeline + 7 execution engine lifecycle types), no more, no less.
      */
     @Test
-    fun `lock - EventTypes ALL is frozen with exactly the 19 locked event types`() {
+    fun `lock - EventTypes ALL is frozen with exactly the 20 locked event types`() {
         val locked = setOf(
             // Core pipeline (original 11)
             "intent_submitted",
@@ -673,14 +673,15 @@ class CoreTest {
             // Execution engine lifecycle
             "task_assigned",
             "task_started",
-            "task_executed",   // added by EXECUTION AUTHORITY EXTENSION
+            "task_executed",        // added by EXECUTION AUTHORITY EXTENSION
             "task_completed",
             "task_validated",
             "task_failed",
             "contractor_reassigned",
-            "contract_failed"
+            "contract_failed",
+            "recovery_contract"     // added by EXECUTION AUTHORITY CORRECTION DELTA
         )
-        assertEquals("EventTypes.ALL must contain exactly 19 locked event types", 19, EventTypes.ALL.size)
+        assertEquals("EventTypes.ALL must contain exactly 20 locked event types", 20, EventTypes.ALL.size)
         assertEquals("EventTypes.ALL must match the locked set exactly", locked, EventTypes.ALL)
     }
 
@@ -747,14 +748,14 @@ class CoreTest {
             Event("contracts_ready",     emptyMap()),
             // contract 1
             Event("contract_started",    mapOf("contract_id" to "contract_1", "position" to 1, "total" to 2)),
-            Event("task_assigned",       mapOf("taskId" to "contract_1-step1", "contractorId" to contractorId, "position" to 1, "total" to 2)),
+            Event("task_assigned",       mapOf("taskId" to "contract_1-step1", "position" to 1, "total" to 2)),
             Event("task_started",        mapOf("taskId" to "contract_1-step1", "position" to 1, "total" to 2)),
             Event("task_executed",       mapOf("taskId" to "contract_1-step1", "contractId" to "contract_1", "contractorId" to contractorId, "artifactReference" to "ref-1", "executionStatus" to "SUCCESS", "validationStatus" to "VALIDATED", "validationReasons" to emptyList<String>(), "report_reference" to reportRef, "position" to 1, "total" to 2)),
             Event("task_completed",      mapOf("taskId" to "contract_1-step1", "position" to 1, "total" to 2)),
             Event("contract_completed",  mapOf("position" to 1, "total" to 2)),
             // contract 2
             Event("contract_started",    mapOf("contract_id" to "contract_2", "position" to 2, "total" to 2)),
-            Event("task_assigned",       mapOf("taskId" to "contract_2-step1", "contractorId" to contractorId, "position" to 2, "total" to 2)),
+            Event("task_assigned",       mapOf("taskId" to "contract_2-step1", "position" to 2, "total" to 2)),
             Event("task_started",        mapOf("taskId" to "contract_2-step1", "position" to 2, "total" to 2)),
             Event("task_executed",       mapOf("taskId" to "contract_2-step1", "contractId" to "contract_2", "contractorId" to contractorId, "artifactReference" to "ref-2", "executionStatus" to "SUCCESS", "validationStatus" to "VALIDATED", "validationReasons" to emptyList<String>(), "report_reference" to reportRef, "position" to 2, "total" to 2)),
             Event("task_completed",      mapOf("taskId" to "contract_2-step1", "position" to 2, "total" to 2)),
