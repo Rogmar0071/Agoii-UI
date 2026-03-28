@@ -134,7 +134,28 @@ data class AnchorState(
     val reportReference:    String,
     val validatedTypes:     List<String>,
     val validatedStructure: Set<String>,
-    val validatedPaths:     List<String>
+    val validatedPaths:     List<String>,
+    // AGOII-ANCHOR-STATE-IMMUTABILITY-006: extended fields
+    val contractId:         String          = "",
+    val validatedReport:    ContractReport? = null,
+    val lockedFields:       Set<String>     = setOf(
+        "contractId",
+        "taskId",
+        "reportReference",
+        "artifact",
+        "trace"
+    )
+)
+
+/**
+ * Single mutation surface for delta execution (AERP-1 / AGOII-ANCHOR-STATE-IMMUTABILITY-006).
+ *
+ * Isolation is enforced: ONE field, ONE reason per recovery attempt.
+ * All delta execution is constrained to this surface — no other fields may be mutated.
+ */
+data class ViolationSurface(
+    val field:  String,
+    val reason: String
 )
 
 /**
@@ -167,7 +188,8 @@ sealed class ExecutionAuthorityExecutionResult {
     data class Executed(
         val taskId:            String,
         val executionStatus:   ExecutionStatus,
-        val validationVerdict: ValidationVerdict
+        val validationVerdict: ValidationVerdict,
+        val report:            ContractReport
     ) : ExecutionAuthorityExecutionResult()
 
     /**
@@ -187,6 +209,15 @@ sealed class ExecutionAuthorityExecutionResult {
 
     /** Retry limit (MAX_RETRY) exceeded — CONTRACT_FAILED emitted, convergence halted. */
     data class RetryExceeded(val taskId: String) : ExecutionAuthorityExecutionResult()
+
+    /**
+     * A recovery contract was issued for a single violation surface
+     * (AGOII-ANCHOR-STATE-IMMUTABILITY-006, RCF-1).
+     */
+    data class RecoveryIssued(
+        val contractId: String,
+        val reason:     String
+    ) : ExecutionAuthorityExecutionResult()
 }
 
 // ---------- EXECUTION ROUTE (UCS-1) ----------
@@ -490,8 +521,15 @@ class ExecutionAuthority(
 
         // ── Step 2b: Deterministic contractor selection + domain-aware execution ─
         //   ContractorSystem owns: matching → profile lookup → executor call → domain artifact.
-        //   Capabilities read ONLY from CONTRACT_CREATED event — no parsing, no inference.
-        val requiredCapabilities = extractCapabilitiesFromLedger(executionTask.contractId, events)
+        //   Capabilities read ONLY from CONTRACT_CREATED event — strict, no fallback (AERP-1).
+        val requiredCapabilities = try {
+            extractCapabilitiesFromLedgerStrict(executionTask.contractId, events)
+        } catch (e: IllegalStateException) {
+            return blockWithRecovery(
+                projectId, ledger, executionTask, "AERP1_CAPABILITY_VIOLATION",
+                e.message ?: "AERP-1: capability extraction failed"
+            )
+        }
         val systemResult = contractorSystem.execute(
             taskId               = executionTask.taskId,
             contractId           = executionTask.contractId,
@@ -500,8 +538,8 @@ class ExecutionAuthority(
             constraints          = executionTask.constraints,
             expectedOutput       = executionTask.expectedOutput,
             taskPayload          = mapOf(
-                "contractId" to executionTask.contractId,
-                "position"   to executionTask.position
+                "taskId"     to executionTask.taskId,
+                "contractId" to executionTask.contractId
             ),
             requiredCapabilities = requiredCapabilities,
             executionType        = domainContext.executionType,
@@ -511,7 +549,7 @@ class ExecutionAuthority(
 
         when (systemResult) {
             is ContractorSystemResult.Blocked -> return blockWithRecovery(
-                projectId, ledger, executionTask, "MATCHING_BLOCKED",
+                projectId, ledger, executionTask, "MATCHING_FAILED",
                 systemResult.reason
             )
             is ContractorSystemResult.Resolved -> { /* pipeline continues below */ }
@@ -526,6 +564,18 @@ class ExecutionAuthority(
 
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
         val contractReport = generateContractReport(executionTask, executionOutput, resolved.trace, contractorId)
+
+        // ── Step 5a: Freeze report — immutable snapshot (AERP-1 / RRIL-1) ───
+        val frozenReport = contractReport.copy()
+
+        // ── Step 5b: RRID integrity check (RRIL-1) ───────────────────────────
+        if (frozenReport.reportReference != executionTask.reportReference) {
+            return blockWithRecovery(
+                projectId, ledger, executionTask,
+                "RRID_VIOLATION",
+                "Report reference mismatch (RRIL-1 breach)"
+            )
+        }
 
         // ── Step 6: Build report-backed Task and validate ────────────────────
         val task = Task(
@@ -547,20 +597,42 @@ class ExecutionAuthority(
             assignmentStatus     = TaskAssignmentStatus.ASSIGNED
         )
 
-        // Wrap artifact through report for AERP-1 compliance: validation is against report
+        // Wrap artifact through frozen report for AERP-1 compliance: validation is against frozen snapshot
         val reportBackedOutput = ContractorExecutionOutput(
             taskId         = executionOutput.taskId,
-            resultArtifact = contractReport.artifactStructure,
+            resultArtifact = frozenReport.artifactStructure,
             status         = executionOutput.status,
             error          = executionOutput.error
         )
 
         val validationResult = validator.validate(task, reportBackedOutput)
 
-        // ── Step 7 / 8: Emit TASK_EXECUTED + RCF-1 on failure ───────────────
+        // ── Step 5: Authorization gate (AERP-1) ─────────────────────────────
+        // NO write is permitted without explicit authorization.
+        // Authorization = validation passed; any failure → blockWithRecovery (RCF-1).
+        val authorized = validationResult.verdict == ValidationVerdict.VALIDATED
+        if (!authorized) {
+            return blockWithRecovery(
+                projectId, ledger, executionTask,
+                "AERP1_AUTHORIZATION_FAILURE",
+                "Execution not authorized after validation"
+            )
+        }
+
+        // ── Step 6: Hard block enforcement (AERP-1) ──────────────────────────
+        enforceHardBlocks(
+            report             = frozenReport,
+            validationExecuted = true,
+            capabilities       = requiredCapabilities,
+            registry           = registry,
+            systemResult       = systemResult,
+            authorized         = authorized
+        )
+
+        // ── Step 7: TASK_EXECUTED ledger write — only after authorization ────
+        val artifactRef    = buildArtifactReference(executionTask.reportReference, executionTask.taskId)
         val execStatusStr  = executionOutput.status.name
         val validStatusStr = validationResult.verdict.name
-        val artifactRef    = buildArtifactReference(executionTask.reportReference, executionTask.taskId)
 
         ledger.appendEvent(
             projectId,
@@ -579,48 +651,12 @@ class ExecutionAuthority(
             )
         )
 
-        return if (executionOutput.status == ExecutionStatus.SUCCESS &&
-            validationResult.verdict == ValidationVerdict.VALIDATED
-        ) {
-            ExecutionAuthorityExecutionResult.Executed(
-                taskId            = executionTask.taskId,
-                executionStatus   = ExecutionStatus.SUCCESS,
-                validationVerdict = ValidationVerdict.VALIDATED
-            )
-        } else {
-            // ── AERP-1 Anchor extraction ─────────────────────────────────────
-            val anchorState = extractAnchorState(contractReport)
-
-            // ── VIOLATION SURFACE ISOLATION (RCF-1) ──────────────────────────
-            // One ViolationSurface = one RecoveryContract. Multiple failures produce
-            // multiple sequential RecoveryContracts — never grouped.
-            val violations: List<String> = when {
-                executionOutput.status == ExecutionStatus.FAILURE ->
-                    listOf("EXECUTION_FAILED: ${executionOutput.error ?: "unknown"}")
-                else ->
-                    validationResult.failureReasons.map { "VALIDATION_FAILED: $it" }
-            }
-            val failureClass = when {
-                executionOutput.status == ExecutionStatus.FAILURE -> "STRUCTURAL"
-                else -> "LOGICAL"
-            }
-
-            val recoveries = violations.map { violationSurface ->
-                val recovery = issueRecoveryContract(
-                    task            = executionTask,
-                    anchorState     = anchorState,
-                    failureClass    = failureClass,
-                    violationSurface = violationSurface
-                )
-                writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
-                recovery
-            }
-
-            ExecutionAuthorityExecutionResult.BlockedWithRecovery(
-                reason            = violations.first(),
-                recoveryContracts = recoveries
-            )
-        }
+        return ExecutionAuthorityExecutionResult.Executed(
+            taskId            = executionTask.taskId,
+            executionStatus   = executionOutput.status,
+            validationVerdict = validationResult.verdict,
+            report            = frozenReport
+        )
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -675,6 +711,178 @@ class ExecutionAuthority(
     ): IcsExecutionResult = icsModule.process(projectId, ledger)
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    // ─── AGOII-ANCHOR-STATE-IMMUTABILITY-006 public surface ──────────────────
+
+    /**
+     * Build an [AnchorState] from a frozen [ContractReport] (AERP-1 / RCF-1).
+     *
+     * The anchor is captured once per execution attempt at the moment validation begins
+     * and MUST NOT be modified thereafter.
+     *
+     * @param frozenReport Immutable report snapshot produced by [ContractReport.copy()].
+     * @return             Locked [AnchorState] derived from [frozenReport].
+     */
+    fun buildAnchorState(frozenReport: ContractReport): AnchorState = AnchorState(
+        reportReference    = frozenReport.reportReference,
+        validatedTypes     = frozenReport.typeInventory.toList(),
+        validatedStructure = frozenReport.artifactStructure.keys.toSet(),
+        validatedPaths     = frozenReport.executionSteps.toList(),
+        contractId         = frozenReport.contractId,
+        validatedReport    = frozenReport
+    )
+
+    /**
+     * Extract the first [ViolationSurface] from a [ValidationResult] (AERP-1).
+     *
+     * The first failure reason is treated as the primary violation surface.
+     * Throws [IllegalStateException] when the result carries no failure reasons
+     * (caller must only invoke this after confirming the verdict is FAILED).
+     *
+     * @param validationResult The failed [ValidationResult] from [ResultValidator.validate].
+     * @return                 [ViolationSurface] for the primary violation.
+     * @throws IllegalStateException when no violations are present.
+     */
+    fun extractViolationSurface(validationResult: ValidationResult): ViolationSurface {
+        val firstReason = validationResult.failureReasons.firstOrNull()
+            ?: throw IllegalStateException("AERP-1: violation expected but none found")
+        return ViolationSurface(
+            field  = firstReason,
+            reason = firstReason
+        )
+    }
+
+    /**
+     * Enforce the anchor state mutation boundary (AERP-1 / AGOII-ANCHOR-STATE-IMMUTABILITY-006).
+     *
+     * Throws [IllegalStateException] if [attemptedMutationField] is in [AnchorState.lockedFields].
+     * Permitted mutations (fields NOT in [lockedFields]) pass through silently.
+     *
+     * @param anchor                The locked [AnchorState] for this execution attempt.
+     * @param attemptedMutationField The field name being mutated.
+     * @throws IllegalStateException on locked-field mutation attempt.
+     */
+    fun enforceMutationBoundary(anchor: AnchorState, attemptedMutationField: String) {
+        if (attemptedMutationField in anchor.lockedFields) {
+            throw IllegalStateException(
+                "BLOCKED: Attempt to mutate locked field '$attemptedMutationField' — Anchor state violation (AERP-1)"
+            )
+        }
+    }
+
+    /**
+     * Issue a recovery contract for a single [ViolationSurface] and write it to the ledger (RCF-1).
+     *
+     * This is the ONLY permitted mutation surface during delta execution.  One call = one
+     * violation = one recovery contract.  Returns [ExecutionAuthorityExecutionResult.RecoveryIssued]
+     * so callers can propagate the result without further processing.
+     *
+     * @param projectId     Project ledger identifier.
+     * @param ledger        [EventLedger] — single write authority.
+     * @param executionTask The task that failed validation.
+     * @param anchor        The locked [AnchorState] for this execution attempt.
+     * @param violation     The single [ViolationSurface] that caused the failure.
+     * @return              [ExecutionAuthorityExecutionResult.RecoveryIssued].
+     */
+    fun issueRecoveryContract(
+        projectId:     String,
+        ledger:        EventLedger,
+        executionTask: ExecutionTask,
+        anchor:        AnchorState,
+        violation:     ViolationSurface
+    ): ExecutionAuthorityExecutionResult.RecoveryIssued {
+        try {
+            ledger.appendEvent(
+                projectId,
+                EventTypes.RECOVERY_CONTRACT,
+                mapOf(
+                    "contractId"       to executionTask.contractId,
+                    "taskId"           to executionTask.taskId,
+                    "report_reference" to anchor.reportReference,
+                    "failure_class"    to "LOGICAL",
+                    "violation_field"  to violation.field,
+                    "violation_reason" to violation.reason,
+                    "locked_fields"    to anchor.lockedFields.toList()
+                )
+            )
+        } catch (_: Exception) {
+            // Ledger write failure does not suppress the recovery result
+        }
+        return ExecutionAuthorityExecutionResult.RecoveryIssued(
+            contractId = executionTask.contractId,
+            reason     = violation.reason
+        )
+    }
+
+    /**
+     * Apply a delta mutation strictly within the [ViolationSurface] boundary (AERP-1).
+     *
+     * Only fields that are NOT in [AnchorState.lockedFields] and match the [violation] field
+     * may be mutated.  Any attempt to mutate a locked field throws [IllegalStateException].
+     *
+     * The result is the anchor's validated artifact structure merged with the permitted
+     * [mutation] entries.
+     *
+     * @param anchor    The locked [AnchorState] for this execution attempt.
+     * @param violation The single [ViolationSurface] that defines the mutation boundary.
+     * @param mutation  The proposed mutations (key → value).
+     * @return          Merged artifact map with only permitted mutations applied.
+     * @throws IllegalStateException if any mutation key is in [AnchorState.lockedFields].
+     */
+    fun executeDelta(
+        anchor:    AnchorState,
+        violation: ViolationSurface,
+        mutation:  Map<String, Any>
+    ): Map<String, Any> {
+        for (field in mutation.keys) {
+            enforceMutationBoundary(anchor, field)
+        }
+        val base = anchor.validatedReport?.artifactStructure ?: emptyMap()
+        return base + mutation
+    }
+
+
+    /**
+     * Enforce AERP-1 hard block conditions before TASK_EXECUTED ledger write.
+     *
+     * Throws [IllegalStateException] if ANY invariant is violated.
+     * All six conditions must pass; the first failing condition halts execution immediately.
+     *
+     * Hard blocks (AERP-1 enforcement):
+     *  1. [report] must not be null — ContractReport is mandatory before any write.
+     *  2. [validationExecuted] must be true — result validation must have run.
+     *  3. [capabilities] must not be empty — requiredCapabilities must be present.
+     *  4. [registry] must contain at least one verified contractor.
+     *  5. [systemResult] must not be [ContractorSystemResult.Blocked] — a contractor must be resolved.
+     *  6. [authorized] must be true — explicit authorization must have been granted.
+     */
+    fun enforceHardBlocks(
+        report:             ContractReport?,
+        validationExecuted: Boolean,
+        capabilities:       List<ContractCapability>,
+        registry:           ContractorRegistry,
+        systemResult:       ContractorSystemResult,
+        authorized:         Boolean
+    ) {
+        if (report == null) {
+            throw IllegalStateException("BLOCKED: Missing ContractReport (AERP-1)")
+        }
+        if (!validationExecuted) {
+            throw IllegalStateException("BLOCKED: Validation not executed (AERP-1)")
+        }
+        if (capabilities.isEmpty()) {
+            throw IllegalStateException("BLOCKED: Missing requiredCapabilities (AERP-1)")
+        }
+        if (registry.allVerified().isEmpty()) {
+            throw IllegalStateException("BLOCKED: ContractorRegistry empty (AERP-1)")
+        }
+        if (systemResult is ContractorSystemResult.Blocked) {
+            throw IllegalStateException("BLOCKED: No contractor resolved (AERP-1)")
+        }
+        if (!authorized) {
+            throw IllegalStateException("BLOCKED: Execution not authorized (AERP-1)")
+        }
+    }
 
     /**
      * Extract [ExecutionTask] from a TASK_ASSIGNED event.
@@ -891,6 +1099,64 @@ class ExecutionAuthority(
             ?.mapNotNull { name -> runCatching { ContractCapability.valueOf(name) }.getOrNull() }
             ?.takeIf { it.isNotEmpty() }
         return capabilities ?: listOf(ContractCapability.STRUCTURAL_ACCURACY)
+    }
+
+    /**
+     * Extract [ContractCapability] list STRICTLY from the CONTRACT_CREATED ledger event for [contractId].
+     *
+     * Unlike [extractCapabilitiesFromLedger], this method has NO FALLBACK.
+     * Any missing, invalid, or empty capability list causes an [IllegalStateException] (AERP-1 violation).
+     *
+     * Uses [lastOrNull] to pick the latest CONTRACT_CREATED for [contractId].
+     *
+     * @throws IllegalStateException on any AERP-1 violation (missing event, missing field,
+     *         invalid type, null entry, unknown capability name, or empty result).
+     */
+    private fun extractCapabilitiesFromLedgerStrict(
+        contractId: String,
+        events:     List<com.agoii.mobile.core.Event>
+    ): List<ContractCapability> {
+        val createdEvent = events
+            .lastOrNull {
+                it.type == EventTypes.CONTRACT_CREATED &&
+                it.payload["contractId"] == contractId
+            }
+            ?: throw IllegalStateException(
+                "AERP-1 violation: CONTRACT_CREATED not found for contractId=$contractId"
+            )
+
+        val raw = createdEvent.payload["requiredCapabilities"]
+            ?: throw IllegalStateException(
+                "AERP-1 violation: requiredCapabilities missing for contractId=$contractId"
+            )
+
+        if (raw !is List<*>) {
+            throw IllegalStateException(
+                "AERP-1 violation: requiredCapabilities invalid type for contractId=$contractId"
+            )
+        }
+
+        val capabilities = raw.map {
+            val value = it?.toString()
+                ?: throw IllegalStateException(
+                    "AERP-1 violation: null capability for contractId=$contractId"
+                )
+            try {
+                ContractCapability.valueOf(value)
+            } catch (_: Exception) {
+                throw IllegalStateException(
+                    "AERP-1 violation: unknown capability '$value' for contractId=$contractId"
+                )
+            }
+        }
+
+        if (capabilities.isEmpty()) {
+            throw IllegalStateException(
+                "AERP-1 violation: requiredCapabilities empty for contractId=$contractId"
+            )
+        }
+
+        return capabilities
     }
 
     /**
