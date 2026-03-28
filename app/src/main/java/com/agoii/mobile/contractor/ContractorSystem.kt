@@ -275,7 +275,7 @@ class ContractorSystem(
      *
      * Domain fields:
      *  - `contractorId`    — primary contractor
-     *  - `capabilityScore` — verified capability score
+     *  - `overallCapabilityScore` — aggregate verified capability score across all dimensions
      *  - `reliabilityRatio` — historical reliability
      *  - `internalRef`     — deterministic internal reference (format: internal::<id>::<taskId>)
      *  - `executionPayload` — raw contractor output
@@ -288,7 +288,7 @@ class ContractorSystem(
         val profile = profiles.first()
         return mapOf(
             "contractorId"     to contractorIds.first(),
-            "capabilityScore"  to profile.capabilities.capabilityScore,
+            "overallCapabilityScore" to profile.capabilities.capabilityScore,
             "reliabilityRatio" to profile.reliabilityRatio,
             "internalRef"      to "internal::${contractorIds.first()}::${rawOutput.taskId}",
             "executionPayload" to rawOutput.resultArtifact

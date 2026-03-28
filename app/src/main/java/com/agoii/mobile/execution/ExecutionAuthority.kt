@@ -870,11 +870,11 @@ class ExecutionAuthority(
      * Extract [ContractCapability] list from the CONTRACT_CREATED ledger event for [contractId].
      *
      * Capabilities are read ONLY from the CONTRACT_CREATED event written by
-     * [ingestUniversalContract].  NO parsing, NO inference, NO fallback capability construction.
+     * [ingestUniversalContract].
      *
-     * When no CONTRACT_CREATED event exists or the field is absent/empty, returns
-     * the complete set of all [ContractCapability] values as a safe default so that the
-     * execution pipeline can continue on legacy ledger paths.
+     * When no CONTRACT_CREATED event exists (legacy ledger path) or the field is absent/empty,
+     * returns [ContractCapability.STRUCTURAL_ACCURACY] as a minimal safe default.  This covers
+     * legacy ledgers that pre-date UCS-1 ingestion; new ledgers always carry the full list.
      */
     private fun extractCapabilitiesFromLedger(
         contractId: String,
@@ -890,7 +890,7 @@ class ExecutionAuthority(
             ?.mapNotNull { it?.toString() }
             ?.mapNotNull { name -> runCatching { ContractCapability.valueOf(name) }.getOrNull() }
             ?.takeIf { it.isNotEmpty() }
-        return capabilities ?: ContractCapability.entries
+        return capabilities ?: listOf(ContractCapability.STRUCTURAL_ACCURACY)
     }
 
     /**
