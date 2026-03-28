@@ -129,15 +129,14 @@ class CoreBridge(context: Context) {
                 EventTypes.TASK_STARTED -> {
                     executionAuthority.executeFromLedger(projectId, ledger)
                 }
-                // After Governor writes EXECUTION_COMPLETED, ExecutionAuthority owns the assembly pipeline.
+                // After Governor writes EXECUTION_COMPLETED, ExecutionAuthority owns the assembly
+                // pipeline. If assembly completes, ICS runs immediately without an extra ledger load.
                 EventTypes.EXECUTION_COMPLETED -> {
-                    executionAuthority.assembleFromLedger(projectId, ledger)
+                    val assemblyResult = executionAuthority.assembleFromLedger(projectId, ledger)
+                    if (assemblyResult is com.agoii.mobile.assembly.AssemblyExecutionResult.Assembled) {
+                        executionAuthority.runIcsFromLedger(projectId, ledger)
+                    }
                 }
-            }
-            // After assembly writes ASSEMBLY_COMPLETED, ExecutionAuthority owns the ICS pipeline.
-            val latestAfterPipeline = ledger.loadEvents(projectId).lastOrNull()
-            if (latestAfterPipeline?.type == EventTypes.ASSEMBLY_COMPLETED) {
-                executionAuthority.runIcsFromLedger(projectId, ledger)
             }
             return ledger.loadEvents(projectId).lastOrNull()
         }

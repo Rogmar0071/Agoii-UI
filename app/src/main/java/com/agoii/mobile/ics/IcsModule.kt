@@ -206,7 +206,10 @@ class IcsModule {
 
         val contractOutputs = orderedContracts.map { (contractId, position) ->
             val artifactRef = taskArtifacts[contractId]
-                ?: "artifact:$contractId:unknown"  // best-effort reference when ledger has no TASK_EXECUTED
+                // Prefix "diagnostic:" signals a data gap: no TASK_EXECUTED(SUCCESS) found for this
+                // contract. The IcsOutputType classifier will detect this as DIAGNOSTIC so callers
+                // can surface the gap rather than treating it as valid output.
+                ?: "diagnostic:$contractId:no_artifact"
             com.agoii.mobile.assembly.ContractOutput(
                 contractId        = contractId,
                 position          = position,
@@ -282,8 +285,10 @@ class IcsModule {
 
     /**
      * Output classification — deterministic, rule-based:
-     *  - DIAGNOSTIC  if the artifact reference contains "NO_ARTIFACT" or "FAILURE"
-     *  - ACTIONABLE  if the normalized fields contain an "action" or "next_step" key
+     *  - DIAGNOSTIC  if the artifact reference starts with "diagnostic:" or contains
+     *                "NO_ARTIFACT" or "FAILURE" (covers gap-detected and explicit failure refs)
+     *  - ACTIONABLE  if the normalized fields contain an "action", "next_step",
+     *                or "action_required" key
      *  - INFORMATIONAL otherwise (default)
      *
      * No AI, no inference, no summarization.
@@ -293,7 +298,10 @@ class IcsModule {
         normalizedFields: Map<String, Any>
     ): IcsOutputType {
         val artifactRef = contractOutput.artifactReference.lowercase()
-        if (artifactRef.contains("no_artifact") || artifactRef.contains("failure")) {
+        if (artifactRef.startsWith("diagnostic:") ||
+            artifactRef.contains("no_artifact") ||
+            artifactRef.contains("failure")
+        ) {
             return IcsOutputType.DIAGNOSTIC
         }
         val keys = normalizedFields.keys.map { it.lowercase() }
@@ -307,12 +315,16 @@ class IcsModule {
      * Build the deterministic [IcsOutputSection] list.
      *
      * Always present:
-     *  - "summary"  — first INFORMATIONAL entry (one entry only)
-     *  - "details"  — all INFORMATIONAL entries
+     *  - "summary"  — first INFORMATIONAL entry, or absent when all entries are non-informational
+     *  - "details"  — all INFORMATIONAL entries (may be empty when all entries are DIAGNOSTIC/ACTIONABLE)
      *
      * Present only when non-empty:
      *  - "actions"     — all ACTIONABLE entries
      *  - "diagnostics" — all DIAGNOSTIC entries
+     *
+     * Note: when no INFORMATIONAL entries exist, the "summary" section is omitted entirely
+     * rather than promoting a DIAGNOSTIC or ACTIONABLE entry, to avoid misrepresenting
+     * the output type.
      */
     private fun buildSections(entries: List<IcsOutputEntry>): List<IcsOutputSection> {
         val informational = entries.filter { it.outputType == IcsOutputType.INFORMATIONAL }
@@ -321,13 +333,13 @@ class IcsModule {
 
         val sections = mutableListOf<IcsOutputSection>()
 
-        // summary — first informational entry (or first entry if none are informational)
-        val summaryEntry = informational.firstOrNull() ?: entries.firstOrNull()
+        // summary — first INFORMATIONAL entry only; omit when none are informational
+        val summaryEntry = informational.firstOrNull()
         if (summaryEntry != null) {
             sections.add(IcsOutputSection(name = "summary", entries = listOf(summaryEntry)))
         }
 
-        // details — all informational entries
+        // details — all informational entries (may be empty)
         sections.add(IcsOutputSection(name = "details", entries = informational))
 
         // actions — only when non-empty
