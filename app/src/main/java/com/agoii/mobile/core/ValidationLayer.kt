@@ -6,7 +6,7 @@ class ValidationLayer {
 
     // ── Internal lifecycle enum ────────────────────────────────────────────────
 
-    private enum class TaskLifecycle { ASSIGNED, STARTED, COMPLETED, VALIDATED }
+    private enum class TaskLifecycle { ASSIGNED, STARTED, EXECUTED, COMPLETED, VALIDATED }
 
     // ── Derived validation state (single O(n) pass over simulated) ────────────
 
@@ -118,6 +118,7 @@ class ValidationLayer {
                 val level: TaskLifecycle? = when (ev.type) {
                     EventTypes.TASK_ASSIGNED  -> TaskLifecycle.ASSIGNED
                     EventTypes.TASK_STARTED   -> TaskLifecycle.STARTED
+                    EventTypes.TASK_EXECUTED  -> TaskLifecycle.EXECUTED
                     EventTypes.TASK_COMPLETED -> TaskLifecycle.COMPLETED
                     EventTypes.TASK_VALIDATED -> TaskLifecycle.VALIDATED
                     else                       -> null
@@ -182,6 +183,7 @@ class ValidationLayer {
             EventTypes.CONTRACT_STARTED    -> checkContractStarted(projectId, payload)
             EventTypes.TASK_ASSIGNED       -> checkTaskAssigned(projectId, payload)
             EventTypes.TASK_STARTED        -> checkTaskStarted(projectId, payload, state)
+            EventTypes.TASK_EXECUTED       -> checkTaskExecuted(projectId, payload, state)
             EventTypes.TASK_COMPLETED      -> checkTaskCompleted(projectId, payload, state)
             EventTypes.TASK_VALIDATED      -> checkTaskValidated(projectId, payload, state)
             EventTypes.CONTRACT_COMPLETED  -> checkContractCompleted(projectId, payload, state)
@@ -314,6 +316,50 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "TASK_ASSIGNED missing 'taskId' in '$projectId'"
             )
+    }
+
+    private fun checkTaskExecuted(
+        projectId: String,
+        payload: Map<String, Any>,
+        state: ValidationState
+    ) {
+        requireKeys(projectId, EventTypes.TASK_EXECUTED, payload, TASK_EXECUTED_KEYS)
+        val taskId = payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "TASK_EXECUTED missing or blank 'taskId' in '$projectId'"
+            )
+        payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "TASK_EXECUTED missing or blank 'contractId' in '$projectId'"
+            )
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "TASK_EXECUTED missing or blank 'report_reference' (RRIL-1) in '$projectId'"
+            )
+        val execStatus = payload["executionStatus"]?.toString()
+            ?: throw LedgerValidationException(
+                "TASK_EXECUTED missing 'executionStatus' in '$projectId'"
+            )
+        if (execStatus !in setOf("SUCCESS", "FAILURE")) {
+            throw LedgerValidationException(
+                "TASK_EXECUTED 'executionStatus' must be SUCCESS or FAILURE in '$projectId'"
+            )
+        }
+        val validStatus = payload["validationStatus"]?.toString()
+            ?: throw LedgerValidationException(
+                "TASK_EXECUTED missing 'validationStatus' in '$projectId'"
+            )
+        if (validStatus !in setOf("VALIDATED", "FAILED")) {
+            throw LedgerValidationException(
+                "TASK_EXECUTED 'validationStatus' must be VALIDATED or FAILED in '$projectId'"
+            )
+        }
+        if (TaskLifecycle.STARTED !in (state.tasks[taskId] ?: emptySet())) {
+            throw LedgerValidationException(
+                "TASK_EXECUTED: taskId '$taskId' has no TASK_STARTED event in '$projectId'"
+            )
+        }
+        checkPositionAndTotal(projectId, EventTypes.TASK_EXECUTED, payload)
     }
 
     private fun checkTaskStarted(
@@ -547,12 +593,25 @@ class ValidationLayer {
         private val TASK_LIFECYCLE_TYPES    = setOf(
             EventTypes.TASK_ASSIGNED,
             EventTypes.TASK_STARTED,
+            EventTypes.TASK_EXECUTED,
             EventTypes.TASK_COMPLETED,
             EventTypes.TASK_VALIDATED
         )
-        private val CONTRACTS_GENERATED_KEYS = setOf("intentId", "contractSetId", "contracts", "total")
+        private val CONTRACTS_GENERATED_KEYS = setOf(
+            "intentId", "contractSetId", "contracts", "total",
+            "report_id"   // RRIL-1 backward-compatible field
+        )
         private val CONTRACT_STARTED_KEYS   = setOf("position", "total", "contract_id")
-        private val TASK_ASSIGNED_KEYS      = setOf("contractorId", "taskId")
+        private val TASK_ASSIGNED_KEYS      = setOf(
+            "contractorId", "taskId",
+            "position", "total",
+            "contractId", "report_reference", "requirements", "constraints"
+        )
+        private val TASK_EXECUTED_KEYS      = setOf(
+            "taskId", "contractId", "contractorId", "artifactReference",
+            "executionStatus", "validationStatus", "validationReasons",
+            "report_reference", "position", "total"
+        )
         private val TASK_ID_ONLY            = setOf("taskId")
         private val TASK_WITH_POSITION_KEYS = setOf("taskId", "position", "total")
         private val CONTRACT_COMPLETED_KEYS = setOf("position", "total")

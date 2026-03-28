@@ -22,6 +22,7 @@ object EventTypes {
     const val TASK_CREATED            = "task_created"
     const val TASK_ASSIGNED           = "task_assigned"
     const val TASK_STARTED            = "task_started"
+    const val TASK_EXECUTED           = "task_executed"
     const val TASK_COMPLETED          = "task_completed"
     const val TASK_VALIDATED          = "task_validated"
     const val TASK_FAILED             = "task_failed"
@@ -43,6 +44,7 @@ object EventTypes {
         TASK_CREATED,
         TASK_ASSIGNED,
         TASK_STARTED,
+        TASK_EXECUTED,
         TASK_COMPLETED,
         TASK_VALIDATED,
         TASK_FAILED,
