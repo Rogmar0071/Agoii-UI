@@ -1055,7 +1055,7 @@ class ExecutionAuthority(
         )
 
         // ── Surface 7: Interoperability — bridge to Phase 2 execution models ──
-        val taskId        = UniversalContractInterop.buildTaskId(normalized.reportReference, normalized.contractId)
+        val taskId        = UniversalContractInterop.buildTaskId(normalized.contractId)
         val executionTask = UniversalContractInterop.toExecutionTask(normalized, taskId)
         val artifactRef   = buildArtifactReference(normalized.reportReference, taskId)
 
@@ -1186,12 +1186,4 @@ class ExecutionAuthority(
             )
         }
     }
-
-    /**
-     * Build a deterministic task identifier from [reportReference] and [contractId].
-     *
-     * Delegates to [UniversalContractInterop.buildTaskId] for consistency (Surface 7).
-     */
-    private fun buildTaskId(reportReference: String, contractId: String): String =
-        UniversalContractInterop.buildTaskId(reportReference, contractId)
 }

@@ -141,14 +141,13 @@ object UniversalContractInterop {
     )
 
     /**
-     * Build a deterministic task identifier from [reportReference] and [contractId].
+     * Build a deterministic task identifier from [contractId].
      *
      * Format: `<contractId>-step1` (mirrors the Governor convention).
      *
-     * @param reportReference The RRID from the originating [UniversalContract].
-     * @param contractId      The contract identifier.
+     * @param contractId The contract identifier.
      * @return Deterministic task identifier string.
      */
-    fun buildTaskId(reportReference: String, contractId: String): String =
+    fun buildTaskId(contractId: String): String =
         "$contractId-step1"
 }
