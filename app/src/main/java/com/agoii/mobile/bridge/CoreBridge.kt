@@ -123,10 +123,16 @@ class CoreBridge(context: Context) {
         val result = governor.runGovernor(projectId)
 
         if (result == Governor.GovernorResult.ADVANCED) {
-            // After Governor writes TASK_STARTED, ExecutionAuthority owns the execution pipeline.
             val latestAfterGovernor = ledger.loadEvents(projectId).lastOrNull()
-            if (latestAfterGovernor?.type == EventTypes.TASK_STARTED) {
-                executionAuthority.executeFromLedger(projectId, ledger)
+            when (latestAfterGovernor?.type) {
+                // After Governor writes TASK_STARTED, ExecutionAuthority owns the execution pipeline.
+                EventTypes.TASK_STARTED -> {
+                    executionAuthority.executeFromLedger(projectId, ledger)
+                }
+                // After Governor writes EXECUTION_COMPLETED, ExecutionAuthority owns the assembly pipeline.
+                EventTypes.EXECUTION_COMPLETED -> {
+                    executionAuthority.assembleFromLedger(projectId, ledger)
+                }
             }
             return ledger.loadEvents(projectId).lastOrNull()
         }

@@ -18,6 +18,8 @@
 
 package com.agoii.mobile.execution
 
+import com.agoii.mobile.assembly.AssemblyExecutionResult
+import com.agoii.mobile.assembly.AssemblyModule
 import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.contractors.Capability
 import com.agoii.mobile.contractors.ContractRequirement
@@ -167,10 +169,11 @@ sealed class ExecutionAuthorityExecutionResult {
 // ---------- EXECUTION AUTHORITY ----------
 
 /**
- * ExecutionAuthority — sole authority for contract validation and task execution.
+ * ExecutionAuthority — sole authority for contract validation, task execution, and assembly.
  *
  * Phase 1 — [evaluate]: validates and authorises execution contracts before ledger write.
  * Phase 2 — [executeFromLedger]: owns the full task execution pipeline from ledger state.
+ * Phase 3 — [assembleFromLedger]: owns the full assembly pipeline after EXECUTION_COMPLETED.
  *
  * @param contractorRegistry Optional contractor registry for deterministic matching.
  *                           When null, all execution attempts are BLOCKED (RCF-1 issued).
@@ -179,9 +182,10 @@ class ExecutionAuthority(
     private val contractorRegistry: ContractorRegistry? = null
 ) {
 
-    private val matchingEngine = DeterministicMatchingEngine()
-    private val executor       = ContractorExecutor()
-    private val validator      = ResultValidator()
+    private val matchingEngine  = DeterministicMatchingEngine()
+    private val executor        = ContractorExecutor()
+    private val validator       = ResultValidator()
+    private val assemblyModule  = AssemblyModule()
 
     companion object {
         /**
@@ -512,6 +516,31 @@ class ExecutionAuthority(
             )
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PHASE 3 — Assembly pipeline (post-EXECUTION_COMPLETED ledger state)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Execute the assembly pipeline triggered by EXECUTION_COMPLETED.
+     *
+     * Delegates exclusively to [AssemblyModule], which:
+     *  - enforces all trigger conditions (all contracts complete, no duplicate, CONTRACTS_GENERATED present)
+     *  - reconstructs [com.agoii.mobile.assembly.AssemblyInput] from ledger only (RRIL-1)
+     *  - appends ASSEMBLY_STARTED, ASSEMBLY_VALIDATED, ASSEMBLY_COMPLETED to [ledger]
+     *  - returns the structured [com.agoii.mobile.assembly.FinalArtifact]
+     *
+     * GOVERNANCE RULE: Governor MUST NOT call this method.
+     * Only ExecutionAuthority is permitted to invoke assembly (via [CoreBridge]).
+     *
+     * @param projectId Project ledger identifier.
+     * @param ledger    EventLedger — single write authority.
+     * @return [AssemblyExecutionResult] describing the pipeline outcome.
+     */
+    fun assembleFromLedger(
+        projectId: String,
+        ledger:    EventLedger
+    ): AssemblyExecutionResult = assemblyModule.assemble(projectId, ledger)
 
     // ── Private helpers ───────────────────────────────────────────────────────
 

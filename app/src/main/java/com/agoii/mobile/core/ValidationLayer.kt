@@ -189,7 +189,9 @@ class ValidationLayer {
             EventTypes.RECOVERY_CONTRACT   -> checkRecoveryContract(projectId, payload)
             EventTypes.CONTRACT_COMPLETED  -> checkContractCompleted(projectId, payload, state)
             EventTypes.EXECUTION_COMPLETED -> checkExecutionCompleted(projectId, payload, state)
+            EventTypes.ASSEMBLY_STARTED    -> checkAssemblyStarted(projectId, payload)
             EventTypes.ASSEMBLY_VALIDATED  -> checkAssemblyValidated(projectId, state)
+            EventTypes.ASSEMBLY_COMPLETED  -> checkAssemblyCompleted(projectId, payload)
         }
     }
 
@@ -507,6 +509,64 @@ class ValidationLayer {
         }
     }
 
+    private fun checkAssemblyStarted(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.ASSEMBLY_STARTED, payload, ASSEMBLY_STARTED_KEYS)
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_STARTED missing or blank 'report_reference' in '$projectId'"
+            )
+        payload["contractSetId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_STARTED missing or blank 'contractSetId' in '$projectId'"
+            )
+        val totalRaw = payload["totalContracts"]
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_STARTED missing 'totalContracts' in '$projectId'"
+            )
+        val total = toInt(totalRaw)
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_STARTED 'totalContracts' must be an integer in '$projectId'"
+            )
+        if (total < 1) {
+            throw LedgerValidationException(
+                "ASSEMBLY_STARTED 'totalContracts' must be >= 1, got $total in '$projectId'"
+            )
+        }
+    }
+
+    private fun checkAssemblyCompleted(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.ASSEMBLY_COMPLETED, payload, ASSEMBLY_COMPLETED_KEYS)
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_COMPLETED missing or blank 'report_reference' in '$projectId'"
+            )
+        payload["contractSetId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_COMPLETED missing or blank 'contractSetId' in '$projectId'"
+            )
+        val totalRaw = payload["totalContracts"]
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_COMPLETED missing 'totalContracts' in '$projectId'"
+            )
+        val total = toInt(totalRaw)
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_COMPLETED 'totalContracts' must be an integer in '$projectId'"
+            )
+        if (total < 1) {
+            throw LedgerValidationException(
+                "ASSEMBLY_COMPLETED 'totalContracts' must be >= 1, got $total in '$projectId'"
+            )
+        }
+        payload["finalArtifactReference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_COMPLETED missing or blank 'finalArtifactReference' in '$projectId'"
+            )
+        payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_COMPLETED missing or blank 'taskId' in '$projectId'"
+            )
+    }
+
     private fun checkAssemblyValidated(projectId: String, state: ValidationState) {
         if (!state.hasExecutionCompleted) {
             throw LedgerValidationException(
@@ -639,5 +699,10 @@ class ValidationLayer {
         private val TASK_WITH_POSITION_KEYS = setOf("taskId", "position", "total")
         private val CONTRACT_COMPLETED_KEYS = setOf("position", "total")
         private val EXECUTION_COMPLETED_KEYS = setOf("total")
+        private val ASSEMBLY_STARTED_KEYS    = setOf("report_reference", "contractSetId", "totalContracts")
+        private val ASSEMBLY_COMPLETED_KEYS  = setOf(
+            "report_reference", "contractSetId", "totalContracts",
+            "finalArtifactReference", "taskId"
+        )
     }
 }
