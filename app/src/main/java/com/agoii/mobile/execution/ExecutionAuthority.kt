@@ -507,8 +507,8 @@ class ExecutionAuthority(
             constraints          = executionTask.constraints,
             expectedOutput       = executionTask.expectedOutput,
             taskPayload          = mapOf(
-                "contractId" to executionTask.contractId,
-                "position"   to executionTask.position
+                "taskId"     to executionTask.taskId,
+                "contractId" to executionTask.contractId
             ),
             requiredCapabilities = requiredCapabilities,
             executionType        = domainContext.executionType,
@@ -518,7 +518,7 @@ class ExecutionAuthority(
 
         when (systemResult) {
             is ContractorSystemResult.Blocked -> return blockWithRecovery(
-                projectId, ledger, executionTask, "MATCHING_BLOCKED",
+                projectId, ledger, executionTask, "MATCHING_FAILED",
                 systemResult.reason
             )
             is ContractorSystemResult.Resolved -> { /* pipeline continues below */ }
@@ -564,10 +564,32 @@ class ExecutionAuthority(
 
         val validationResult = validator.validate(task, reportBackedOutput)
 
-        // ── Step 7 / 8: Emit TASK_EXECUTED + RCF-1 on failure ───────────────
+        // ── Step 5: Authorization gate (AERP-1) ─────────────────────────────
+        // NO write is permitted without explicit authorization.
+        // Authorization = validation passed; any failure → blockWithRecovery (RCF-1).
+        val authorized = validationResult.verdict == ValidationVerdict.VALIDATED
+        if (!authorized) {
+            return blockWithRecovery(
+                projectId, ledger, executionTask,
+                "AERP1_AUTHORIZATION_FAILURE",
+                "Execution not authorized after validation"
+            )
+        }
+
+        // ── Step 6: Hard block enforcement (AERP-1) ──────────────────────────
+        enforceHardBlocks(
+            report             = contractReport,
+            validationExecuted = true,
+            capabilities       = requiredCapabilities,
+            registry           = registry,
+            systemResult       = systemResult,
+            authorized         = authorized
+        )
+
+        // ── Step 7: TASK_EXECUTED ledger write — only after authorization ────
+        val artifactRef    = buildArtifactReference(executionTask.reportReference, executionTask.taskId)
         val execStatusStr  = executionOutput.status.name
         val validStatusStr = validationResult.verdict.name
-        val artifactRef    = buildArtifactReference(executionTask.reportReference, executionTask.taskId)
 
         ledger.appendEvent(
             projectId,
@@ -586,48 +608,11 @@ class ExecutionAuthority(
             )
         )
 
-        return if (executionOutput.status == ExecutionStatus.SUCCESS &&
-            validationResult.verdict == ValidationVerdict.VALIDATED
-        ) {
-            ExecutionAuthorityExecutionResult.Executed(
-                taskId            = executionTask.taskId,
-                executionStatus   = ExecutionStatus.SUCCESS,
-                validationVerdict = ValidationVerdict.VALIDATED
-            )
-        } else {
-            // ── AERP-1 Anchor extraction ─────────────────────────────────────
-            val anchorState = extractAnchorState(contractReport)
-
-            // ── VIOLATION SURFACE ISOLATION (RCF-1) ──────────────────────────
-            // One ViolationSurface = one RecoveryContract. Multiple failures produce
-            // multiple sequential RecoveryContracts — never grouped.
-            val violations: List<String> = when {
-                executionOutput.status == ExecutionStatus.FAILURE ->
-                    listOf("EXECUTION_FAILED: ${executionOutput.error ?: "unknown"}")
-                else ->
-                    validationResult.failureReasons.map { "VALIDATION_FAILED: $it" }
-            }
-            val failureClass = when {
-                executionOutput.status == ExecutionStatus.FAILURE -> "STRUCTURAL"
-                else -> "LOGICAL"
-            }
-
-            val recoveries = violations.map { violationSurface ->
-                val recovery = issueRecoveryContract(
-                    task            = executionTask,
-                    anchorState     = anchorState,
-                    failureClass    = failureClass,
-                    violationSurface = violationSurface
-                )
-                writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
-                recovery
-            }
-
-            ExecutionAuthorityExecutionResult.BlockedWithRecovery(
-                reason            = violations.first(),
-                recoveryContracts = recoveries
-            )
-        }
+        return ExecutionAuthorityExecutionResult.Executed(
+            taskId            = executionTask.taskId,
+            executionStatus   = executionOutput.status,
+            validationVerdict = validationResult.verdict
+        )
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -687,21 +672,23 @@ class ExecutionAuthority(
      * Enforce AERP-1 hard block conditions before TASK_EXECUTED ledger write.
      *
      * Throws [IllegalStateException] if ANY invariant is violated.
-     * All five conditions must pass; the first failing condition halts execution immediately.
+     * All six conditions must pass; the first failing condition halts execution immediately.
      *
      * Hard blocks (AERP-1 enforcement):
      *  1. [report] must not be null — ContractReport is mandatory before any write.
      *  2. [validationExecuted] must be true — result validation must have run.
      *  3. [capabilities] must not be empty — requiredCapabilities must be present.
      *  4. [registry] must contain at least one verified contractor.
-     *  5. [systemResult] must not be [ContractorSystemResult.Blocked] — a contractor must be matched.
+     *  5. [systemResult] must not be [ContractorSystemResult.Blocked] — a contractor must be resolved.
+     *  6. [authorized] must be true — explicit authorization must have been granted.
      */
     fun enforceHardBlocks(
         report:             ContractReport?,
         validationExecuted: Boolean,
         capabilities:       List<ContractCapability>,
         registry:           ContractorRegistry,
-        systemResult:       ContractorSystemResult
+        systemResult:       ContractorSystemResult,
+        authorized:         Boolean
     ) {
         if (report == null) {
             throw IllegalStateException("BLOCKED: Missing ContractReport (AERP-1)")
@@ -713,10 +700,13 @@ class ExecutionAuthority(
             throw IllegalStateException("BLOCKED: Missing requiredCapabilities (AERP-1)")
         }
         if (registry.allVerified().isEmpty()) {
-            throw IllegalStateException("BLOCKED: ContractorRegistry empty")
+            throw IllegalStateException("BLOCKED: ContractorRegistry empty (AERP-1)")
         }
         if (systemResult is ContractorSystemResult.Blocked) {
-            throw IllegalStateException("BLOCKED: No contractor matched")
+            throw IllegalStateException("BLOCKED: No contractor resolved (AERP-1)")
+        }
+        if (!authorized) {
+            throw IllegalStateException("BLOCKED: Execution not authorized (AERP-1)")
         }
     }
 
