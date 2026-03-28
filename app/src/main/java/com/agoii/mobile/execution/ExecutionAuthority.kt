@@ -15,6 +15,7 @@
 //   - validation against report (ResultValidator)
 //   - TASK_EXECUTED ledger emission
 //   - RCF-1 recovery contract issuance on failure
+// Phase 5 (route):       Deterministic routing via UniversalContract execution semantics (UCS-1).
 
 package com.agoii.mobile.execution
 
@@ -24,6 +25,9 @@ import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.contractors.Capability
 import com.agoii.mobile.contractors.ContractRequirement
 import com.agoii.mobile.contractors.DeterministicMatchingEngine
+import com.agoii.mobile.contracts.ExecutionType
+import com.agoii.mobile.contracts.TargetDomain
+import com.agoii.mobile.contracts.UniversalContract
 import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.ics.IcsExecutionResult
@@ -168,6 +172,39 @@ sealed class ExecutionAuthorityExecutionResult {
     data class RetryExceeded(val taskId: String) : ExecutionAuthorityExecutionResult()
 }
 
+// ---------- EXECUTION ROUTE (UCS-1) ----------
+
+/**
+ * Deterministic routing decision produced by [ExecutionAuthority.route].
+ *
+ * Each variant corresponds to one [ExecutionType] value declared by a
+ * [com.agoii.mobile.contracts.UniversalContract].  The [targetDomain] is
+ * preserved in every variant so that the caller can inspect the full routing
+ * context without re-reading the original contract.
+ *
+ * Routing is purely functional: [ExecutionAuthority.route] performs no I/O
+ * and has no side effects.
+ */
+sealed class ExecutionRoute {
+
+    abstract val targetDomain: TargetDomain
+
+    /** Route for [ExecutionType.INTERNAL_EXECUTION] — handled by the internal engine. */
+    data class InternalExecution(override val targetDomain: TargetDomain) : ExecutionRoute()
+
+    /** Route for [ExecutionType.EXTERNAL_EXECUTION] — delegated to an external integration. */
+    data class ExternalExecution(override val targetDomain: TargetDomain) : ExecutionRoute()
+
+    /** Route for [ExecutionType.COMMUNICATION] — drives a user-facing interaction cycle. */
+    data class Communication(override val targetDomain: TargetDomain) : ExecutionRoute()
+
+    /** Route for [ExecutionType.AI_PROCESSING] — delegated to an AI/LLM agent. */
+    data class AiProcessing(override val targetDomain: TargetDomain) : ExecutionRoute()
+
+    /** Route for [ExecutionType.SWARM_COORDINATION] — distributed across a swarm of agents. */
+    data class SwarmCoordination(override val targetDomain: TargetDomain) : ExecutionRoute()
+}
+
 // ---------- EXECUTION AUTHORITY ----------
 
 /**
@@ -177,6 +214,7 @@ sealed class ExecutionAuthorityExecutionResult {
  * Phase 2 — [executeFromLedger]: owns the full task execution pipeline from ledger state.
  * Phase 3 — [assembleFromLedger]: owns the full assembly pipeline after EXECUTION_COMPLETED.
  * Phase 4 — [runIcsFromLedger]: owns the ICS pipeline after ASSEMBLY_COMPLETED.
+ * Phase 5 — [route]: deterministic routing via [UniversalContract] execution semantics (UCS-1).
  *
  * @param contractorRegistry Optional contractor registry for deterministic matching.
  *                           When null, all execution attempts are BLOCKED (RCF-1 issued).
@@ -830,5 +868,29 @@ class ExecutionAuthority(
             append(":")
             append(suffix)
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // UCS-1 — Deterministic routing via contract-declared execution semantics
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Produce a deterministic [ExecutionRoute] for [contract] based solely on the
+     * execution semantics encoded within the contract itself (UCS-1).
+     *
+     * This method is purely functional: it performs no I/O, writes nothing to the
+     * ledger, and has no side effects.  The system does NOT adapt to contract types;
+     * the contract declares how it must be executed and this method reads that
+     * declaration.
+     *
+     * @param contract The [UniversalContract] to route.
+     * @return An [ExecutionRoute] variant matching [contract.executionType].
+     */
+    fun route(contract: UniversalContract): ExecutionRoute = when (contract.executionType) {
+        ExecutionType.INTERNAL_EXECUTION -> ExecutionRoute.InternalExecution(contract.targetDomain)
+        ExecutionType.EXTERNAL_EXECUTION -> ExecutionRoute.ExternalExecution(contract.targetDomain)
+        ExecutionType.COMMUNICATION      -> ExecutionRoute.Communication(contract.targetDomain)
+        ExecutionType.AI_PROCESSING      -> ExecutionRoute.AiProcessing(contract.targetDomain)
+        ExecutionType.SWARM_COORDINATION -> ExecutionRoute.SwarmCoordination(contract.targetDomain)
     }
 }
