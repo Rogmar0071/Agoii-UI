@@ -71,7 +71,11 @@ class AssemblyModule {
             ?: contractsGenEvent.payload["report_reference"]?.toString()
             ?: ""
 
+        if (reportReference.isBlank()) return AssemblyExecutionResult.NotTriggered
+
         val contractSetId = contractsGenEvent.payload["contractSetId"]?.toString() ?: ""
+
+        if (contractSetId.isBlank()) return AssemblyExecutionResult.NotTriggered
 
         val contractsList = contractsGenEvent.payload["contracts"] as? List<*>
         val totalContracts: Int = when {
