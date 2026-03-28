@@ -34,7 +34,7 @@ class CoreBridge(context: Context) {
     private val buildExecutor       = BuildExecutor()
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
-    private val executionAuthority  = ExecutionAuthority()   // no registry — BLOCKED until wired
+    private val executionAuthority  = ExecutionAuthority()   // no registry wired — execution attempts produce TASK_EXECUTED(FAILURE)+RCF-1
 
     private val observability       = ExecutionObservability(ledger)
 

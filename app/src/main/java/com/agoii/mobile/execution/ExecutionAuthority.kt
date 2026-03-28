@@ -365,7 +365,7 @@ class ExecutionAuthority(
         // ── Step 7 / 8: Emit TASK_EXECUTED + RCF-1 on failure ───────────────
         val execStatusStr  = executionOutput.status.name
         val validStatusStr = validationResult.verdict.name
-        val artifactRef    = "report:${executionTask.reportReference}:${executionTask.taskId}"
+        val artifactRef    = buildArtifactReference(executionTask.reportReference, executionTask.taskId)
 
         ledger.appendEvent(
             projectId,
@@ -465,9 +465,9 @@ class ExecutionAuthority(
 
         // VIOLATION 4: artifactReference must always be deterministic and referenceable — never "NONE"
         val artifactRef = if (task != null)
-            "report:${task.reportReference}:${task.taskId}:NO_ARTIFACT"
+            buildArtifactReference(task.reportReference, task.taskId, "NO_ARTIFACT")
         else
-            "report:UNKNOWN:UNKNOWN:NO_ARTIFACT"
+            buildArtifactReference("UNKNOWN", "UNKNOWN", "NO_ARTIFACT")
 
         // Emit TASK_EXECUTED(FAILURE) when we have enough context
         if (task != null) {
@@ -617,5 +617,28 @@ class ExecutionAuthority(
         is Long   -> value.toInt()
         is String -> value.toIntOrNull()
         else      -> null
+    }
+
+    /**
+     * Builds a deterministic, referenceable artifactReference string.
+     *
+     * Format: `report:<reportReference>:<taskId>[:<suffix>]`
+     *
+     * The suffix is omitted for normal execution artifacts; `NO_ARTIFACT` is used
+     * when execution was blocked before an artifact could be produced.
+     */
+    private fun buildArtifactReference(
+        reportReference: String,
+        taskId:          String,
+        suffix:          String? = null
+    ): String = buildString {
+        append("report:")
+        append(reportReference)
+        append(":")
+        append(taskId)
+        if (suffix != null) {
+            append(":")
+            append(suffix)
+        }
     }
 }

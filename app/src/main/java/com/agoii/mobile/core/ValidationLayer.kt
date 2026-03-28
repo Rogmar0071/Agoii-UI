@@ -616,7 +616,7 @@ class ValidationLayer {
         )
         private val CONTRACTS_GENERATED_KEYS = setOf(
             "intentId", "contractSetId", "contracts", "total",
-            "report_id"   // RRIL-1 backward-compatible field
+            "report_id"   // RRIL-1: report reference field propagated from CONTRACTS_GENERATED into downstream events
         )
         private val CONTRACT_STARTED_KEYS   = setOf("position", "total", "contract_id")
         private val TASK_ASSIGNED_KEYS      = setOf(
