@@ -278,9 +278,9 @@ class ContractorSystem(
      * Domain fields:
      *  - `contractorId`    — primary contractor
      *  - `capabilityScore` — verified capability score
-     *  - `reliabilityRatio`— historical reliability
+     *  - `reliabilityRatio` — historical reliability
      *  - `internalRef`     — deterministic internal reference (format: internal::<id>::<taskId>)
-     *  - `executionPayload`— raw contractor output
+     *  - `executionPayload` — raw contractor output
      */
     private fun buildInternalArtifact(
         contractorIds: List<String>,
