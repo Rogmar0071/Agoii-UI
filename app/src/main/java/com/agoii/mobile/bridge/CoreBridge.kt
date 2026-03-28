@@ -3,6 +3,7 @@ package com.agoii.mobile.bridge
 import android.content.Context
 import com.agoii.mobile.core.*
 import com.agoii.mobile.execution.BuildExecutor
+import com.agoii.mobile.execution.ExecutionAuthority
 import com.agoii.mobile.execution.ExecutionEntryPoint
 import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.irs.*
@@ -33,6 +34,7 @@ class CoreBridge(context: Context) {
     private val buildExecutor       = BuildExecutor()
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
+    private val executionAuthority  = ExecutionAuthority()   // no registry wired — execution attempts produce TASK_EXECUTED(FAILURE)+RCF-1
 
     private val observability       = ExecutionObservability(ledger)
 
@@ -120,11 +122,16 @@ class CoreBridge(context: Context) {
         // ── Governor progression ────────────────────────────────────────────────
         val result = governor.runGovernor(projectId)
 
-        return if (result == Governor.GovernorResult.ADVANCED) {
-            ledger.loadEvents(projectId).lastOrNull()
-        } else {
-            null
+        if (result == Governor.GovernorResult.ADVANCED) {
+            // After Governor writes TASK_STARTED, ExecutionAuthority owns the execution pipeline.
+            val latestAfterGovernor = ledger.loadEvents(projectId).lastOrNull()
+            if (latestAfterGovernor?.type == EventTypes.TASK_STARTED) {
+                executionAuthority.executeFromLedger(projectId, ledger)
+            }
+            return ledger.loadEvents(projectId).lastOrNull()
         }
+
+        return null
     }
 
     private fun resolveContractName(events: List<Event>, contractId: String): String {

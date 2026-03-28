@@ -95,10 +95,16 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.CONTRACT_STARTED && to == EventTypes.CONTRACT_COMPLETED) return true
             // Governor: task lifecycle — assignment leads to execution start
             if (from == EventTypes.TASK_ASSIGNED && to == EventTypes.TASK_STARTED) return true
-            // Governor: task lifecycle — execution produces a completion event
-            if (from == EventTypes.TASK_STARTED && to == EventTypes.TASK_COMPLETED) return true
-            // Governor: task lifecycle — execution failure
+            // ExecutionAuthority: task lifecycle — execution authority writes TASK_EXECUTED after TASK_STARTED
+            if (from == EventTypes.TASK_STARTED && to == EventTypes.TASK_EXECUTED) return true
+            // Governor: task lifecycle — TASK_EXECUTED (success+validated) advances to completion
+            if (from == EventTypes.TASK_EXECUTED && to == EventTypes.TASK_COMPLETED) return true
+            // Governor: task lifecycle — TASK_EXECUTED (failure) advances to task_failed
+            if (from == EventTypes.TASK_EXECUTED && to == EventTypes.TASK_FAILED) return true
+            // Governor: task lifecycle — execution failure (legacy: TASK_STARTED → TASK_FAILED)
             if (from == EventTypes.TASK_STARTED && to == EventTypes.TASK_FAILED) return true
+            // ExecutionAuthority: recovery contract written immediately after TASK_EXECUTED (FAILURE)
+            if (from == EventTypes.TASK_EXECUTED && to == EventTypes.RECOVERY_CONTRACT) return true
             // Governor: task lifecycle — validation of completed task
             if (from == EventTypes.TASK_COMPLETED && to == EventTypes.TASK_VALIDATED) return true
             // Governor: task lifecycle — validation failure

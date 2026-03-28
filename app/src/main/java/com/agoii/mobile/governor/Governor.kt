@@ -48,9 +48,6 @@ class Governor(
         /** Base execution load contributed by every contract regardless of position. */
         const val CONTRACT_BASE_LOAD = 2
 
-        /** Default contractor identifier used when no [ContractorRegistry] is provided. */
-        const val DEFAULT_CONTRACTOR = "default-contractor"
-
         /**
          * Simple passthrough transitions driven automatically by the Governor.
          * Each entry maps a terminal event type to the single event type that follows it,
@@ -154,16 +151,17 @@ class Governor(
                 val contractId = last.payload["contract_id"] as? String ?: return null
                 val position   = resolveInt(last.payload["position"])    ?: return null
                 val total      = deriveTotal(events)                      ?: return null
-                val contractor = registry?.findBestMatch(emptyMap())?.id ?: DEFAULT_CONTRACTOR
-                // Task ID convention: "{contractId}-step1" — each contract has exactly one
-                // primary task in the current execution model (step1 is the canonical step).
+                val reportRef  = deriveReportReference(events)
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
-                        "taskId"       to "$contractId-step1",
-                        "contractorId" to contractor,
-                        "position"     to position,
-                        "total"        to total
+                        "taskId"           to "$contractId-step1",
+                        "contractId"       to contractId,
+                        "position"         to position,
+                        "total"            to total,
+                        "report_reference" to reportRef,
+                        "requirements"     to emptyList<Any>(),
+                        "constraints"      to emptyList<Any>()
                     )
                 )
             }
@@ -183,15 +181,26 @@ class Governor(
                 )
             }
 
-            // Auto-advance: task execution is deterministic within the orchestration system.
-            EventTypes.TASK_STARTED -> {
-                val taskId   = last.payload["taskId"] as? String ?: return null
-                val position = resolveInt(last.payload["position"]) ?: return null
-                val total    = resolveInt(last.payload["total"])    ?: return null
-                Event(
-                    type    = EventTypes.TASK_COMPLETED,
-                    payload = mapOf("taskId" to taskId, "position" to position, "total" to total)
-                )
+            // ExecutionAuthority writes TASK_EXECUTED; Governor waits for it.
+            EventTypes.TASK_STARTED -> null
+
+            EventTypes.TASK_EXECUTED -> {
+                val taskId      = last.payload["taskId"]          as? String ?: return null
+                val position    = resolveInt(last.payload["position"])       ?: return null
+                val total       = resolveInt(last.payload["total"])          ?: return null
+                val execStatus  = last.payload["executionStatus"] as? String ?: return null
+                val validStatus = last.payload["validationStatus"] as? String ?: return null
+                if (execStatus == "SUCCESS" && validStatus == "VALIDATED") {
+                    Event(
+                        type    = EventTypes.TASK_COMPLETED,
+                        payload = mapOf("taskId" to taskId, "position" to position, "total" to total)
+                    )
+                } else {
+                    Event(
+                        type    = EventTypes.TASK_FAILED,
+                        payload = mapOf("taskId" to taskId, "position" to position, "total" to total)
+                    )
+                }
             }
 
             EventTypes.TASK_COMPLETED -> {
@@ -211,7 +220,7 @@ class Governor(
                 val newContractorId = last.payload["newContractorId"] as? String ?: return null
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
-                    payload = mapOf("taskId" to taskId, "contractorId" to newContractorId)
+                    payload = mapOf("taskId" to taskId)
                 )
             }
 
@@ -264,6 +273,21 @@ class Governor(
         is Long   -> value.toInt()
         is String -> value.toIntOrNull()
         else      -> null
+    }
+
+    /**
+     * Derives the report reference (RRID) from the first [EventTypes.CONTRACTS_GENERATED]
+     * event in the ledger for RRIL-1 propagation into TASK_ASSIGNED payload.
+     *
+     * Reads "report_id" (written by ExecutionEntryPoint) with "report_reference" as fallback.
+     * Returns empty string when no CONTRACTS_GENERATED event or field is found.
+     */
+    private fun deriveReportReference(events: List<Event>): String {
+        val contractsGen = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
+            ?: return ""
+        return contractsGen.payload["report_id"]?.toString()
+            ?: contractsGen.payload["report_reference"]?.toString()
+            ?: ""
     }
 
     /**
