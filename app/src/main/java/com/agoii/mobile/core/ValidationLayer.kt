@@ -814,7 +814,7 @@ class ValidationLayer {
         )
         private val TASK_ID_ONLY            = setOf("taskId")
         private val TASK_WITH_POSITION_KEYS = setOf("taskId", "position", "total")
-        private val CONTRACT_COMPLETED_KEYS = setOf("position", "total")
+        private val CONTRACT_COMPLETED_KEYS = setOf("position", "total", "contractId", "report_reference")
         private val EXECUTION_COMPLETED_KEYS = setOf("total")
         private val ASSEMBLY_STARTED_KEYS    = setOf("report_reference", "contractSetId", "totalContracts")
         private val ASSEMBLY_COMPLETED_KEYS  = setOf(

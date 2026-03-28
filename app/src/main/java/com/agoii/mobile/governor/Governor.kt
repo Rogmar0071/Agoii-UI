@@ -4,6 +4,7 @@ import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.execution.ExecutionAuthorityExecutionResult
 
 /**
  * Governor — deterministic ledger-driven state machine.
@@ -204,11 +205,21 @@ class Governor(
             }
 
             EventTypes.TASK_COMPLETED -> {
-                val position = resolveInt(last.payload["position"]) ?: return null
-                val total    = resolveInt(last.payload["total"])    ?: return null
+                val position   = resolveInt(last.payload["position"]) ?: return null
+                val total      = resolveInt(last.payload["total"])    ?: return null
+                val contractId = events
+                    .lastOrNull { it.type == EventTypes.CONTRACT_STARTED }
+                    ?.payload?.get("contract_id") as? String
+                    ?: "" // CONTRACT_STARTED always precedes TASK_COMPLETED in normal flow
+                val reportRef  = deriveReportReference(events)
                 Event(
                     type    = EventTypes.CONTRACT_COMPLETED,
-                    payload = mapOf("position" to position, "total" to total)
+                    payload = mapOf(
+                        "position"         to position,
+                        "total"            to total,
+                        "contractId"       to contractId,
+                        "report_reference" to reportRef
+                    )
                 )
             }
 
@@ -249,6 +260,100 @@ class Governor(
 
             else -> null
         }
+    }
+
+    // ── CONTRACT_COMPLETED enrichment ─────────────────────────────────────────
+
+    /**
+     * Called by ExecutionAuthority after a task executes successfully.
+     *
+     * Emits CONTRACT_COMPLETED to the ledger with enriched payload (contractId +
+     * reportReference) derived directly from the execution report — bypassing the
+     * intermediate TASK_COMPLETED step when the caller holds a live result.
+     *
+     * Only [ExecutionAuthorityExecutionResult.Executed] triggers an emission;
+     * recovery and retry-exceeded outcomes are handled elsewhere.
+     */
+    fun onTaskExecuted(
+        projectId: String,
+        result: ExecutionAuthorityExecutionResult
+    ) {
+        when (result) {
+            is ExecutionAuthorityExecutionResult.Executed -> {
+                emitContractCompleted(
+                    projectId       = projectId,
+                    contractId      = result.report.contractId,
+                    reportReference = result.report.reportReference
+                )
+            }
+            is ExecutionAuthorityExecutionResult.RecoveryIssued -> return
+            is ExecutionAuthorityExecutionResult.RetryExceeded  -> return
+            // BlockedWithRecovery, Idempotent, NotTriggered — no CONTRACT_COMPLETED emission.
+            else -> return
+        }
+    }
+
+    /**
+     * Writes a CONTRACT_COMPLETED event enriched with [contractId] and [reportReference].
+     *
+     * Position is resolved by cross-referencing CONTRACTS_GENERATED (contracts list)
+     * and, as a fallback, CONTRACT_STARTED events. Blocks with [IllegalStateException]
+     * when required preconditions are not met (Assembly invariant).
+     */
+    private fun emitContractCompleted(
+        projectId:       String,
+        contractId:      String,
+        reportReference: String
+    ) {
+        val events = store.loadEvents(projectId)
+
+        val generated = events.filter { it.type == EventTypes.CONTRACTS_GENERATED }
+        if (generated.isEmpty()) {
+            throw IllegalStateException(
+                "BLOCKED: CONTRACTS_GENERATED missing for '$projectId' (Assembly invariant)"
+            )
+        }
+
+        // Build position index from CONTRACTS_GENERATED contracts list (primary source).
+        val contractList = generated.first().payload["contracts"] as? List<*>
+        val contractMap: Map<String, Int> = contractList
+            ?.filterIsInstance<Map<*, *>>()
+            ?.mapIndexedNotNull { idx, c ->
+                val id = c["contractId"]?.toString() ?: return@mapIndexedNotNull null
+                id to (idx + 1)
+            }
+            ?.toMap()
+            ?: emptyMap()
+
+        val position: Int = contractMap[contractId]
+            ?: events
+                .lastOrNull {
+                    it.type == EventTypes.CONTRACT_STARTED &&
+                    // "contract_id" (snake_case) is used by Governor's nextEvent() emission;
+                    // "contractId"  (camelCase) is used in UCS-1 CONTRACT_STARTED payloads.
+                    (it.payload["contract_id"] == contractId ||
+                     it.payload["contractId"]  == contractId)
+                }
+                ?.payload?.let { resolveInt(it["position"]) }
+            ?: throw IllegalStateException(
+                "BLOCKED: Cannot resolve position for contractId='$contractId' in '$projectId'"
+            )
+
+        val total: Int = deriveTotal(events)
+            ?: throw IllegalStateException(
+                "BLOCKED: Cannot derive total contracts for '$projectId'"
+            )
+
+        store.appendEvent(
+            projectId,
+            EventTypes.CONTRACT_COMPLETED,
+            mapOf(
+                "position"         to position,
+                "total"            to total,
+                "contractId"       to contractId,
+                "report_reference" to reportReference
+            )
+        )
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
