@@ -77,6 +77,33 @@ enum class TargetDomain {
     MULTI_AGENT
 }
 
+// ─── Contract Capability ──────────────────────────────────────────────────────
+
+/**
+ * Canonical capability dimension required by a [UniversalContract].
+ *
+ * Each value corresponds to one dimension of [com.agoii.mobile.contractor.ContractorCapabilityVector]
+ * and is matched directly against the contractor registry during deterministic selection.
+ * NO string parsing; NO level inference — the enum value IS the capability declaration.
+ *
+ * [dimensionName]   maps to the field name on
+ *                   [com.agoii.mobile.contractor.ContractorCapabilityVector] and to the
+ *                   [com.agoii.mobile.contractors.Capability.name] used by
+ *                   [com.agoii.mobile.contractors.DeterministicMatchingEngine].
+ * [requiredLevel]   minimum score (inclusive) a contractor must have in this dimension.
+ *                   Scores are in the range [0, 3] for contractor profiles.
+ */
+enum class ContractCapability(val dimensionName: String, val requiredLevel: Int) {
+    /** Contractor must reliably follow execution constraints. */
+    CONSTRAINT_OBEDIENCE("constraintObedience", 1),
+    /** Contractor must follow structural output specifications. */
+    STRUCTURAL_ACCURACY("structuralAccuracy", 1),
+    /** Contractor must handle complex, multi-step work. */
+    COMPLEXITY_CAPACITY("complexityCapacity", 1),
+    /** Contractor must produce consistent, deterministic output. */
+    RELIABILITY("reliability", 1)
+}
+
 // ─── Output Definition ────────────────────────────────────────────────────────
 
 /**
@@ -106,39 +133,41 @@ data class OutputDefinition(
  *
  * Compliance:
  *  - AERP-1 — [reportReference] is the RRID anchor for every execution report.
- *  - RCF-1  — [requirements] and [constraints] feed the recovery contract on failure.
+ *  - RCF-1  — [requiredCapabilities] and [constraints] feed the recovery contract on failure.
  *  - RRIL-1 — [reportReference] propagated in every downstream ledger event.
  *
- * @property contractId       Unique identifier for this contract instance.
- * @property intentId         Identifier of the originating intent.
- * @property reportReference  Report Reference ID (RRID) — externally supplied; never generated here.
- * @property contractClass    Structural classification of this contract.
- * @property executionType    How this contract must be executed (declared by the contract).
- * @property targetDomain     The execution boundary this contract targets.
- * @property position         1-based position of this contract in its execution sequence.
- * @property total            Total number of contracts in the same sequence.
- * @property requirements     Capability or resource requirements that must be satisfied.
- * @property constraints      Boundary conditions that execution must respect.
- * @property outputDefinition Declarative description of the expected output.
+ * @property contractId            Unique identifier for this contract instance.
+ * @property intentId              Identifier of the originating intent.
+ * @property reportReference       Report Reference ID (RRID) — externally supplied; never generated here.
+ * @property contractClass         Structural classification of this contract.
+ * @property executionType         How this contract must be executed (declared by the contract).
+ * @property targetDomain          The execution boundary this contract targets.
+ * @property position              1-based position of this contract in its execution sequence.
+ * @property total                 Total number of contracts in the same sequence.
+ * @property requiredCapabilities  Explicit, canonical capability list that MUST be satisfied
+ *                                 by the matched contractor.  Non-nullable, non-empty.
+ * @property constraints           Boundary conditions that execution must respect.
+ * @property outputDefinition      Declarative description of the expected output.
  */
 data class UniversalContract(
-    val contractId:       String,
-    val intentId:         String,
-    val reportReference:  String,
-    val contractClass:    ContractClass,
-    val executionType:    ExecutionType,
-    val targetDomain:     TargetDomain,
-    val position:         Int,
-    val total:            Int,
-    val requirements:     List<Any>,
-    val constraints:      List<Any>,
-    val outputDefinition: OutputDefinition
+    val contractId:            String,
+    val intentId:              String,
+    val reportReference:       String,
+    val contractClass:         ContractClass,
+    val executionType:         ExecutionType,
+    val targetDomain:          TargetDomain,
+    val position:              Int,
+    val total:                 Int,
+    val requiredCapabilities:  List<ContractCapability>,
+    val constraints:           List<Any>,
+    val outputDefinition:      OutputDefinition
 ) {
     init {
-        require(contractId.isNotBlank())      { "contractId must not be blank" }
-        require(intentId.isNotBlank())        { "intentId must not be blank" }
-        require(reportReference.isNotBlank()) { "reportReference must not be blank" }
-        require(position >= 1)                { "position must be ≥ 1" }
-        require(total >= position)            { "total must be ≥ position" }
+        require(contractId.isNotBlank())               { "contractId must not be blank" }
+        require(intentId.isNotBlank())                 { "intentId must not be blank" }
+        require(reportReference.isNotBlank())          { "reportReference must not be blank" }
+        require(position >= 1)                         { "position must be ≥ 1" }
+        require(total >= position)                     { "total must be ≥ position" }
+        require(requiredCapabilities.isNotEmpty())     { "requiredCapabilities must not be empty" }
     }
 }

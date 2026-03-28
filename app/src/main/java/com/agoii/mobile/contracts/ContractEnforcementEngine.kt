@@ -14,8 +14,7 @@ package com.agoii.mobile.contracts
 // BLOCKING pre-execution gate.
 //
 // ENFORCEMENT RULES:
-//   E1 — Requirements: every map-typed requirement must have a non-blank 'capability'
-//        and a 'requiredLevel' in 0..5.  Blank string requirements are rejected.
+//   E1 — Required capabilities: requiredCapabilities list must be non-empty.
 //   E2 — Constraints: no constraint string may be blank.
 //   E3 — Output schema coherence: every schema entry must have a non-blank type description.
 //   E4 — Execution authority compatibility: executionType/targetDomain pair must be in the
@@ -73,7 +72,7 @@ class ContractEnforcementEngine {
      */
     fun enforce(contract: UniversalContract): ContractEnforcementResult {
         val violations = mutableListOf<ContractViolation>()
-        enforceRequirements(contract, violations)
+        enforceRequiredCapabilities(contract, violations)
         enforceConstraints(contract, violations)
         enforceOutputSchema(contract, violations)
         enforceExecutionAuthority(contract, violations)
@@ -81,42 +80,15 @@ class ContractEnforcementEngine {
                else ContractEnforcementResult.Violated(violations)
     }
 
-    // ── E1: Requirements enforcement ──────────────────────────────────────────
+    // ── E1: Required capabilities enforcement ─────────────────────────────────
 
-    private fun enforceRequirements(contract: UniversalContract, violations: MutableList<ContractViolation>) {
-        contract.requirements.forEachIndexed { index, req ->
-            when (req) {
-                is Map<*, *> -> {
-                    val capability = req["capability"]?.toString()
-                    if (capability.isNullOrBlank()) {
-                        violations += ContractViolation(
-                            surface     = "requirements[$index]",
-                            rule        = "E1",
-                            description = "requirement[$index] has missing or blank 'capability'"
-                        )
-                    }
-                    val rawLevel = req["requiredLevel"]
-                    val level = when (rawLevel) {
-                        is Number -> rawLevel.toInt()
-                        is String -> rawLevel.toIntOrNull()
-                        else      -> null
-                    }
-                    if (level == null || level !in 0..5) {
-                        violations += ContractViolation(
-                            surface     = "requirements[$index]",
-                            rule        = "E1",
-                            description = "requirement[$index] 'requiredLevel' must be an integer in 0..5, got $rawLevel"
-                        )
-                    }
-                }
-                is String -> if (req.isBlank()) {
-                    violations += ContractViolation(
-                        surface     = "requirements[$index]",
-                        rule        = "E1",
-                        description = "requirement[$index] must not be blank"
-                    )
-                }
-            }
+    private fun enforceRequiredCapabilities(contract: UniversalContract, violations: MutableList<ContractViolation>) {
+        if (contract.requiredCapabilities.isEmpty()) {
+            violations += ContractViolation(
+                surface     = "requiredCapabilities",
+                rule        = "E1",
+                description = "requiredCapabilities must not be empty"
+            )
         }
     }
 

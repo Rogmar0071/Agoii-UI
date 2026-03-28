@@ -13,7 +13,7 @@ package com.agoii.mobile.contracts
 //
 // NORMALIZATION RULES:
 //   N1 — String trimming: all string fields stripped of leading/trailing whitespace.
-//   N2 — Deduplication: requirements and constraints deduplicated (preserving first occurrence).
+//   N2 — Deduplication: requiredCapabilities and constraints deduplicated (preserving first occurrence).
 //   N3 — Schema key ordering: expectedSchema entries sorted by key ascending.
 //   N4 — Identity (idempotency): normalizing an already-normalized contract is a no-op.
 
@@ -27,7 +27,7 @@ package com.agoii.mobile.contracts
  *
  * Normalization rules applied in order:
  *  N1 — Trim: strip leading/trailing whitespace from all string scalars.
- *  N2 — Deduplicate: remove duplicate items from [UniversalContract.requirements] and
+ *  N2 — Deduplicate: remove duplicate items from [UniversalContract.requiredCapabilities] and
  *       [UniversalContract.constraints], preserving the order of first occurrence.
  *  N3 — Sort schema: sort [OutputDefinition.expectedSchema] entries by key ascending,
  *       and trim each key.
@@ -50,8 +50,8 @@ class UniversalContractNormalizer {
         val intentId        = contract.intentId.trim()
         val reportReference = contract.reportReference.trim()
 
-        // N2 — deduplicate requirements and constraints (preserve insertion order)
-        val requirements = deduplicateList(contract.requirements)
+        // N2 — deduplicate requiredCapabilities (preserve insertion order) and constraints
+        val requiredCapabilities = contract.requiredCapabilities.distinct()
         val constraints  = deduplicateList(contract.constraints)
 
         // N3 — sort outputDefinition.expectedSchema keys; trim each key
@@ -66,17 +66,17 @@ class UniversalContractNormalizer {
         )
 
         return UniversalContract(
-            contractId       = contractId,
-            intentId         = intentId,
-            reportReference  = reportReference,
-            contractClass    = contract.contractClass,
-            executionType    = contract.executionType,
-            targetDomain     = contract.targetDomain,
-            position         = contract.position,
-            total            = contract.total,
-            requirements     = requirements,
-            constraints      = constraints,
-            outputDefinition = outputDefinition
+            contractId            = contractId,
+            intentId              = intentId,
+            reportReference       = reportReference,
+            contractClass         = contract.contractClass,
+            executionType         = contract.executionType,
+            targetDomain          = contract.targetDomain,
+            position              = contract.position,
+            total                 = contract.total,
+            requiredCapabilities  = requiredCapabilities,
+            constraints           = constraints,
+            outputDefinition      = outputDefinition
         )
     }
 

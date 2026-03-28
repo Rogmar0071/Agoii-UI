@@ -642,6 +642,26 @@ class ValidationLayer {
                 "CONTRACT_CREATED missing or blank 'targetDomain' in '$projectId'"
             )
         checkPositionAndTotal(projectId, EventTypes.CONTRACT_CREATED, payload)
+        // requiredCapabilities: must be present, non-empty, all values valid ContractCapability enums
+        @Suppress("UNCHECKED_CAST")
+        val rawCapabilities = payload["requiredCapabilities"] as? List<*>
+            ?: throw LedgerValidationException(
+                "CONTRACT_CREATED missing or invalid 'requiredCapabilities' in '$projectId'"
+            )
+        if (rawCapabilities.isEmpty()) {
+            throw LedgerValidationException(
+                "CONTRACT_CREATED 'requiredCapabilities' must not be empty in '$projectId'"
+            )
+        }
+        val validNames = com.agoii.mobile.contracts.ContractCapability.entries.map { it.name }.toSet()
+        rawCapabilities.forEach { raw ->
+            val name = raw?.toString() ?: ""
+            if (name !in validNames) {
+                throw LedgerValidationException(
+                    "CONTRACT_CREATED 'requiredCapabilities' contains unknown value '$name' in '$projectId'"
+                )
+            }
+        }
     }
 
     private fun checkContractValidatedEvent(projectId: String, payload: Map<String, Any>) {
@@ -807,7 +827,7 @@ class ValidationLayer {
         private val CONTRACT_CREATED_KEYS    = setOf(
             "contractId", "intentId", "report_reference",
             "contractClass", "executionType", "targetDomain",
-            "position", "total"
+            "position", "total", "requiredCapabilities"
         )
         private val CONTRACT_VALIDATED_KEYS  = setOf("contractId", "report_reference")
         private val CONTRACT_APPROVED_KEYS   = setOf("contractId", "report_reference", "executionRoute")
