@@ -490,8 +490,15 @@ class ExecutionAuthority(
 
         // ── Step 2b: Deterministic contractor selection + domain-aware execution ─
         //   ContractorSystem owns: matching → profile lookup → executor call → domain artifact.
-        //   Capabilities read ONLY from CONTRACT_CREATED event — no parsing, no inference.
-        val requiredCapabilities = extractCapabilitiesFromLedger(executionTask.contractId, events)
+        //   Capabilities read ONLY from CONTRACT_CREATED event — strict, no fallback (AERP-1).
+        val requiredCapabilities = try {
+            extractCapabilitiesFromLedgerStrict(executionTask.contractId, events)
+        } catch (e: IllegalStateException) {
+            return blockWithRecovery(
+                projectId, ledger, executionTask, "AERP1_CAPABILITY_VIOLATION",
+                e.message ?: "AERP-1: capability extraction failed"
+            )
+        }
         val systemResult = contractorSystem.execute(
             taskId               = executionTask.taskId,
             contractId           = executionTask.contractId,
@@ -675,6 +682,43 @@ class ExecutionAuthority(
     ): IcsExecutionResult = icsModule.process(projectId, ledger)
 
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    /**
+     * Enforce AERP-1 hard block conditions before TASK_EXECUTED ledger write.
+     *
+     * Throws [IllegalStateException] if ANY invariant is violated.
+     * All five conditions must pass; the first failing condition halts execution immediately.
+     *
+     * Hard blocks (AERP-1 enforcement):
+     *  1. [report] must not be null — ContractReport is mandatory before any write.
+     *  2. [validationExecuted] must be true — result validation must have run.
+     *  3. [capabilities] must not be empty — requiredCapabilities must be present.
+     *  4. [registry] must contain at least one verified contractor.
+     *  5. [systemResult] must not be [ContractorSystemResult.Blocked] — a contractor must be matched.
+     */
+    fun enforceHardBlocks(
+        report:             ContractReport?,
+        validationExecuted: Boolean,
+        capabilities:       List<ContractCapability>,
+        registry:           ContractorRegistry,
+        systemResult:       ContractorSystemResult
+    ) {
+        if (report == null) {
+            throw IllegalStateException("BLOCKED: Missing ContractReport (AERP-1)")
+        }
+        if (!validationExecuted) {
+            throw IllegalStateException("BLOCKED: Validation not executed (AERP-1)")
+        }
+        if (capabilities.isEmpty()) {
+            throw IllegalStateException("BLOCKED: Missing requiredCapabilities (AERP-1)")
+        }
+        if (registry.allVerified().isEmpty()) {
+            throw IllegalStateException("BLOCKED: ContractorRegistry empty")
+        }
+        if (systemResult is ContractorSystemResult.Blocked) {
+            throw IllegalStateException("BLOCKED: No contractor matched")
+        }
+    }
 
     /**
      * Extract [ExecutionTask] from a TASK_ASSIGNED event.
@@ -891,6 +935,64 @@ class ExecutionAuthority(
             ?.mapNotNull { name -> runCatching { ContractCapability.valueOf(name) }.getOrNull() }
             ?.takeIf { it.isNotEmpty() }
         return capabilities ?: listOf(ContractCapability.STRUCTURAL_ACCURACY)
+    }
+
+    /**
+     * Extract [ContractCapability] list STRICTLY from the CONTRACT_CREATED ledger event for [contractId].
+     *
+     * Unlike [extractCapabilitiesFromLedger], this method has NO FALLBACK.
+     * Any missing, invalid, or empty capability list causes an [IllegalStateException] (AERP-1 violation).
+     *
+     * Uses [lastOrNull] to pick the latest CONTRACT_CREATED for [contractId].
+     *
+     * @throws IllegalStateException on any AERP-1 violation (missing event, missing field,
+     *         invalid type, null entry, unknown capability name, or empty result).
+     */
+    private fun extractCapabilitiesFromLedgerStrict(
+        contractId: String,
+        events:     List<com.agoii.mobile.core.Event>
+    ): List<ContractCapability> {
+        val createdEvent = events
+            .lastOrNull {
+                it.type == EventTypes.CONTRACT_CREATED &&
+                it.payload["contractId"] == contractId
+            }
+            ?: throw IllegalStateException(
+                "AERP-1 violation: CONTRACT_CREATED not found for contractId=$contractId"
+            )
+
+        val raw = createdEvent.payload["requiredCapabilities"]
+            ?: throw IllegalStateException(
+                "AERP-1 violation: requiredCapabilities missing for contractId=$contractId"
+            )
+
+        if (raw !is List<*>) {
+            throw IllegalStateException(
+                "AERP-1 violation: requiredCapabilities invalid type for contractId=$contractId"
+            )
+        }
+
+        val capabilities = raw.map {
+            val value = it?.toString()
+                ?: throw IllegalStateException(
+                    "AERP-1 violation: null capability for contractId=$contractId"
+                )
+            try {
+                ContractCapability.valueOf(value)
+            } catch (_: Exception) {
+                throw IllegalStateException(
+                    "AERP-1 violation: unknown capability '$value' for contractId=$contractId"
+                )
+            }
+        }
+
+        if (capabilities.isEmpty()) {
+            throw IllegalStateException(
+                "AERP-1 violation: requiredCapabilities empty for contractId=$contractId"
+            )
+        }
+
+        return capabilities
     }
 
     /**
