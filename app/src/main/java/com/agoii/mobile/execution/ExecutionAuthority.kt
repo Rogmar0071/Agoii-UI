@@ -167,7 +167,8 @@ sealed class ExecutionAuthorityExecutionResult {
     data class Executed(
         val taskId:            String,
         val executionStatus:   ExecutionStatus,
-        val validationVerdict: ValidationVerdict
+        val validationVerdict: ValidationVerdict,
+        val report:            ContractReport
     ) : ExecutionAuthorityExecutionResult()
 
     /**
@@ -534,6 +535,18 @@ class ExecutionAuthority(
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
         val contractReport = generateContractReport(executionTask, executionOutput, resolved.trace, contractorId)
 
+        // ── Step 5a: Freeze report — immutable snapshot (AERP-1 / RRIL-1) ───
+        val frozenReport = contractReport.copy()
+
+        // ── Step 5b: RRID integrity check (RRIL-1) ───────────────────────────
+        if (frozenReport.reportReference != executionTask.reportReference) {
+            return blockWithRecovery(
+                projectId, ledger, executionTask,
+                "RRID_VIOLATION",
+                "Report reference mismatch (RRIL-1 breach)"
+            )
+        }
+
         // ── Step 6: Build report-backed Task and validate ────────────────────
         val task = Task(
             taskId               = executionTask.taskId,
@@ -554,10 +567,10 @@ class ExecutionAuthority(
             assignmentStatus     = TaskAssignmentStatus.ASSIGNED
         )
 
-        // Wrap artifact through report for AERP-1 compliance: validation is against report
+        // Wrap artifact through frozen report for AERP-1 compliance: validation is against frozen snapshot
         val reportBackedOutput = ContractorExecutionOutput(
             taskId         = executionOutput.taskId,
-            resultArtifact = contractReport.artifactStructure,
+            resultArtifact = frozenReport.artifactStructure,
             status         = executionOutput.status,
             error          = executionOutput.error
         )
@@ -578,7 +591,7 @@ class ExecutionAuthority(
 
         // ── Step 6: Hard block enforcement (AERP-1) ──────────────────────────
         enforceHardBlocks(
-            report             = contractReport,
+            report             = frozenReport,
             validationExecuted = true,
             capabilities       = requiredCapabilities,
             registry           = registry,
@@ -611,7 +624,8 @@ class ExecutionAuthority(
         return ExecutionAuthorityExecutionResult.Executed(
             taskId            = executionTask.taskId,
             executionStatus   = executionOutput.status,
-            validationVerdict = validationResult.verdict
+            validationVerdict = validationResult.verdict,
+            report            = frozenReport
         )
     }
 
