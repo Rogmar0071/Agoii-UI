@@ -206,9 +206,21 @@ class Governor(
             EventTypes.TASK_COMPLETED -> {
                 val position = resolveInt(last.payload["position"]) ?: return null
                 val total    = resolveInt(last.payload["total"])    ?: return null
+
+                val contractId = events
+                    .lastOrNull { it.type == EventTypes.CONTRACT_STARTED }
+                    ?.payload?.get("contract_id") as? String ?: ""
+
+                val reportReference = deriveReportReference(events)
+
                 Event(
                     type    = EventTypes.CONTRACT_COMPLETED,
-                    payload = mapOf("position" to position, "total" to total)
+                    payload = mapOf(
+                        "position"         to position,
+                        "total"            to total,
+                        "contractId"       to contractId,
+                        "report_reference" to reportReference
+                    )
                 )
             }
 
