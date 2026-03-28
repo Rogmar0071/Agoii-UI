@@ -72,9 +72,21 @@ data class ExecutionTask(
 /**
  * Structured contract report produced after execution (AERP-1).
  * Validation operates only against this report, not against raw execution output.
+ *
+ * Mandatory fields (AERP-1 hard enforcement):
+ *  - reportReference  (RRID)
+ *  - taskId
+ *  - contractId
+ *  - contractorId
+ *  - typeInventory
+ *  - executionSteps
+ *  - artifactStructure
  */
 data class ContractReport(
     val reportReference:   String,
+    val taskId:            String,
+    val contractId:        String,
+    val contractorId:      String,
     val typeInventory:     List<String>,
     val executionSteps:    List<String>,
     val artifactStructure: Map<String, Any>,
@@ -330,7 +342,7 @@ class ExecutionAuthority(
         val executionOutput = executor.execute(executionInput, contractorProfile)
 
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
-        val contractReport = generateContractReport(executionTask, executionOutput, assigned.trace)
+        val contractReport = generateContractReport(executionTask, executionOutput, assigned.trace, contractorId)
 
         // ── Step 6: Build report-backed Task and validate ────────────────────
         val task = Task(
@@ -501,13 +513,17 @@ class ExecutionAuthority(
 
     /** Generate [ContractReport] from execution output (AERP-1 compliance). */
     private fun generateContractReport(
-        task:    ExecutionTask,
-        output:  ContractorExecutionOutput,
-        trace:   com.agoii.mobile.contractors.ResolutionTrace
+        task:         ExecutionTask,
+        output:       ContractorExecutionOutput,
+        trace:        com.agoii.mobile.contractors.ResolutionTrace,
+        contractorId: String
     ): ContractReport {
         val artifact = output.resultArtifact
         return ContractReport(
             reportReference   = task.reportReference,
+            taskId            = task.taskId,
+            contractId        = task.contractId,
+            contractorId      = contractorId,
             typeInventory     = artifact.keys.toList(),
             executionSteps    = listOf("MATCHING_RESOLVED", "EXECUTION_INVOKED", "ARTIFACT_PRODUCED"),
             artifactStructure = artifact,
