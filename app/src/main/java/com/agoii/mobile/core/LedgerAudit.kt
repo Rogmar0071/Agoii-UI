@@ -127,6 +127,18 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.CONTRACT_STARTED) return true
             // Governor: all contracts completed — close the execution phase
             if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.EXECUTION_COMPLETED) return true
+            // UCS-1 ingestion: INTENT_SUBMITTED leads to CONTRACT_CREATED (ingestion path)
+            if (from == EventTypes.INTENT_SUBMITTED && to == EventTypes.CONTRACT_CREATED) return true
+            // UCS-1 ingestion: validation passed
+            if (from == EventTypes.CONTRACT_CREATED && to == EventTypes.CONTRACT_VALIDATED) return true
+            // UCS-1 ingestion: validation failed → immediate recovery
+            if (from == EventTypes.CONTRACT_CREATED && to == EventTypes.RECOVERY_CONTRACT) return true
+            // UCS-1 ingestion: enforcement passed
+            if (from == EventTypes.CONTRACT_VALIDATED && to == EventTypes.CONTRACT_APPROVED) return true
+            // UCS-1 ingestion: enforcement failed → immediate recovery
+            if (from == EventTypes.CONTRACT_VALIDATED && to == EventTypes.RECOVERY_CONTRACT) return true
+            // UCS-1 ingestion: approved contract enters execution spine
+            if (from == EventTypes.CONTRACT_APPROVED && to == EventTypes.CONTRACTS_GENERATED) return true
             return false
         }
     }

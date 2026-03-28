@@ -32,6 +32,13 @@ object EventTypes {
     const val CONTRACT_FAILED         = "contract_failed"
     const val RECOVERY_CONTRACT       = "recovery_contract"
 
+    // ── UCS-1 contract ingestion lifecycle events ─────────────────────────────
+    // Emitted by ExecutionAuthority.ingestUniversalContract() to replace
+    // in-memory lifecycle tracking (ledger determinism — UCS-1 directive).
+    const val CONTRACT_CREATED   = "contract_created"
+    const val CONTRACT_VALIDATED = "contract_validated"
+    const val CONTRACT_APPROVED  = "contract_approved"
+
     val ALL: Set<String> = setOf(
         INTENT_SUBMITTED,
         CONTRACTS_GENERATED,
@@ -55,7 +62,10 @@ object EventTypes {
         TASK_FAILED,
         CONTRACTOR_REASSIGNED,
         CONTRACT_FAILED,
-        RECOVERY_CONTRACT
+        RECOVERY_CONTRACT,
+        CONTRACT_CREATED,
+        CONTRACT_VALIDATED,
+        CONTRACT_APPROVED
     )
 
     /** Default number of contracts generated per intent. */
