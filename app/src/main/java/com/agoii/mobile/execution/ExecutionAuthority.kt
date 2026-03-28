@@ -32,9 +32,9 @@ package com.agoii.mobile.execution
 import com.agoii.mobile.assembly.AssemblyExecutionResult
 import com.agoii.mobile.assembly.AssemblyModule
 import com.agoii.mobile.contractor.ContractorRegistry
-import com.agoii.mobile.contractors.Capability
+import com.agoii.mobile.contractor.ContractorSystem
+import com.agoii.mobile.contractor.ContractorSystemResult
 import com.agoii.mobile.contractors.ContractRequirement
-import com.agoii.mobile.contractors.DeterministicMatchingEngine
 import com.agoii.mobile.contracts.ContractEnforcementEngine
 import com.agoii.mobile.contracts.ContractEnforcementResult
 import com.agoii.mobile.contracts.ContractValidationResult
@@ -287,8 +287,7 @@ class ExecutionAuthority(
     private val contractorRegistry: ContractorRegistry? = null
 ) {
 
-    private val matchingEngine  = DeterministicMatchingEngine()
-    private val executor        = ContractorExecutor()
+    private val contractorSystem = ContractorSystem()
     private val validator       = ResultValidator()
     private val assemblyModule  = AssemblyModule()
     private val icsModule       = IcsModule()
@@ -486,52 +485,47 @@ class ExecutionAuthority(
                 "No ContractorRegistry available — matching is impossible"
             )
 
-        // ── Step 2a: Deterministic matching ─────────────────────────────────
-        val matchingContract = com.agoii.mobile.contractors.ExecutionContract(
+        // ── Step 2a: Domain context lookup (from CONTRACT_CREATED, if present) ─
+        val domainContext = lookupDomainContext(executionTask.contractId, events)
+
+        // ── Step 2b: Deterministic contractor selection + domain-aware execution ─
+        //   ContractorSystem owns: matching → profile lookup → executor call → domain artifact.
+        //   NO heuristics; NO partial state; purely deterministic (G1–G6).
+        val requirements = parseRequirements(executionTask.requirements)
+        val systemResult = contractorSystem.execute(
+            taskId          = executionTask.taskId,
             contractId      = executionTask.contractId,
             reportReference = executionTask.reportReference,
-            position        = executionTask.position.toString()
-        )
-        val requirements = parseRequirements(executionTask.requirements)
-        val adaptedRegistry = adaptRegistry(registry)
-        val assigned = matchingEngine.resolve(matchingContract, requirements, adaptedRegistry)
-
-        if (assigned.assignment.mode == com.agoii.mobile.contractors.AssignmentMode.BLOCKED) {
-            return blockWithRecovery(
-                projectId, ledger, executionTask, "MATCHING_BLOCKED",
-                "DeterministicMatchingEngine: no valid contractor (BLOCKED)"
-            )
-        }
-
-        val contractorId = assigned.assignment.contractorIds.firstOrNull()
-            ?: return blockWithRecovery(
-                projectId, ledger, executionTask, "MATCHING_NO_CONTRACTOR_ID",
-                "Matching resolved but returned empty contractorIds"
-            )
-
-        val contractorProfile = registry.allVerified().find { it.id == contractorId }
-            ?: return blockWithRecovery(
-                projectId, ledger, executionTask, "CONTRACTOR_NOT_IN_REGISTRY",
-                "Matched contractorId='$contractorId' not found in verified registry"
-            )
-
-        // ── Step 3: Construct ContractorExecutionInput deterministically ─────
-        val executionInput = ContractorExecutionInput(
-            taskId               = executionTask.taskId,
-            taskDescription      = executionTask.expectedOutput,
-            taskPayload          = mapOf(
+            position        = executionTask.position,
+            constraints     = executionTask.constraints,
+            expectedOutput  = executionTask.expectedOutput,
+            taskPayload     = mapOf(
                 "contractId" to executionTask.contractId,
                 "position"   to executionTask.position
             ),
-            contractConstraints  = executionTask.constraints,
-            expectedOutputSchema = executionTask.expectedOutput
+            requirements    = requirements,
+            executionType   = domainContext.executionType,
+            targetDomain    = domainContext.targetDomain,
+            registry        = registry
         )
 
-        // ── Step 4: Execute via ContractorExecutor ───────────────────────────
-        val executionOutput = executor.execute(executionInput, contractorProfile)
+        when (systemResult) {
+            is ContractorSystemResult.Blocked -> return blockWithRecovery(
+                projectId, ledger, executionTask, "MATCHING_BLOCKED",
+                systemResult.reason
+            )
+            is ContractorSystemResult.Resolved -> { /* pipeline continues below */ }
+        }
+        val resolved     = systemResult as ContractorSystemResult.Resolved
+        val contractorId = resolved.contractorIds.firstOrNull()
+            ?: return blockWithRecovery(
+                projectId, ledger, executionTask, "MATCHING_NO_CONTRACTOR_ID",
+                "ContractorSystem resolved but returned empty contractorIds"
+            )
+        val executionOutput = resolved.executionOutput
 
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
-        val contractReport = generateContractReport(executionTask, executionOutput, assigned.trace, contractorId)
+        val contractReport = generateContractReport(executionTask, executionOutput, resolved.trace, contractorId)
 
         // ── Step 6: Build report-backed Task and validate ────────────────────
         val task = Task(
@@ -884,30 +878,36 @@ class ExecutionAuthority(
         }
 
     /**
-     * Adapt a [ContractorRegistry] (contractor package) to the
-     * [com.agoii.mobile.contractors.ContractorRegistry] interface required by
-     * [DeterministicMatchingEngine].
+     * Domain context resolved from the CONTRACT_CREATED ledger event for [contractId].
+     *
+     * The CONTRACT_CREATED event is written by [ingestUniversalContract] and carries
+     * `executionType` and `targetDomain` from the originating [UniversalContract].
+     * When no CONTRACT_CREATED event exists (legacy ledger path), canonical defaults are
+     * applied: [ExecutionType.INTERNAL_EXECUTION] + [TargetDomain.CONTRACTOR].
      */
-    private fun adaptRegistry(
-        source: ContractorRegistry
-    ): com.agoii.mobile.contractors.ContractorRegistry =
-        object : com.agoii.mobile.contractors.ContractorRegistry {
-            override fun getAll(): List<com.agoii.mobile.contractors.ContractorProfile> =
-                source.allVerified().map { p ->
-                    com.agoii.mobile.contractors.ContractorProfile(
-                        contractorId      = p.id,
-                        capabilities      = listOf(
-                            Capability("constraintObedience", p.capabilities.constraintObedience),
-                            Capability("structuralAccuracy",  p.capabilities.structuralAccuracy),
-                            Capability("complexityCapacity",  p.capabilities.complexityCapacity),
-                            Capability("reliability",         p.capabilities.reliability)
-                        ),
-                        reliabilityScore  = p.reliabilityRatio,
-                        costScore         = 0.0,
-                        availabilityScore = 1.0
-                    )
-                }
+    private data class DomainContext(
+        val executionType: com.agoii.mobile.contracts.ExecutionType,
+        val targetDomain:  com.agoii.mobile.contracts.TargetDomain
+    )
+
+    private fun lookupDomainContext(
+        contractId: String,
+        events:     List<com.agoii.mobile.core.Event>
+    ): DomainContext {
+        val contractCreated = events.firstOrNull {
+            it.type == EventTypes.CONTRACT_CREATED &&
+            it.payload["contractId"]?.toString() == contractId
         }
+        val executionType = contractCreated
+            ?.payload?.get("executionType")?.toString()
+            ?.let { runCatching { com.agoii.mobile.contracts.ExecutionType.valueOf(it) }.getOrNull() }
+            ?: com.agoii.mobile.contracts.ExecutionType.INTERNAL_EXECUTION
+        val targetDomain = contractCreated
+            ?.payload?.get("targetDomain")?.toString()
+            ?.let { runCatching { com.agoii.mobile.contracts.TargetDomain.valueOf(it) }.getOrNull() }
+            ?: com.agoii.mobile.contracts.TargetDomain.CONTRACTOR
+        return DomainContext(executionType, targetDomain)
+    }
 
     private fun resolveInt(value: Any?): Int? = when (value) {
         is Int    -> value
