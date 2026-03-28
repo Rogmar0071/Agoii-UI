@@ -332,3 +332,485 @@ IF UNCERTAIN:
 → RETURN BLOCKED  
 
 ---
+
+Alright — now we map the system properly so you can see the organism, not just the parts.
+
+I’ll walk you through this in layers:
+
+1. Full system flow (authority + data movement)
+
+
+2. Execution core (where you just worked)
+
+
+3. Convergence loop (your current phase)
+
+
+4. Module map (who owns what, no overlap)
+
+
+5. What remains to reach pilot-ready
+
+
+
+
+---
+
+1. FULL AGOII SYSTEM FLOW (MASTER MAP)
+
+This is the non-negotiable spine:
+
+[USER / INPUT]
+        ↓
+INTENT_SUBMITTED  → (WRITE #1 — EventLedger)
+        ↓
+ExecutionEntryPoint
+        ↓
+ExecutionAuthority.evaluate()   ← AERP-1 (PRE-VALIDATION)
+        ↓
+CONTRACTS_GENERATED → (WRITE #2 — EventLedger)
+        ↓
+Governor (pure state machine)
+        ↓
+CONTRACT_STARTED
+        ↓
+TASK_ASSIGNED
+        ↓
+TASK_STARTED
+        ↓
+ExecutionAuthority.executeFromLedger()
+        ↓
+TASK_EXECUTED  → (WRITE #3 — EventLedger)
+        ↓
+ ┌───────────────┬────────────────┐
+ ↓                               ↓
+SUCCESS                         FAILURE
+ ↓                               ↓
+TASK_COMPLETED                  RECOVERY_CONTRACT → (WRITE #4)
+ ↓                               ↓
+NEXT CONTRACT                  DELTA RE-EXECUTION
+        ↓
+CONTRACT_COMPLETED
+        ↓
+EXECUTION_COMPLETED
+
+
+---
+
+What this diagram really means
+
+There are only two active brains in the system:
+
+Governor → decides “what happens next”
+
+ExecutionAuthority → decides “how it happens”
+
+
+Everything else is:
+
+→ data
+→ validation
+→ enforcement
+
+
+---
+
+2. EXECUTION CORE (WHERE YOU JUST BUILT)
+
+This is the true execution boundary.
+
+(EventLedger)
+     ↓
+[TASK_ASSIGNED detected]
+     ↓
+ExecutionAuthority
+     ↓
+1. Extract ExecutionTask (ledger-only)
+2. Deterministic Matching (registry)
+3. Contractor Execution
+4. ContractReport generation
+5. Validation (AERP-1)
+     ↓
+Emit:
+TASK_EXECUTED (SUCCESS / FAILURE)
+
+
+---
+
+Key structural truths (now correct)
+
+Matching happens here only
+
+Execution happens here only
+
+Validation happens here only
+
+Recovery originates here only
+
+
+👉 Nothing else is allowed to do these.
+
+
+---
+
+3. CONVERGENCE LOOP (YOUR CURRENT PHASE)
+
+This is the missing piece you are locking now.
+
+Current (before convergence enforcement)
+
+TASK_STARTED
+   ↓
+Execution
+   ↓
+Validation
+   ↓
+FAIL → retry (weak, non-deterministic)
+
+
+---
+
+Target (after your current contract)
+
+TASK_STARTED
+   ↓
+Execution
+   ↓
+ContractReport
+   ↓
+Validation (against report)
+   ↓
+FAIL
+   ↓
+RecoveryContract
+   ↓
+AnchorState (LOCKED)
+   ↓
+ViolationSurface (ISOLATED)
+   ↓
+Delta Execution ONLY
+   ↓
+Re-validation
+   ↓
+...loop...
+
+
+---
+
+This is the transformation happening
+
+You are turning:
+
+→ retries
+into
+→ mathematical convergence
+
+
+---
+
+4. MODULE ARCHITECTURE (NO OVERLAP)
+
+This is critical — every module must be a closed system.
+
+
+---
+
+4.1 Ingress (being removed correctly)
+
+[Input]
+   ↓
+INTENT_SUBMITTED (ledger write)
+
+✔ No logic
+✔ No transformation
+✔ Contract-only
+
+
+---
+
+4.2 Intent Module (ICS)
+
+INTENT_SUBMITTED
+   ↓
+Intent Construction
+   ↓
+Intent Master
+
+Owns:
+
+structuring intent
+
+completeness
+
+validation of input
+
+
+Does NOT:
+
+execute
+
+match
+
+write further state
+
+
+
+---
+
+4.3 ExecutionEntryPoint
+
+Intent Master
+   ↓
+ExecutionAuthority.evaluate()
+   ↓
+CONTRACTS_GENERATED (ledger)
+
+Owns:
+
+RRID generation
+
+contract derivation trigger
+
+
+Does NOT:
+
+execute
+
+validate outputs
+
+recover
+
+
+
+---
+
+4.4 ExecutionAuthority (CORE ENGINE)
+
+TASK_ASSIGNED detected
+   ↓
+ExecutionAuthority
+   ↓
+Matching
+Execution
+Report
+Validation
+Recovery
+   ↓
+TASK_EXECUTED / RECOVERY_CONTRACT
+
+Owns:
+
+everything inside execution boundary
+
+
+Does NOT:
+
+decide flow
+
+advance state
+
+orchestrate
+
+
+
+---
+
+4.5 Governor (PURE STATE MACHINE)
+
+Reads ledger
+   ↓
+Derives next event
+   ↓
+Writes next event
+
+Owns:
+
+sequencing only
+
+
+Does NOT:
+
+execute
+
+validate
+
+interpret
+
+
+
+---
+
+4.6 EventLedger (SINGLE SOURCE OF TRUTH)
+
+appendEvent()
+
+Owns:
+
+all state
+
+all history
+
+all traceability
+
+
+No exceptions.
+
+
+---
+
+4.7 ValidationLayer
+
+Event → Validate → Accept/Reject
+
+Owns:
+
+schema enforcement
+
+transition enforcement
+
+
+Does NOT:
+
+compute logic
+
+infer state
+
+
+
+---
+
+4.8 Contractor System
+
+Registry
+MatchingEngine
+Executor
+
+Owns:
+
+capability resolution
+
+execution mechanics
+
+
+Does NOT:
+
+decide when to run
+
+
+
+---
+
+5. HOW EVERYTHING WIRES TOGETHER
+
+This is the clean wiring view:
+
+USER
+ ↓
+EventLedger  ←───────────────┐
+ ↓                           │
+ExecutionEntryPoint          │
+ ↓                           │
+ExecutionAuthority.evaluate  │
+ ↓                           │
+EventLedger (contracts)      │
+ ↓                           │
+Governor ────────────────────┘
+ ↓
+TASK_ASSIGNED
+ ↓
+ExecutionAuthority.executeFromLedger
+ ↓
+Contractor System
+ ↓
+ExecutionAuthority
+ ↓
+EventLedger (results / recovery)
+ ↓
+Governor
+ ↓
+...
+
+
+---
+
+6. WHERE YOU ARE IN BUILD SEQUENCE
+
+You have completed:
+
+✔ Intent → Contract
+✔ Ledger architecture
+✔ Governor purity
+✔ Execution boundary
+✔ Validation (pre + post)
+✔ Recovery emission
+
+You are now completing:
+
+➡ Convergence Enforcement (CRITICAL LOCK)
+
+
+---
+
+7. WHAT REMAINS (CLEAR PATH)
+
+Phase Next — Convergence Lock (you are here)
+
+anchor state enforcement
+
+delta execution only
+
+mutation boundaries
+
+retry limits
+
+
+
+---
+
+Phase After — Assembly Layer
+
+Multiple CONTRACT_COMPLETED
+        ↓
+Assembly
+        ↓
+Final Output Integrity
+
+
+---
+
+Phase After — ICS Output Layer
+
+System Output
+   ↓
+Human-readable / API / Actionable
+
+
+---
+
+Phase After — Pilot Readiness
+
+real-world execution
+
+failure observation
+
+trust validation
+
+
+
+---
+
+8. FINAL SYSTEM FORM (WHEN DONE)
+
+When you finish current phase:
+
+The system becomes:
+
+Self-executing
+Self-validating
+Self-correcting
+Ledger-auditable
+Deterministically bounded
+
+
+---
+
