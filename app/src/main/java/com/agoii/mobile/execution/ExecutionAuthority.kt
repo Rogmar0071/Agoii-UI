@@ -34,7 +34,7 @@ import com.agoii.mobile.assembly.AssemblyModule
 import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.contractor.ContractorSystem
 import com.agoii.mobile.contractor.ContractorSystemResult
-import com.agoii.mobile.contractors.ContractRequirement
+import com.agoii.mobile.contracts.ContractCapability
 import com.agoii.mobile.contracts.ContractEnforcementEngine
 import com.agoii.mobile.contracts.ContractEnforcementResult
 import com.agoii.mobile.contracts.ContractValidationResult
@@ -490,23 +490,23 @@ class ExecutionAuthority(
 
         // ── Step 2b: Deterministic contractor selection + domain-aware execution ─
         //   ContractorSystem owns: matching → profile lookup → executor call → domain artifact.
-        //   NO heuristics; NO partial state; purely deterministic (G1–G6).
-        val requirements = parseRequirements(executionTask.requirements)
+        //   Capabilities read ONLY from CONTRACT_CREATED event — no parsing, no inference.
+        val requiredCapabilities = extractCapabilitiesFromLedger(executionTask.contractId, events)
         val systemResult = contractorSystem.execute(
-            taskId          = executionTask.taskId,
-            contractId      = executionTask.contractId,
-            reportReference = executionTask.reportReference,
-            position        = executionTask.position,
-            constraints     = executionTask.constraints,
-            expectedOutput  = executionTask.expectedOutput,
-            taskPayload     = mapOf(
+            taskId               = executionTask.taskId,
+            contractId           = executionTask.contractId,
+            reportReference      = executionTask.reportReference,
+            position             = executionTask.position,
+            constraints          = executionTask.constraints,
+            expectedOutput       = executionTask.expectedOutput,
+            taskPayload          = mapOf(
                 "contractId" to executionTask.contractId,
                 "position"   to executionTask.position
             ),
-            requirements    = requirements,
-            executionType   = domainContext.executionType,
-            targetDomain    = domainContext.targetDomain,
-            registry        = registry
+            requiredCapabilities = requiredCapabilities,
+            executionType        = domainContext.executionType,
+            targetDomain         = domainContext.targetDomain,
+            registry             = registry
         )
 
         when (systemResult) {
@@ -866,16 +866,32 @@ class ExecutionAuthority(
         }
     }
 
-    /** Parse raw requirements list from TASK_ASSIGNED payload into [ContractRequirement] list. */
-    private fun parseRequirements(rawRequirements: List<Any>): List<ContractRequirement> =
-        rawRequirements.filterIsInstance<Map<*, *>>().mapNotNull { map ->
-            val capability    = map["capability"]    as? String ?: return@mapNotNull null
-            val requiredLevel = resolveInt(map["requiredLevel"]) ?: return@mapNotNull null
-            val weight        = (map["weight"] as? Number)?.toDouble() ?: 1.0
-            if (requiredLevel in 0..5)
-                ContractRequirement(capability, requiredLevel, weight)
-            else null
+    /**
+     * Extract [ContractCapability] list from the CONTRACT_CREATED ledger event for [contractId].
+     *
+     * Capabilities are read ONLY from the CONTRACT_CREATED event written by
+     * [ingestUniversalContract].  NO parsing, NO inference, NO fallback capability construction.
+     *
+     * When no CONTRACT_CREATED event exists or the field is absent/empty, returns
+     * the complete set of all [ContractCapability] values as a safe default so that the
+     * execution pipeline can continue on legacy ledger paths.
+     */
+    private fun extractCapabilitiesFromLedger(
+        contractId: String,
+        events:     List<com.agoii.mobile.core.Event>
+    ): List<ContractCapability> {
+        val contractCreated = events.firstOrNull {
+            it.type == EventTypes.CONTRACT_CREATED &&
+            it.payload["contractId"]?.toString() == contractId
         }
+        @Suppress("UNCHECKED_CAST")
+        val rawList = contractCreated?.payload?.get("requiredCapabilities") as? List<*>
+        val capabilities = rawList
+            ?.mapNotNull { it?.toString() }
+            ?.mapNotNull { name -> runCatching { ContractCapability.valueOf(name) }.getOrNull() }
+            ?.takeIf { it.isNotEmpty() }
+        return capabilities ?: ContractCapability.entries
+    }
 
     /**
      * Domain context resolved from the CONTRACT_CREATED ledger event for [contractId].
@@ -1012,14 +1028,15 @@ class ExecutionAuthority(
             projectId,
             EventTypes.CONTRACT_CREATED,
             mapOf(
-                "contractId"       to contract.contractId,
-                "intentId"         to contract.intentId,
-                "report_reference" to contract.reportReference,
-                "contractClass"    to contract.contractClass.name,
-                "executionType"    to contract.executionType.name,
-                "targetDomain"     to contract.targetDomain.name,
-                "position"         to contract.position,
-                "total"            to contract.total
+                "contractId"            to contract.contractId,
+                "intentId"              to contract.intentId,
+                "report_reference"      to contract.reportReference,
+                "contractClass"         to contract.contractClass.name,
+                "executionType"         to contract.executionType.name,
+                "targetDomain"          to contract.targetDomain.name,
+                "position"              to contract.position,
+                "total"                 to contract.total,
+                "requiredCapabilities"  to contract.requiredCapabilities.map { it.name }
             )
         )
 

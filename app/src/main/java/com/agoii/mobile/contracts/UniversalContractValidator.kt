@@ -20,7 +20,7 @@ package com.agoii.mobile.contracts
 //
 // SEMANTIC VALIDATION:
 //   executionType/targetDomain compatibility matrix enforced.
-//   requirements list does not contain duplicate capability references.
+//   requiredCapabilities list does not contain duplicate entries.
 //   outputDefinition schema values are non-null.
 
 /**
@@ -111,13 +111,11 @@ class UniversalContractValidator {
                           "with targetDomain=${contract.targetDomain}; allowed: $allowed"
         }
 
-        // Duplicate requirement detection (by capability name in map-typed requirements)
-        val capabilityNames = contract.requirements
-            .filterIsInstance<Map<*, *>>()
-            .mapNotNull { it["capability"]?.toString() }
+        // Duplicate capability detection (by enum identity)
+        val capabilityNames = contract.requiredCapabilities.map { it.name }
         val duplicates = capabilityNames.groupBy { it }.filter { it.value.size > 1 }.keys
         if (duplicates.isNotEmpty()) {
-            violations += "SEMANTIC: requirements contain duplicate capability entries: $duplicates"
+            violations += "SEMANTIC: requiredCapabilities contain duplicate entries: $duplicates"
         }
 
         // Output schema value coherence: null values are prohibited

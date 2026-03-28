@@ -27,11 +27,10 @@ package com.agoii.mobile.contractor
 //  A3 — Artifacts are deterministic: equal inputs produce equal artifact key-sets.
 //  A4 — Domain-specific fields are non-null and non-empty when execution succeeds.
 
-import com.agoii.mobile.contractors.Capability
-import com.agoii.mobile.contractors.ContractRequirement
 import com.agoii.mobile.contractors.DeterministicMatchingEngine
 import com.agoii.mobile.contractors.ExecutionContract as MatchingContract
 import com.agoii.mobile.contractors.ResolutionTrace
+import com.agoii.mobile.contracts.ContractCapability
 import com.agoii.mobile.contracts.ExecutionType
 import com.agoii.mobile.contracts.TargetDomain
 import com.agoii.mobile.execution.ContractorExecutionInput
@@ -123,43 +122,42 @@ class ContractorSystem(
      *  7. Build domain-specific AERP-1 artifact.
      *  8. Return [ContractorSystemResult.Resolved].
      *
-     * @param taskId          Task identifier — propagated into artifact (AERP-1, A1).
-     * @param contractId      Contract identifier — propagated into artifact.
-     * @param reportReference RRID — propagated for RRIL-1 compliance.
-     * @param position        1-based contract position in the execution sequence.
-     * @param constraints     Boundary constraints — embedded in artifact (AERP-1, A2).
-     * @param expectedOutput  Output objective used as task description.
-     * @param taskPayload     Structured task payload passed to the contractor.
-     * @param requirements    Capability requirements for deterministic matching (G1).
-     * @param executionType   Declared execution domain (G6).
-     * @param targetDomain    Declared execution boundary — embedded in artifact.
-     * @param registry        Verified [ContractorRegistry] (contractor package).
+     * @param taskId               Task identifier — propagated into artifact (AERP-1, A1).
+     * @param contractId           Contract identifier — propagated into artifact.
+     * @param reportReference      RRID — propagated for RRIL-1 compliance.
+     * @param position             1-based contract position in the execution sequence.
+     * @param constraints          Boundary constraints — embedded in artifact (AERP-1, A2).
+     * @param expectedOutput       Output objective used as task description.
+     * @param taskPayload          Structured task payload passed to the contractor.
+     * @param requiredCapabilities Explicit, canonical capability list for deterministic matching (G1).
+     * @param executionType        Declared execution domain (G6).
+     * @param targetDomain         Declared execution boundary — embedded in artifact.
+     * @param registry             Verified [ContractorRegistry] (contractor package).
      * @return [ContractorSystemResult.Resolved] on success; [ContractorSystemResult.Blocked] otherwise.
      */
     fun execute(
-        taskId:          String,
-        contractId:      String,
-        reportReference: String,
-        position:        Int,
-        constraints:     List<String>,
-        expectedOutput:  String,
-        taskPayload:     Map<String, Any>,
-        requirements:    List<ContractRequirement>,
-        executionType:   ExecutionType,
-        targetDomain:    TargetDomain,
-        registry:        ContractorRegistry
+        taskId:                String,
+        contractId:            String,
+        reportReference:       String,
+        position:              Int,
+        constraints:           List<String>,
+        expectedOutput:        String,
+        taskPayload:           Map<String, Any>,
+        requiredCapabilities:  List<ContractCapability>,
+        executionType:         ExecutionType,
+        targetDomain:          TargetDomain,
+        registry:              ContractorRegistry
     ): ContractorSystemResult {
 
-        // ── Step 1: Adapt registry ────────────────────────────────────────────
-        val adaptedRegistry = adaptRegistry(registry)
-
-        // ── Step 2: Deterministic matching (G1) ──────────────────────────────
+        // ── Step 1: Deterministic matching via new overload (G1) ─────────────
+        //   DeterministicMatchingEngine.resolve() receives the capability list directly
+        //   (no transformation in the caller).
         val matchContract = MatchingContract(
             contractId      = contractId,
             reportReference = reportReference,
             position        = position.toString()
         )
-        val assigned = matchingEngine.resolve(matchContract, requirements, adaptedRegistry)
+        val assigned = matchingEngine.resolve(matchContract, requiredCapabilities, registry)
 
         if (assigned.assignment.mode == com.agoii.mobile.contractors.AssignmentMode.BLOCKED) {
             return ContractorSystemResult.Blocked(
@@ -395,38 +393,4 @@ class ContractorSystem(
             "swarmPayload"        to rawOutput.resultArtifact
         )
     }
-
-    // ─── Registry adapter ─────────────────────────────────────────────────────
-
-    /**
-     * Adapt a [ContractorRegistry] (contractor package) to the
-     * [com.agoii.mobile.contractors.ContractorRegistry] interface required by
-     * [DeterministicMatchingEngine].
-     *
-     * Capability dimensions bridged (all four that both models share):
-     *  constraintObedience, structuralAccuracy, complexityCapacity, reliability.
-     *
-     * Fixed scores applied deterministically:
-     *  costScore = 0.0, availabilityScore = 1.0.
-     */
-    private fun adaptRegistry(
-        source: ContractorRegistry
-    ): com.agoii.mobile.contractors.ContractorRegistry =
-        object : com.agoii.mobile.contractors.ContractorRegistry {
-            override fun getAll(): List<com.agoii.mobile.contractors.ContractorProfile> =
-                source.allVerified().map { p ->
-                    com.agoii.mobile.contractors.ContractorProfile(
-                        contractorId      = p.id,
-                        capabilities      = listOf(
-                            Capability("constraintObedience", p.capabilities.constraintObedience),
-                            Capability("structuralAccuracy",  p.capabilities.structuralAccuracy),
-                            Capability("complexityCapacity",  p.capabilities.complexityCapacity),
-                            Capability("reliability",         p.capabilities.reliability)
-                        ),
-                        reliabilityScore  = p.reliabilityRatio,
-                        costScore         = 0.0,
-                        availabilityScore = 1.0
-                    )
-                }
-        }
 }

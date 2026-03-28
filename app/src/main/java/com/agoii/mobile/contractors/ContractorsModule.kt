@@ -88,6 +88,51 @@ sealed class ResolutionResult {
 }
 
 class DeterministicMatchingEngine {
+
+    /**
+     * Overload that accepts a direct [List] of [com.agoii.mobile.contracts.ContractCapability]
+     * enum values and a [com.agoii.mobile.contractor.ContractorRegistry].
+     *
+     * This is the canonical entry point for all UCS-1 execution paths (AERP-1, determinism
+     * surface #5).  NO transformation is performed by the caller; the capability list flows
+     * directly from the CONTRACT_CREATED ledger event.
+     *
+     * Internally:
+     *  1. Converts [requiredCapabilities] → [List<ContractRequirement>] using each enum's
+     *     [com.agoii.mobile.contracts.ContractCapability.dimensionName] and
+     *     [com.agoii.mobile.contracts.ContractCapability.requiredLevel].
+     *  2. Adapts [com.agoii.mobile.contractor.ContractorRegistry] →
+     *     [ContractorRegistry] for the selection algorithm.
+     *  3. Delegates to the existing [resolve] algorithm; behavior is unchanged.
+     */
+    fun resolve(
+        contract:             ExecutionContract,
+        requiredCapabilities: List<com.agoii.mobile.contracts.ContractCapability>,
+        registry:             com.agoii.mobile.contractor.ContractorRegistry
+    ): TaskAssignedContract {
+        val requirements = requiredCapabilities.map { cap ->
+            ContractRequirement(cap.dimensionName, cap.requiredLevel, 1.0)
+        }
+        val adaptedRegistry = object : ContractorRegistry {
+            override fun getAll(): List<ContractorProfile> =
+                registry.allVerified().map { p ->
+                    ContractorProfile(
+                        contractorId      = p.id,
+                        capabilities      = listOf(
+                            Capability(com.agoii.mobile.contracts.ContractCapability.CONSTRAINT_OBEDIENCE.dimensionName, p.capabilities.constraintObedience),
+                            Capability(com.agoii.mobile.contracts.ContractCapability.STRUCTURAL_ACCURACY.dimensionName,  p.capabilities.structuralAccuracy),
+                            Capability(com.agoii.mobile.contracts.ContractCapability.COMPLEXITY_CAPACITY.dimensionName,  p.capabilities.complexityCapacity),
+                            Capability(com.agoii.mobile.contracts.ContractCapability.RELIABILITY.dimensionName,          p.capabilities.reliability)
+                        ),
+                        reliabilityScore  = p.reliabilityRatio,
+                        costScore         = 0.0,
+                        availabilityScore = 1.0
+                    )
+                }
+        }
+        return resolve(contract, requirements, adaptedRegistry)
+    }
+
     fun resolve(
         contract: ExecutionContract,
         requirements: List<ContractRequirement>,

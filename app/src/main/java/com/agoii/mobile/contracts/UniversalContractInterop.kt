@@ -73,12 +73,12 @@ object UniversalContractInterop {
      * compatibility with ledger-driven pipelines that pre-date UCS-1.
      *
      * Canonical defaults are applied for all fields not carried by [ExecutionContract]:
-     *  - contractClass  → [ContractClass.OPERATIONAL]
-     *  - executionType  → [ExecutionType.INTERNAL_EXECUTION]
-     *  - targetDomain   → [TargetDomain.CONTRACTOR]
-     *  - requirements   → empty list
-     *  - constraints    → empty list
-     *  - outputDefinition → inferred from [ExecutionContract.name]
+     *  - contractClass       → [ContractClass.OPERATIONAL]
+     *  - executionType       → [ExecutionType.INTERNAL_EXECUTION]
+     *  - targetDomain        → [TargetDomain.CONTRACTOR]
+     *  - requiredCapabilities → [ContractCapability.STRUCTURAL_ACCURACY] (minimum capability)
+     *  - constraints         → empty list
+     *  - outputDefinition    → inferred from [ExecutionContract.name]
      *
      * @param contract      The legacy [ExecutionContract] to upgrade.
      * @param intentId      The intentId to assign (must be supplied by the caller).
@@ -96,17 +96,17 @@ object UniversalContractInterop {
         executionType: ExecutionType = ExecutionType.INTERNAL_EXECUTION,
         targetDomain:  TargetDomain  = TargetDomain.CONTRACTOR
     ): UniversalContract = UniversalContract(
-        contractId       = contract.contractId,
-        intentId         = intentId,
-        reportReference  = contract.reportReference,
-        contractClass    = contractClass,
-        executionType    = executionType,
-        targetDomain     = targetDomain,
-        position         = contract.position,
-        total            = total,
-        requirements     = emptyList(),
-        constraints      = emptyList(),
-        outputDefinition = OutputDefinition(
+        contractId            = contract.contractId,
+        intentId              = intentId,
+        reportReference       = contract.reportReference,
+        contractClass         = contractClass,
+        executionType         = executionType,
+        targetDomain          = targetDomain,
+        position              = contract.position,
+        total                 = total,
+        requiredCapabilities  = listOf(ContractCapability.STRUCTURAL_ACCURACY),
+        constraints           = emptyList(),
+        outputDefinition      = OutputDefinition(
             expectedType   = contract.name.ifBlank { contract.contractId },
             expectedSchema = mapOf("output" to "Any")
         )
