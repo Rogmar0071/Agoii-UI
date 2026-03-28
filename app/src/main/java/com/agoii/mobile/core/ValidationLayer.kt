@@ -630,7 +630,8 @@ class ValidationLayer {
             "report_reference", "position", "total"
         )
         private val RECOVERY_CONTRACT_KEYS  = setOf(
-            "contractId", "contractType", "executionPosition",
+            "contractId", "taskId", "contractType", "executionPosition",
+            "report_reference",
             "failureClass", "violationSurface", "correctionDirective",
             "successCondition", "artifactReference"
         )

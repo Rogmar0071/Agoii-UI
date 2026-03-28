@@ -72,9 +72,21 @@ data class ExecutionTask(
 /**
  * Structured contract report produced after execution (AERP-1).
  * Validation operates only against this report, not against raw execution output.
+ *
+ * Mandatory fields (AERP-1 hard enforcement):
+ *  - reportReference  (RRID)
+ *  - taskId
+ *  - contractId
+ *  - contractorId
+ *  - typeInventory
+ *  - executionSteps
+ *  - artifactStructure
  */
 data class ContractReport(
     val reportReference:   String,
+    val taskId:            String,
+    val contractId:        String,
+    val contractorId:      String,
     val typeInventory:     List<String>,
     val executionSteps:    List<String>,
     val artifactStructure: Map<String, Any>,
@@ -83,15 +95,39 @@ data class ContractReport(
 )
 
 /**
+ * Immutable anchor derived from [ContractReport] (AERP-1).
+ *
+ * Extracted once per execution attempt and embedded into every [ExecutionRecoveryContract].
+ * MUST NOT be modified after extraction.
+ *
+ * @property reportReference    RRID that produced this execution.
+ * @property validatedTypes     Type inventory at the moment of anchoring (= ContractReport.typeInventory).
+ * @property validatedStructure Key-set of the artifact structure at the moment of anchoring.
+ * @property validatedPaths     Execution steps recorded in the report.
+ */
+data class AnchorState(
+    val reportReference:    String,
+    val validatedTypes:     List<String>,
+    val validatedStructure: Set<String>,
+    val validatedPaths:     List<String>
+)
+
+/**
  * Recovery contract issued on execution or validation failure (RCF-1).
- * One contract = one violation. Anchor state is immutable.
+ * One contract = ONE violation surface. Anchor state is immutable.
+ *
+ * FAILURE_REFERENCE: contractId + taskId + executionPosition
+ * ANCHOR_STATE:      Immutable snapshot derived from [ContractReport] (AERP-1).
+ * VIOLATION_SURFACE: Single, atomic failing unit — no grouping permitted.
  */
 data class ExecutionRecoveryContract(
     val contractId:          String,
+    val taskId:              String,
     val contractType:        String,
     val executionPosition:   Int,
+    val reportReference:     String,
     val failureClass:        String,
-    val anchorState:         Map<String, Any>,
+    val anchorState:         AnchorState,
     val violationSurface:    String,
     val correctionDirective: String,
     val constraintLock:      String,
@@ -109,17 +145,23 @@ sealed class ExecutionAuthorityExecutionResult {
         val validationVerdict: ValidationVerdict
     ) : ExecutionAuthorityExecutionResult()
 
-    /** Execution was blocked; TASK_EXECUTED(FAILURE) written and RCF-1 issued. */
+    /**
+     * Execution was blocked; TASK_EXECUTED(FAILURE) written and one [ExecutionRecoveryContract]
+     * per violation surface issued (RCF-1, VIOLATION_SURFACE ISOLATION enforced).
+     */
     data class BlockedWithRecovery(
-        val reason:           String,
-        val recoveryContract: ExecutionRecoveryContract
+        val reason:            String,
+        val recoveryContracts: List<ExecutionRecoveryContract>
     ) : ExecutionAuthorityExecutionResult()
 
-    /** TASK_EXECUTED already exists for this taskId — idempotent guard triggered. */
+    /** TASK_EXECUTED already exists with SUCCESS for this taskId — idempotent guard triggered. */
     object Idempotent : ExecutionAuthorityExecutionResult()
 
     /** Last ledger event is not TASK_STARTED — trigger condition not met. */
     object NotTriggered : ExecutionAuthorityExecutionResult()
+
+    /** Retry limit (MAX_RETRY) exceeded — CONTRACT_FAILED emitted, convergence halted. */
+    data class RetryExceeded(val taskId: String) : ExecutionAuthorityExecutionResult()
 }
 
 // ---------- EXECUTION AUTHORITY ----------
@@ -140,6 +182,15 @@ class ExecutionAuthority(
     private val matchingEngine = DeterministicMatchingEngine()
     private val executor       = ContractorExecutor()
     private val validator      = ResultValidator()
+
+    companion object {
+        /**
+         * Maximum execution attempts per (taskId, reportReference) pair.
+         * When this limit is reached, CONTRACT_FAILED is emitted and convergence halts.
+         * NO infinite loops are permitted (CONVERGENCE LOOP CONTROL — RCF-1).
+         */
+        const val MAX_RETRY = 3
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // PHASE 1 — Contract validation gate (pre-ledger write)
@@ -256,12 +307,46 @@ class ExecutionAuthority(
         val taskId = lastEvent.payload["taskId"] as? String
             ?: return ExecutionAuthorityExecutionResult.NotTriggered
 
-        // ── Idempotency: no TASK_EXECUTED for this taskId ───────────────────
-        val alreadyExecuted = events.any {
-            it.type == EventTypes.TASK_EXECUTED && it.payload["taskId"] == taskId
+        // ── Idempotency / retry gate ────────────────────────────────────────
+        // A successful TASK_EXECUTED for this taskId means the work is done; block.
+        // A failed TASK_EXECUTED counts as a prior attempt; allow retry up to MAX_RETRY.
+        val priorSuccessful = events.any {
+            it.type == EventTypes.TASK_EXECUTED &&
+            it.payload["taskId"] == taskId &&
+            it.payload["executionStatus"] == ExecutionStatus.SUCCESS.name
         }
-        if (alreadyExecuted) {
+        if (priorSuccessful) {
             return ExecutionAuthorityExecutionResult.Idempotent
+        }
+        val priorFailedAttempts = events.count {
+            it.type == EventTypes.TASK_EXECUTED &&
+            it.payload["taskId"] == taskId &&
+            it.payload["executionStatus"] != ExecutionStatus.SUCCESS.name
+        }
+        if (priorFailedAttempts >= MAX_RETRY) {
+            // CONVERGENCE LOOP CONTROL: retry ceiling reached — emit CONTRACT_FAILED and halt.
+            val priorTaskAssigned = events.lastOrNull {
+                it.type == EventTypes.TASK_ASSIGNED && it.payload["taskId"] == taskId
+            }
+            val contractId      = priorTaskAssigned?.payload?.get("contractId")?.toString() ?: "UNKNOWN"
+            val reportReference = priorTaskAssigned?.payload?.get("report_reference")?.toString() ?: "UNKNOWN"
+            try {
+                ledger.appendEvent(
+                    projectId,
+                    EventTypes.CONTRACT_FAILED,
+                    mapOf(
+                        "taskId"           to taskId,
+                        "contractId"       to contractId,
+                        "report_reference" to reportReference,
+                        "reason"           to "MAX_RETRY_EXCEEDED",
+                        "retryCount"       to priorFailedAttempts
+                    )
+                )
+            } catch (_: Exception) {
+                // CONTRACT_FAILED ledger write failure is non-recoverable at this stage;
+                // RetryExceeded is still returned to halt the convergence loop in-memory.
+            }
+            return ExecutionAuthorityExecutionResult.RetryExceeded(taskId)
         }
 
         // ── Step 1: Extract ExecutionTask from TASK_ASSIGNED event ───────────
@@ -330,7 +415,7 @@ class ExecutionAuthority(
         val executionOutput = executor.execute(executionInput, contractorProfile)
 
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
-        val contractReport = generateContractReport(executionTask, executionOutput, assigned.trace)
+        val contractReport = generateContractReport(executionTask, executionOutput, assigned.trace, contractorId)
 
         // ── Step 6: Build report-backed Task and validate ────────────────────
         val task = Task(
@@ -393,20 +478,38 @@ class ExecutionAuthority(
                 validationVerdict = ValidationVerdict.VALIDATED
             )
         } else {
-            val failureReason = when {
+            // ── AERP-1 Anchor extraction ─────────────────────────────────────
+            val anchorState = extractAnchorState(contractReport)
+
+            // ── VIOLATION SURFACE ISOLATION (RCF-1) ──────────────────────────
+            // One ViolationSurface = one RecoveryContract. Multiple failures produce
+            // multiple sequential RecoveryContracts — never grouped.
+            val violations: List<String> = when {
                 executionOutput.status == ExecutionStatus.FAILURE ->
-                    "EXECUTION_FAILED: ${executionOutput.error ?: "unknown"}"
+                    listOf("EXECUTION_FAILED: ${executionOutput.error ?: "unknown"}")
                 else ->
-                    "VALIDATION_FAILED: ${validationResult.failureReasons.joinToString("; ")}"
+                    validationResult.failureReasons.map { "VALIDATION_FAILED: $it" }
             }
             val failureClass = when {
                 executionOutput.status == ExecutionStatus.FAILURE -> "STRUCTURAL"
                 else -> "LOGICAL"
             }
-            val recovery = issueRecoveryContract(executionTask, failureClass, failureReason)
-            // VIOLATION 3: RecoveryContract MUST be ledger-materialized (RCF-1) — no silent recovery
-            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
-            ExecutionAuthorityExecutionResult.BlockedWithRecovery(failureReason, recovery)
+
+            val recoveries = violations.map { violationSurface ->
+                val recovery = issueRecoveryContract(
+                    task            = executionTask,
+                    anchorState     = anchorState,
+                    failureClass    = failureClass,
+                    violationSurface = violationSurface
+                )
+                writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
+                recovery
+            }
+
+            ExecutionAuthorityExecutionResult.BlockedWithRecovery(
+                reason            = violations.first(),
+                recoveryContracts = recoveries
+            )
         }
     }
 
@@ -453,7 +556,8 @@ class ExecutionAuthority(
 
     /**
      * Build a BLOCKED result: emits TASK_EXECUTED(FAILURE) and issues RCF-1.
-     * Used for all hard-block conditions.
+     * Used for all hard-block conditions before ContractReport is available.
+     * AnchorState is minimal (no validated artifact fields exist yet).
      */
     private fun blockWithRecovery(
         projectId:     String,
@@ -493,21 +597,33 @@ class ExecutionAuthority(
             }
         }
 
-        val recovery = issueRecoveryContract(task, failureClass, reason)
+        // Minimal AnchorState — no ContractReport available at this stage
+        val anchorState = AnchorState(
+            reportReference    = task?.reportReference ?: "UNKNOWN",
+            validatedTypes     = emptyList(),
+            validatedStructure = emptySet(),
+            validatedPaths     = emptyList()
+        )
+
+        val recovery = issueRecoveryContract(task, anchorState, failureClass, reason)
         // VIOLATION 3: RecoveryContract MUST be ledger-materialized (RCF-1)
         writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
-        return ExecutionAuthorityExecutionResult.BlockedWithRecovery(reason, recovery)
+        return ExecutionAuthorityExecutionResult.BlockedWithRecovery(reason, listOf(recovery))
     }
 
     /** Generate [ContractReport] from execution output (AERP-1 compliance). */
     private fun generateContractReport(
-        task:    ExecutionTask,
-        output:  ContractorExecutionOutput,
-        trace:   com.agoii.mobile.contractors.ResolutionTrace
+        task:         ExecutionTask,
+        output:       ContractorExecutionOutput,
+        trace:        com.agoii.mobile.contractors.ResolutionTrace,
+        contractorId: String
     ): ContractReport {
         val artifact = output.resultArtifact
         return ContractReport(
             reportReference   = task.reportReference,
+            taskId            = task.taskId,
+            contractId        = task.contractId,
+            contractorId      = contractorId,
             typeInventory     = artifact.keys.toList(),
             executionSteps    = listOf("MATCHING_RESOLVED", "EXECUTION_INVOKED", "ARTIFACT_PRODUCED"),
             artifactStructure = artifact,
@@ -522,24 +638,36 @@ class ExecutionAuthority(
         )
     }
 
-    /** Issue [ExecutionRecoveryContract] (RCF-1) for the given task and failure. */
+    /**
+     * Extract an immutable [AnchorState] from a [ContractReport] (AERP-1).
+     *
+     * The AnchorState is captured at the moment validation begins and MUST NOT be modified
+     * thereafter. It is embedded in every [ExecutionRecoveryContract] issued for this attempt.
+     */
+    private fun extractAnchorState(report: ContractReport): AnchorState = AnchorState(
+        reportReference    = report.reportReference,
+        validatedTypes     = report.typeInventory.toList(),
+        validatedStructure = report.artifactStructure.keys.toSet(),
+        validatedPaths     = report.executionSteps.toList()
+    )
+
+    /** Issue [ExecutionRecoveryContract] (RCF-1) for a SINGLE violation surface. */
     private fun issueRecoveryContract(
-        task:         ExecutionTask?,
-        failureClass: String,
-        reason:       String
+        task:            ExecutionTask?,
+        anchorState:     AnchorState,
+        failureClass:    String,
+        violationSurface: String
     ): ExecutionRecoveryContract = ExecutionRecoveryContract(
         contractId          = task?.contractId ?: "UNKNOWN",
+        taskId              = task?.taskId     ?: "UNKNOWN",
         contractType        = "TASK_EXECUTION",
         executionPosition   = task?.position   ?: -1,
+        reportReference     = anchorState.reportReference,
         failureClass        = failureClass,
-        anchorState         = mapOf(
-            "taskId"          to (task?.taskId ?: "UNKNOWN"),
-            "reportReference" to (task?.reportReference ?: "UNKNOWN"),
-            "position"        to (task?.position ?: -1)
-        ),
-        violationSurface    = reason,
+        anchorState         = anchorState,
+        violationSurface    = violationSurface,
         correctionDirective = "Resolve $failureClass for task '${task?.taskId ?: "UNKNOWN"}' " +
-                              "at position ${task?.position ?: "UNKNOWN"}",
+                              "at position ${task?.position ?: -1}: $violationSurface",
         constraintLock      = "ANCHOR_STATE is IMMUTABLE — no modification to validated fields permitted",
         successCondition    = "TASK_EXECUTED written with executionStatus=SUCCESS AND validationStatus=VALIDATED"
     )
@@ -547,6 +675,7 @@ class ExecutionAuthority(
     /**
      * Write [ExecutionRecoveryContract] to the ledger as a RECOVERY_CONTRACT event (RCF-1).
      * All recovery MUST be ledger-materialized; in-memory recovery is PROHIBITED.
+     * Includes FAILURE_REFERENCE fields (taskId, report_reference) for ledger traceability.
      */
     private fun writeRecoveryContractToLedger(
         projectId:  String,
@@ -560,8 +689,10 @@ class ExecutionAuthority(
                 EventTypes.RECOVERY_CONTRACT,
                 mapOf(
                     "contractId"          to recovery.contractId,
+                    "taskId"              to recovery.taskId,
                     "contractType"        to recovery.contractType,
                     "executionPosition"   to recovery.executionPosition,
+                    "report_reference"    to recovery.reportReference,
                     "failureClass"        to recovery.failureClass,
                     "violationSurface"    to recovery.violationSurface,
                     "correctionDirective" to recovery.correctionDirective,
