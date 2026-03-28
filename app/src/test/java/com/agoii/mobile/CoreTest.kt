@@ -531,8 +531,7 @@ class CoreTest {
         var taskExecutedCount = 0
         while (true) {
             val result = gov.runGovernor("proj")
-            if (result == Governor.GovernorResult.COMPLETED) break
-            if (result == Governor.GovernorResult.DRIFT || result == Governor.GovernorResult.NO_EVENT) break
+            if (result in setOf(Governor.GovernorResult.COMPLETED, Governor.GovernorResult.DRIFT, Governor.GovernorResult.NO_EVENT)) break
             governorSteps++
             // After Governor writes TASK_STARTED, inject TASK_EXECUTED (simulates ExecutionAuthority)
             val last = s.loadEvents("proj").lastOrNull()
@@ -633,7 +632,7 @@ class CoreTest {
         // TASK_EXECUTED must be injected externally to allow Governor to advance.
         while (true) {
             val result = gov.runGovernor("proj")
-            if (result == Governor.GovernorResult.COMPLETED || result == Governor.GovernorResult.DRIFT || result == Governor.GovernorResult.NO_EVENT) break
+            if (result in setOf(Governor.GovernorResult.COMPLETED, Governor.GovernorResult.DRIFT, Governor.GovernorResult.NO_EVENT)) break
             val last = s.loadEvents("proj").lastOrNull()
             if (last?.type == EventTypes.TASK_STARTED) {
                 val taskId   = last.payload["taskId"] as? String ?: ""
