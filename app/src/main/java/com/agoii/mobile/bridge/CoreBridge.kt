@@ -18,15 +18,15 @@ import com.agoii.mobile.observability.ExecutionTrace
 /**
  * CoreBridge — mobile runtime adapter.
  *
- * GOVERNANCE RULE (LOCKED — CR-01-FINAL):
+ * GOVERNANCE RULE (RECOVERY-ALIGNED):
  * INTENT_SUBMITTED is ALWAYS written on intent receipt.
- * IRS runs informational-only; its result NEVER blocks ledger entry.
+ * submitIntent() does NOT call IRS or any external orchestrator.
  *
  * Architecture (MASTER-ALIGNED):
  *   RAW INPUT → INTENT_SUBMITTED (always) → ExecutionEntryPoint → ExecutionAuthority → CONTRACTS_GENERATED
  *
- * IRS is informational context included in the INTENT_SUBMITTED payload.
  * Ledger remains the sole execution authority.
+ * ContractorRegistry is only accessed inside ExecutionAuthority.executeFromLedger().
  */
 class CoreBridge(context: Context) {
 
@@ -47,12 +47,12 @@ class CoreBridge(context: Context) {
     private val observability       = ExecutionObservability(ledger)
 
     /**
-     * INTENT ENTRY POINT (CR-01-FINAL — UNCONDITIONAL)
+     * INTENT ENTRY POINT (RECOVERY-ALIGNED — UNCONDITIONAL)
      *
-     * INTENT_SUBMITTED is ALWAYS written. IRS runs informational-only.
-     * The IRS result is included as metadata in the payload; it NEVER blocks entry.
+     * Constructs a minimal payload and appends INTENT_SUBMITTED to the ledger.
+     * No IRS, no validation, no orchestration.
      *
-     * @return true always — intent entry is unconditional per AGOII MASTER alignment.
+     * @return true always.
      */
     fun submitIntent(
         projectId:         String,
@@ -62,36 +62,15 @@ class CoreBridge(context: Context) {
         availableEvidence: Map<String, List<EvidenceRef>> = emptyMap(),
         objective:         String
     ): Boolean {
-        val sessionId = "$projectId-${java.util.UUID.randomUUID()}"
+        val certificationId = "$projectId-${java.util.UUID.randomUUID()}"
 
-        irsOrchestrator.createSession(
-            sessionId,
-            rawFields,
-            evidence,
-            swarmConfig,
-            availableEvidence
-        )
-
-        var stepResult: StepResult
-        do {
-            stepResult = irsOrchestrator.step(sessionId)
-        } while (!stepResult.terminal)
-
-        // IRS result is informational context — it NEVER blocks ledger entry (CR-01-FINAL / FS-1).
-        val irsStatus = when (stepResult.orchestratorResult) {
-            is OrchestratorResult.Certified -> "CERTIFIED"
-            else                            -> "PENDING"
-        }
-
-        // ✅ INTENT_SUBMITTED is ALWAYS written (no gate, no block)
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
             mapOf(
                 "objective"       to objective,
-                "certificationId" to sessionId,
-                "certifiedAt"     to System.currentTimeMillis(),
-                "irsStatus"       to irsStatus
+                "certificationId" to certificationId,
+                "certifiedAt"     to System.currentTimeMillis()
             )
         )
 
