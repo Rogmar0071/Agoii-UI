@@ -23,6 +23,7 @@ import com.agoii.mobile.bridge.CoreBridge
 import com.agoii.mobile.core.AuditResult
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.core.LedgerValidationException
 import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.core.ReplayVerification
 import com.agoii.mobile.interaction.InteractionContract
@@ -69,6 +70,7 @@ fun ProjectScreen(projectId: String) {
     var verification      by remember { mutableStateOf<ReplayVerification?>(null) }
     var interactionResult by remember { mutableStateOf<InteractionResult?>(null) }
     var inputText         by remember { mutableStateOf("") }
+    var sendMessage       by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
 
@@ -93,6 +95,54 @@ fun ProjectScreen(projectId: String) {
             auditResult       = null
             verification      = null
             interactionResult = null
+        }
+    }
+
+    /**
+     * Single emission gate for all UI send actions (R1).
+     *
+     * - Trims input; returns immediately if empty.
+     * - Allows submitIntent() ONLY when no events exist (null lastEventType).
+     * - Blocks and shows a message when an intent is already present.
+     * - Wraps ALL bridge calls in try/catch so no exception escapes the UI (R3).
+     */
+    fun handleSend() {
+        val objective = inputText.trim()
+        if (objective.isEmpty()) return
+
+        val lastEventType = events.lastOrNull()?.type
+
+        try {
+            if (lastEventType == null) {
+                bridge.submitIntent(
+                    projectId         = projectId,
+                    rawFields         = mapOf(
+                        "objective"   to objective,
+                        "constraints" to "",
+                        "environment" to "",
+                        "resources"   to ""
+                    ),
+                    evidence          = mapOf(
+                        "objective"   to listOf(EvidenceRef(id = "ev-obj",  source = "user-input")),
+                        "constraints" to listOf(EvidenceRef(id = "ev-cst",  source = "user-input")),
+                        "environment" to listOf(EvidenceRef(id = "ev-env",  source = "user-input")),
+                        "resources"   to listOf(EvidenceRef(id = "ev-res",  source = "user-input"))
+                    ),
+                    swarmConfig       = SwarmConfig(
+                        agentCount    = 2,
+                        consensusRule = ConsensusRule.MAJORITY
+                    ),
+                    objective         = objective
+                )
+                reload()
+                inputText = ""
+            } else {
+                sendMessage = "Intent already submitted"
+            }
+        } catch (e: LedgerValidationException) {
+            sendMessage = "Unable to submit intent. Please try again."
+        } catch (e: Exception) {
+            sendMessage = "An error occurred. Please try again."
         }
     }
 
@@ -204,36 +254,20 @@ fun ProjectScreen(projectId: String) {
         )
 
         // ── INPUT BAR ───────────────────────────────────────────────────────
+        sendMessage?.let { msg ->
+            Text(
+                text     = msg,
+                color    = Color(0xFFD32F2F),
+                fontSize = 12.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 2.dp)
+            )
+        }
         InputBar(
-            text      = inputText,
-            onTextChange = { inputText = it },
-            onSend    = {
-                val objective = inputText.trim()
-                if (objective.isNotEmpty()) {
-                    bridge.submitIntent(
-                        projectId         = projectId,
-                        rawFields         = mapOf(
-                            "objective"   to objective,
-                            "constraints" to "",
-                            "environment" to "",
-                            "resources"   to ""
-                        ),
-                        evidence          = mapOf(
-                            "objective"   to listOf(EvidenceRef(id = "ev-obj",  source = "user-input")),
-                            "constraints" to listOf(EvidenceRef(id = "ev-cst",  source = "user-input")),
-                            "environment" to listOf(EvidenceRef(id = "ev-env",  source = "user-input")),
-                            "resources"   to listOf(EvidenceRef(id = "ev-res",  source = "user-input"))
-                        ),
-                        swarmConfig       = SwarmConfig(
-                            agentCount    = 2,
-                            consensusRule = ConsensusRule.MAJORITY
-                        ),
-                        objective         = objective
-                    )
-                    inputText = ""
-                    reload()
-                }
-            }
+            text         = inputText,
+            onTextChange = { inputText = it; sendMessage = null },
+            onSend       = { handleSend() }
         )
     }
 }
