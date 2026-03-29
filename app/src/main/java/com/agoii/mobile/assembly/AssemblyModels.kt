@@ -16,11 +16,10 @@ data class AssemblyContract(
 /**
  * Per-contract execution surface sourced exclusively from a successful TASK_EXECUTED event.
  *
- * artifactStructure MUST originate from the frozen ContractReport — never reconstructed (spec 5.2).
+ * Only [artifactReference] is legal to read from the ledger (AERP-1: no upstream mutation).
  */
 data class ContractExecutionData(
-    val artifactReference: String,
-    val artifactStructure: Map<String, Any>
+    val artifactReference: String
 )
 
 /**
@@ -35,7 +34,7 @@ data class AssemblyInput(
     val totalContracts:   Int,
     /** Contracts ordered by position (1 → N); identity sourced from CONTRACT_COMPLETED. */
     val orderedContracts: List<AssemblyContract>,
-    /** contractId → execution surface (artifactReference + artifactStructure) from TASK_EXECUTED SUCCESS. */
+    /** contractId → execution surface (artifactReference) from TASK_EXECUTED SUCCESS. */
     val taskArtifacts:    Map<String, ContractExecutionData>
 )
 
@@ -45,14 +44,14 @@ data class AssemblyInput(
  * Per-contract output entry in the [FinalArtifact].
  *
  * [reportReference] preserves RRIL-1 lineage from the originating CONTRACT_COMPLETED event.
- * [artifactStructure] is sourced directly from the frozen ContractReport (TASK_EXECUTED.artifactStructure).
+ * artifactStructure is intentionally absent — it is not persisted in the EventLedger
+ * and MUST NOT be synthesized (AERP-1 §3).
  */
 data class ContractOutput(
     val contractId:        String,
     val position:          Int,
     val reportReference:   String,
-    val artifactReference: String,
-    val artifactStructure: Map<String, Any>
+    val artifactReference: String
 )
 
 /**

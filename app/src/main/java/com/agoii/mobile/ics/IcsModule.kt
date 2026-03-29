@@ -193,19 +193,17 @@ class IcsModule {
         if (orderedContracts.isEmpty()) return null
 
         // Derive task artifacts from successful TASK_EXECUTED events (RRIL-1)
+        // artifactStructure is NOT persisted in the EventLedger (AERP-1 §3); only
+        // artifactReference is legal to consume.
         val taskArtifacts = mutableMapOf<String, String>()
-        val taskArtifactStructures = mutableMapOf<String, Map<String, Any>>()
         events.filter { ev ->
             ev.type == EventTypes.TASK_EXECUTED &&
             ev.payload["executionStatus"]?.toString() == "SUCCESS" &&
             ev.payload["report_reference"]?.toString() == reportReference
         }.forEach { ev ->
-            val contractId   = ev.payload["contractId"]?.toString()      ?: return@forEach
-            val artifactRef  = ev.payload["artifactReference"]?.toString() ?: return@forEach
-            @Suppress("UNCHECKED_CAST")
-            val artifactStruct = ev.payload["artifactStructure"] as? Map<String, Any>
+            val contractId  = ev.payload["contractId"]?.toString()        ?: return@forEach
+            val artifactRef = ev.payload["artifactReference"]?.toString() ?: return@forEach
             taskArtifacts[contractId] = artifactRef
-            if (artifactStruct != null) taskArtifactStructures[contractId] = artifactStruct
         }
 
         val contractOutputs = orderedContracts.map { (contractId, position) ->
@@ -214,14 +212,11 @@ class IcsModule {
                 // contract. The IcsOutputType classifier will detect this as DIAGNOSTIC so callers
                 // can surface the gap rather than treating it as valid output.
                 ?: "diagnostic:$contractId:no_artifact"
-            val artifactStruct = taskArtifactStructures[contractId]
-                ?: mapOf("contractId" to contractId, "position" to position)
             com.agoii.mobile.assembly.ContractOutput(
                 contractId        = contractId,
                 position          = position,
                 reportReference   = reportReference,
-                artifactReference = artifactRef,
-                artifactStructure = artifactStruct
+                artifactReference = artifactRef
             )
         }
 
@@ -251,17 +246,17 @@ class IcsModule {
         icsOutputReference: String
     ): IcsOutput {
 
-        // ── Step 6 + 7 + 9: Normalize, classify, preserve trace ─────────────
+        // ── Step 6 + 7 + 9: Classify and preserve trace ─────────────────────
+        // No structural normalization: artifactStructure is not in the ledger (AERP-1 §3).
         val entries: List<IcsOutputEntry> = input.finalArtifact.contractOutputs.map { contractOutput ->
-            val normalizedFields = normalizeFields(contractOutput)
-            val outputType       = classifyOutput(contractOutput, normalizedFields)
+            val outputType = classifyOutput(contractOutput)
 
             IcsOutputEntry(
                 contractId        = contractOutput.contractId,
                 position          = contractOutput.position,
                 artifactReference = contractOutput.artifactReference,
                 outputType        = outputType,
-                fields            = normalizedFields
+                fields            = emptyMap()
             )
         }
 
@@ -279,42 +274,23 @@ class IcsModule {
     }
 
     /**
-     * Structural normalization:
-     *  - Remove execution-only metadata keys ("contractId", "position").
-     *  - Standardize key names to snake_case externally consumable form.
-     *  - Retain all other fields verbatim (NO mutation, NO rewriting).
-     */
-    private fun normalizeFields(contractOutput: ContractOutput): Map<String, Any> {
-        val executionOnlyKeys = setOf("contractId", "position")
-        return contractOutput.artifactStructure
-            .filterKeys { it !in executionOnlyKeys }
-            .mapKeys { (key, _) -> toSnakeCase(key) }
-    }
-
-    /**
      * Output classification — deterministic, rule-based:
      *  - DIAGNOSTIC  if the artifact reference starts with "diagnostic:" or contains
      *                "NO_ARTIFACT" or "FAILURE" (covers gap-detected and explicit failure refs)
-     *  - ACTIONABLE  if the normalized fields contain an "action", "next_step",
-     *                or "action_required" key
      *  - INFORMATIONAL otherwise (default)
+     *
+     * ACTIONABLE classification is no longer possible: it relied on normalizedFields keys
+     * derived from artifactStructure, which is not persisted in the EventLedger (AERP-1 §3).
      *
      * No AI, no inference, no summarization.
      */
-    private fun classifyOutput(
-        contractOutput: ContractOutput,
-        normalizedFields: Map<String, Any>
-    ): IcsOutputType {
+    private fun classifyOutput(contractOutput: ContractOutput): IcsOutputType {
         val artifactRef = contractOutput.artifactReference.lowercase()
         if (artifactRef.startsWith("diagnostic:") ||
             artifactRef.contains("no_artifact") ||
             artifactRef.contains("failure")
         ) {
             return IcsOutputType.DIAGNOSTIC
-        }
-        val keys = normalizedFields.keys.map { it.lowercase() }
-        if (keys.any { it == "action" || it == "next_step" || it == "action_required" }) {
-            return IcsOutputType.ACTIONABLE
         }
         return IcsOutputType.INFORMATIONAL
     }

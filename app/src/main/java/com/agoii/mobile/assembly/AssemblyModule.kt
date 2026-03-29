@@ -18,11 +18,11 @@
 //      contractSetId, totalContracts)
 //
 // AUTHORITY RULES:
-//   - Ordering and contract identity: CONTRACT_COMPLETED events             (spec 5.1)
-//   - Artifact surface: TASK_EXECUTED.artifactStructure (frozen, ledger)   (spec 5.2)
-//   - RRID lineage: every CONTRACT_COMPLETED.report_reference must match    (spec 5.3)
-//   - Missing TASK_EXECUTED SUCCESS → BLOCK: INCOMPLETE_EXECUTION_SURFACE  (spec 5.6)
-//   - RRID mismatch → BLOCK: RRID_VIOLATION                                (spec 5.3)
+//   - Ordering and contract identity: CONTRACT_COMPLETED events             (spec 6.5)
+//   - Artifact surface: TASK_EXECUTED.artifactReference ONLY (AERP-1 §3)  (spec 6.4)
+//   - RRID lineage: every CONTRACT_COMPLETED.report_reference must match    (spec 6.3)
+//   - Missing TASK_EXECUTED SUCCESS → BLOCK: INCOMPLETE_EXECUTION_SURFACE  (spec 6.4)
+//   - RRID mismatch → BLOCK: RRID_VIOLATION                                (spec 6.3)
 //
 // EXECUTION AUTHORITY:
 //   Assembly is invoked ONLY by ExecutionAuthority. Governor MUST NOT call assemble().
@@ -48,8 +48,8 @@ import com.agoii.mobile.core.EventTypes
  *  4. Reconstruct ordered contracts from CONTRACT_COMPLETED events (spec 5.1)
  *  5. Enforce RRID lineage on every CONTRACT_COMPLETED (spec 5.3)
  *  6. Enforce position completeness: [1..N], no gaps, no duplicates (spec 5.5)
- *  7. Derive execution surface (artifactReference + artifactStructure) from
- *     TASK_EXECUTED(SUCCESS) events (spec 5.2 / spec 5.6)
+ *  7. Derive execution surface (artifactReference only) from
+ *     TASK_EXECUTED(SUCCESS) events — artifactStructure is NOT in the ledger (AERP-1 §3)
  *  8. Pre-flight: verify every contract has a SUCCESS execution surface (spec 5.6)
  *  9. Append ASSEMBLY_STARTED to ledger
  * 10. Build [FinalArtifact] with traceMap (position 1 → N, spec 6.1/6.2)
@@ -152,7 +152,9 @@ class AssemblyModule {
             )
         }
 
-        // ── Step 7: Derive execution surface from TASK_EXECUTED(SUCCESS) (spec 5.2) ──
+        // ── Step 7: Derive execution surface from TASK_EXECUTED(SUCCESS) (spec 6.4) ──
+        // artifactStructure is NOT persisted in the EventLedger (AERP-1 §3);
+        // only artifactReference is legal to consume from TASK_EXECUTED.
         val taskExecutionData = mutableMapOf<String, ContractExecutionData>()
         events.filter { ev ->
             ev.type == EventTypes.TASK_EXECUTED &&
@@ -160,18 +162,11 @@ class AssemblyModule {
             (reportReference.isEmpty() ||
                 ev.payload["report_reference"]?.toString() == reportReference)
         }.forEach { ev ->
-            val contractId     = ev.payload["contractId"]?.toString()      ?: return@forEach
-            val artifactRef    = ev.payload["artifactReference"]?.toString() ?: return@forEach
-            @Suppress("UNCHECKED_CAST")
-            val artifactStruct = ev.payload["artifactStructure"] as? Map<String, Any>
-            // If artifactStructure is absent, skip this entry. The contract will not be
-            // registered in taskExecutionData and will be caught by the INCOMPLETE_EXECUTION_SURFACE
-            // check in Step 8 (spec 5.6). This is intentional — silent skip here, hard block below.
-            if (artifactStruct == null) return@forEach
+            val contractId  = ev.payload["contractId"]?.toString()        ?: return@forEach
+            val artifactRef = ev.payload["artifactReference"]?.toString() ?: return@forEach
             // Last SUCCESS wins (idempotent across retries)
             taskExecutionData[contractId] = ContractExecutionData(
-                artifactReference = artifactRef,
-                artifactStructure = artifactStruct
+                artifactReference = artifactRef
             )
         }
 
@@ -198,15 +193,14 @@ class AssemblyModule {
             )
         )
 
-        // ── Step 10: Build FinalArtifact with traceMap (spec 6.1/6.2) ────────
+        // ── Step 10: Build FinalArtifact with traceMap (spec 7.1/7.2) ────────
         val contractOutputs = sortedContracts.map { contract ->
             val execData = taskExecutionData.getValue(contract.contractId)
             ContractOutput(
                 contractId        = contract.contractId,
                 position          = contract.position,
                 reportReference   = reportReference,
-                artifactReference = execData.artifactReference,
-                artifactStructure = execData.artifactStructure
+                artifactReference = execData.artifactReference
             )
         }
         val traceMap: Map<String, String> = sortedContracts.associate { c ->

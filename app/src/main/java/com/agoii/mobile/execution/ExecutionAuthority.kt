@@ -642,7 +642,6 @@ class ExecutionAuthority(
                 "contractId"        to executionTask.contractId,
                 "contractorId"      to contractorId,
                 "artifactReference" to artifactRef,
-                "artifactStructure" to frozenReport.artifactStructure,
                 "executionStatus"   to execStatusStr,
                 "validationStatus"  to validStatusStr,
                 "validationReasons" to validationResult.failureReasons,
@@ -669,7 +668,7 @@ class ExecutionAuthority(
      *
      * Delegates exclusively to [AssemblyModule], which:
      *  - enforces all trigger conditions (all contracts complete, no duplicate, CONTRACTS_GENERATED present)
-     *  - reconstructs [com.agoii.mobile.assembly.AssemblyInput] from ledger only (RRIL-1)
+     *  - reads contract ordering from CONTRACT_COMPLETED events (RRIL-1)
      *  - appends ASSEMBLY_STARTED, ASSEMBLY_VALIDATED, ASSEMBLY_COMPLETED to [ledger]
      *  - returns the structured [com.agoii.mobile.assembly.FinalArtifact]
      *

@@ -807,7 +807,6 @@ class ValidationLayer {
         )
         private val TASK_EXECUTED_KEYS      = setOf(
             "taskId", "contractId", "contractorId", "artifactReference",
-            "artifactStructure",
             "executionStatus", "validationStatus", "validationReasons",
             "report_reference", "position", "total"
         )
