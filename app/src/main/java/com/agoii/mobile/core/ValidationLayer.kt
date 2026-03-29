@@ -603,6 +603,10 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "ASSEMBLY_COMPLETED missing or blank 'taskId' in '$projectId'"
             )
+        payload["assemblyId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_COMPLETED missing or blank 'assemblyId' in '$projectId'"
+            )
     }
 
     private fun checkAssemblyValidated(projectId: String, state: ValidationState) {
@@ -803,6 +807,7 @@ class ValidationLayer {
         )
         private val TASK_EXECUTED_KEYS      = setOf(
             "taskId", "contractId", "contractorId", "artifactReference",
+            "artifactStructure",
             "executionStatus", "validationStatus", "validationReasons",
             "report_reference", "position", "total"
         )
@@ -819,7 +824,7 @@ class ValidationLayer {
         private val ASSEMBLY_STARTED_KEYS    = setOf("report_reference", "contractSetId", "totalContracts")
         private val ASSEMBLY_COMPLETED_KEYS  = setOf(
             "report_reference", "contractSetId", "totalContracts",
-            "finalArtifactReference", "taskId"
+            "finalArtifactReference", "taskId", "assemblyId", "traceMap"
         )
         private val ICS_STARTED_KEYS         = setOf("report_reference", "finalArtifactReference", "taskId")
         private val ICS_COMPLETED_KEYS       = setOf("report_reference", "taskId", "icsOutputReference")

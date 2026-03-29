@@ -642,6 +642,7 @@ class ExecutionAuthority(
                 "contractId"        to executionTask.contractId,
                 "contractorId"      to contractorId,
                 "artifactReference" to artifactRef,
+                "artifactStructure" to frozenReport.artifactStructure,
                 "executionStatus"   to execStatusStr,
                 "validationStatus"  to validStatusStr,
                 "validationReasons" to validationResult.failureReasons,

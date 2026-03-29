@@ -194,14 +194,18 @@ class IcsModule {
 
         // Derive task artifacts from successful TASK_EXECUTED events (RRIL-1)
         val taskArtifacts = mutableMapOf<String, String>()
+        val taskArtifactStructures = mutableMapOf<String, Map<String, Any>>()
         events.filter { ev ->
             ev.type == EventTypes.TASK_EXECUTED &&
             ev.payload["executionStatus"]?.toString() == "SUCCESS" &&
             ev.payload["report_reference"]?.toString() == reportReference
         }.forEach { ev ->
-            val contractId      = ev.payload["contractId"]?.toString()      ?: return@forEach
-            val artifactRef     = ev.payload["artifactReference"]?.toString() ?: return@forEach
+            val contractId   = ev.payload["contractId"]?.toString()      ?: return@forEach
+            val artifactRef  = ev.payload["artifactReference"]?.toString() ?: return@forEach
+            @Suppress("UNCHECKED_CAST")
+            val artifactStruct = ev.payload["artifactStructure"] as? Map<String, Any>
             taskArtifacts[contractId] = artifactRef
+            if (artifactStruct != null) taskArtifactStructures[contractId] = artifactStruct
         }
 
         val contractOutputs = orderedContracts.map { (contractId, position) ->
@@ -210,20 +214,24 @@ class IcsModule {
                 // contract. The IcsOutputType classifier will detect this as DIAGNOSTIC so callers
                 // can surface the gap rather than treating it as valid output.
                 ?: "diagnostic:$contractId:no_artifact"
+            val artifactStruct = taskArtifactStructures[contractId]
+                ?: mapOf("contractId" to contractId, "position" to position)
             com.agoii.mobile.assembly.ContractOutput(
                 contractId        = contractId,
                 position          = position,
+                reportReference   = reportReference,
                 artifactReference = artifactRef,
-                artifactStructure = mapOf(
-                    "contractId" to contractId,
-                    "position"   to position
-                )
+                artifactStructure = artifactStruct
             )
         }
 
+        val traceMap: Map<String, String> = orderedContracts.associate { (contractId, _) ->
+            contractId to reportReference
+        }
         return FinalArtifact(
             reportReference = reportReference,
-            contractOutputs = contractOutputs
+            contractOutputs = contractOutputs,
+            traceMap        = traceMap
         )
     }
 
