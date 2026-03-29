@@ -1,28 +1,28 @@
-// AGOII CONTRACT — ASSEMBLY MODULE
+// AGOII CONTRACT — ASSEMBLY MODULE (FINAL COMPLIANT IMPLEMENTATION — AERP-1)
 // CLASSIFICATION:
 // - Class: Structural
 // - Reversibility: Forward-only
-// - Execution Scope: Both
+// - Execution Scope: Assembly Module ONLY
 // - Mutation Authority: Tier C
 //
-// PURPOSE:
-// Deterministic reducer that consumes ALL CONTRACT_COMPLETED outputs for a given
-// execution chain and produces a single, structured FINAL_ARTIFACT.
+// EXECUTION SURFACE (READ):
+//   CONTRACTS_GENERATED, CONTRACT_COMPLETED (N), TASK_EXECUTED (N), EXECUTION_COMPLETED
 //
-// TRIGGER CONDITIONS (enforced strictly — internal gates only, no caller reliance):
-//   1. EXECUTION_COMPLETED exists in the ledger                            (spec 5.4)
-//   2. COUNT(CONTRACT_COMPLETED) == totalContracts declared in             (spec 5.5)
-//      CONTRACTS_GENERATED, AND all positions ∈ [1..N] with no gaps/dupes
-//   3. NO ASSEMBLY_COMPLETED exists for the same report_reference
-//   4. CONTRACTS_GENERATED event exists (source of metadata: RRID,
-//      contractSetId, totalContracts)
+// EXECUTION SURFACE (WRITE):
+//   ASSEMBLY_STARTED → ASSEMBLY_COMPLETED
 //
 // AUTHORITY RULES:
-//   - Ordering and contract identity: CONTRACT_COMPLETED events             (spec 6.5)
-//   - Artifact surface: TASK_EXECUTED.artifactReference ONLY (AERP-1 §3)  (spec 6.4)
-//   - RRID lineage: every CONTRACT_COMPLETED.report_reference must match    (spec 6.3)
-//   - Missing TASK_EXECUTED SUCCESS → BLOCK: INCOMPLETE_EXECUTION_SURFACE  (spec 6.4)
-//   - RRID mismatch → BLOCK: RRID_VIOLATION                                (spec 6.3)
+//   - Ordering and contract identity: CONTRACT_COMPLETED events             (spec §6.5)
+//   - Artifact surface: TASK_EXECUTED.artifactReference ONLY (AERP-1 §3)  (spec §6.4)
+//   - RRID lineage: every CONTRACT_COMPLETED.report_reference must match    (spec §6.3)
+//   - Missing TASK_EXECUTED SUCCESS → BLOCK: INCOMPLETE_EXECUTION_SURFACE  (spec §6.4)
+//   - RRID mismatch → BLOCK: RRID_VIOLATION                                (spec §6.3)
+//
+// INVARIANT ENFORCEMENT:
+//   - NO artifactStructure in TASK_EXECUTED (AERP-1 §3)
+//   - NO synthetic reconstruction
+//   - NO external data sources
+//   - NO heuristic ordering
 //
 // EXECUTION AUTHORITY:
 //   Assembly is invoked ONLY by ExecutionAuthority. Governor MUST NOT call assemble().
@@ -42,21 +42,20 @@ import com.agoii.mobile.core.EventTypes
  * Single public entry point: [assemble].
  *
  * Pipeline (happy path):
- *  1. Verify EXECUTION_COMPLETED exists (internal gate — spec 5.4)
+ *  1. Verify EXECUTION_COMPLETED exists (internal gate — spec §6.1)
  *  2. Derive metadata (RRID, contractSetId, totalContracts) from CONTRACTS_GENERATED
  *  3. Idempotency guard — no duplicate ASSEMBLY_COMPLETED for same RRID
- *  4. Reconstruct ordered contracts from CONTRACT_COMPLETED events (spec 5.1)
- *  5. Enforce RRID lineage on every CONTRACT_COMPLETED (spec 5.3)
- *  6. Enforce position completeness: [1..N], no gaps, no duplicates (spec 5.5)
+ *  4. Reconstruct ordered contracts from CONTRACT_COMPLETED events (spec §6.5)
+ *  5. Enforce RRID lineage on every CONTRACT_COMPLETED (spec §6.3)
+ *  6. Enforce position completeness: [1..N], no gaps, no duplicates (spec §6.2)
  *  7. Derive execution surface (artifactReference only) from
  *     TASK_EXECUTED(SUCCESS) events — artifactStructure is NOT in the ledger (AERP-1 §3)
- *  8. Pre-flight: verify every contract has a SUCCESS execution surface (spec 5.6)
+ *  8. Pre-flight: verify every contract has a SUCCESS execution surface (spec §6.4)
  *  9. Append ASSEMBLY_STARTED to ledger
- * 10. Build [FinalArtifact] with traceMap (position 1 → N, spec 6.1/6.2)
- * 11. Append ASSEMBLY_VALIDATED to ledger
- * 12. Build [AssemblyContractReport] (AERP-1)
- * 13. Append ASSEMBLY_COMPLETED to ledger (spec 6.3)
- * 14. Return [AssemblyExecutionResult.Assembled]
+ * 10. Build [FinalArtifact] with traceMap (position 1 → N, spec §7.1/§7.2)
+ * 11. Build [AssemblyContractReport] (AERP-1)
+ * 12. Append ASSEMBLY_COMPLETED to ledger (spec §7.3)
+ * 13. Return [AssemblyExecutionResult.Assembled]
  */
 class AssemblyModule {
 
@@ -65,7 +64,7 @@ class AssemblyModule {
      *
      * Reads the full ledger for [projectId], enforces all trigger conditions
      * internally (no reliance on caller), and — when conditions are met — appends
-     * ASSEMBLY_STARTED, ASSEMBLY_VALIDATED, and ASSEMBLY_COMPLETED to [ledger],
+     * ASSEMBLY_STARTED and ASSEMBLY_COMPLETED to [ledger],
      * then returns the [FinalArtifact].
      *
      * This method is a pure function of the ledger state: same ledger state always
@@ -193,7 +192,7 @@ class AssemblyModule {
             )
         )
 
-        // ── Step 10: Build FinalArtifact with traceMap (spec 7.1/7.2) ────────
+        // ── Step 10: Build FinalArtifact with traceMap (spec §7.1/§7.2) ─────
         val contractOutputs = sortedContracts.map { contract ->
             val execData = taskExecutionData.getValue(contract.contractId)
             ContractOutput(
@@ -208,27 +207,26 @@ class AssemblyModule {
         }
         val finalArtifact = FinalArtifact(
             reportReference = reportReference,
+            contractSetId   = contractSetId,
+            totalContracts  = totalContracts,
             contractOutputs = contractOutputs,
             traceMap        = traceMap
         )
 
-        // ── Step 11: Write ASSEMBLY_VALIDATED ────────────────────────────────
-        ledger.appendEvent(projectId, EventTypes.ASSEMBLY_VALIDATED, emptyMap())
-
-        // ── Step 12: Build AssemblyContractReport (AERP-1) ───────────────────
-        val assemblyTaskId = "ASSEMBLY::$reportReference"
-        val finalArtifactReference = buildFinalArtifactReference(reportReference)
+        // ── Step 11: Build AssemblyContractReport (AERP-1) ───────────────────
+        val assemblyId             = "assembly_$reportReference"
+        val finalArtifactReference = "artifact_$assemblyId"
 
         val assemblyReport = AssemblyContractReport(
             reportReference = reportReference,
-            taskId          = assemblyTaskId,
-            assemblyId      = assemblyTaskId,
+            taskId          = assemblyId,
+            assemblyId      = assemblyId,
             contractSetId   = contractSetId,
             totalContracts  = totalContracts,
             finalArtifact   = finalArtifact
         )
 
-        // ── Step 13: Write ASSEMBLY_COMPLETED (spec 6.3) ─────────────────────
+        // ── Step 12: Write ASSEMBLY_COMPLETED (spec §7.3) ────────────────────
         ledger.appendEvent(
             projectId,
             EventTypes.ASSEMBLY_COMPLETED,
@@ -237,8 +235,8 @@ class AssemblyModule {
                 "contractSetId"          to contractSetId,
                 "totalContracts"         to totalContracts,
                 "finalArtifactReference" to finalArtifactReference,
-                "taskId"                 to assemblyTaskId,
-                "assemblyId"             to assemblyTaskId,
+                "taskId"                 to assemblyId,
+                "assemblyId"             to assemblyId,
                 "traceMap"               to traceMap
             )
         )
@@ -250,14 +248,6 @@ class AssemblyModule {
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
-
-    /**
-     * Builds the deterministic, referenceable final artifact reference.
-     *
-     * Format: `assembly:<reportReference>`
-     */
-    private fun buildFinalArtifactReference(reportReference: String): String =
-        "assembly:$reportReference"
 
     private fun resolveInt(value: Any?): Int? = when (value) {
         is Int    -> value

@@ -225,6 +225,8 @@ class IcsModule {
         }
         return FinalArtifact(
             reportReference = reportReference,
+            contractSetId   = contractSetId,
+            totalContracts  = totalContracts,
             contractOutputs = contractOutputs,
             traceMap        = traceMap
         )

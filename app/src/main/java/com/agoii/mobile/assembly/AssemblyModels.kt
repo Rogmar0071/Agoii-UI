@@ -60,13 +60,15 @@ data class ContractOutput(
  *
  * Ordered by contract position (1 → N); RRIL-1 lineage preserved via
  * [reportReference] and each [ContractOutput.reportReference].
- * [traceMap] maps every contractId to its report_reference (spec 6.2).
+ * [traceMap] maps every contractId to its report_reference (spec §7.2).
  */
 data class FinalArtifact(
     val reportReference: String,
+    val contractSetId:   String,
+    val totalContracts:  Int,
     /** Ordered list of per-contract outputs, position ascending. */
     val contractOutputs: List<ContractOutput>,
-    /** contractId → report_reference trace map (RRIL-1 lineage, spec 6.2). */
+    /** contractId → report_reference trace map (RRIL-1 lineage, spec §7.2). */
     val traceMap:        Map<String, String>
 )
 
@@ -74,13 +76,13 @@ data class FinalArtifact(
  * Assembly contract report (AERP-1 compliant).
  *
  * Produced by the Assembly Module after a successful assembly run.
- * [taskId] / [assemblyId] are always "ASSEMBLY::<reportReference>".
+ * [taskId] / [assemblyId] are always "assembly_<reportReference>".
  */
 data class AssemblyContractReport(
     val reportReference: String,
-    /** Deterministic task identifier: "ASSEMBLY::<reportReference>". */
+    /** Deterministic task identifier: "assembly_<reportReference>". */
     val taskId:          String,
-    /** Deterministic assembly identifier — equal to [taskId] (spec 6.3). */
+    /** Deterministic assembly identifier — equal to [taskId] (spec §7.3). */
     val assemblyId:      String,
     val contractSetId:   String,
     val totalContracts:  Int,
