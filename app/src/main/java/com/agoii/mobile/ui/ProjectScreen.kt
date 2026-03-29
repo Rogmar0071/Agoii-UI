@@ -76,17 +76,23 @@ fun ProjectScreen(projectId: String) {
     fun reload() {
         events       = bridge.loadEvents(projectId)
         replayState  = bridge.replayState(projectId)
-        auditResult  = bridge.auditLedger(projectId)
-        verification = bridge.verifyReplay(projectId)
-        interactionResult = replayState?.let { state ->
-            interactionEngine.execute(
-                InteractionContract(
-                    contractId = projectId,
-                    query      = "system state",
-                    outputType = OutputType.DETAILED
-                ),
-                InteractionInput(state)
-            )
+        if (events.isNotEmpty()) {
+            auditResult  = bridge.auditLedger(projectId)
+            verification = bridge.verifyReplay(projectId)
+            interactionResult = replayState?.let { state ->
+                interactionEngine.execute(
+                    InteractionContract(
+                        contractId = projectId,
+                        query      = "system state",
+                        outputType = OutputType.DETAILED
+                    ),
+                    InteractionInput(state)
+                )
+            }
+        } else {
+            auditResult       = null
+            verification      = null
+            interactionResult = null
         }
     }
 
