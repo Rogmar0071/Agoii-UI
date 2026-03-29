@@ -62,8 +62,15 @@ class CoreBridge(context: Context) {
         availableEvidence: Map<String, List<EvidenceRef>> = emptyMap(),
         objective:         String
     ): Boolean {
+        // FIX 4 — NULL SAFETY: guard before any ledger access
+        if (projectId.isBlank()) return true
+        if (objective.isBlank()) return true
+
         val certificationId = "$projectId-${java.util.UUID.randomUUID()}"
 
+        // FIX 2 — HARD-CODED EVENT TYPE: literal constant, not derived or transformed
+        // FIX 3 — MINIMAL EVENT STRUCTURE: objective, certificationId, certifiedAt only
+        // FIX 5 — NO SIDE EFFECTS: no governor, no execution, no external calls
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
