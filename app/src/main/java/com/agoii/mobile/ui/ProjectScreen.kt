@@ -31,9 +31,6 @@ import com.agoii.mobile.interaction.InteractionEngine
 import com.agoii.mobile.interaction.InteractionInput
 import com.agoii.mobile.interaction.InteractionResult
 import com.agoii.mobile.interaction.OutputType
-import com.agoii.mobile.irs.ConsensusRule
-import com.agoii.mobile.irs.EvidenceRef
-import com.agoii.mobile.irs.SwarmConfig
 import com.agoii.mobile.ui.theme.*
 
 // ── CRASH CONTAINMENT: AGOII-HOTFIX-UI-EMISSION-GUARD-01 ────────────────────
@@ -52,13 +49,13 @@ import com.agoii.mobile.ui.theme.*
 internal fun handleSend(
     events:      List<Event>,
     input:       String,
-    bridge:      CoreBridge,
+    bridge:      UiSendBridge,
     projectId:   String,
     onReload:    () -> Unit,
     showMessage: (String) -> Unit
-) {
+): Boolean {
     val trimmed = input.trim()
-    if (trimmed.isEmpty()) return
+    if (trimmed.isEmpty()) return false
 
     val lastEventType = events.lastOrNull()?.type
 
@@ -67,27 +64,9 @@ internal fun handleSend(
 
             null -> {
                 // First entry — no existing intent on this project
-                bridge.submitIntent(
-                    projectId         = projectId,
-                    rawFields         = mapOf(
-                        "objective"   to trimmed,
-                        "constraints" to "",
-                        "environment" to "",
-                        "resources"   to ""
-                    ),
-                    evidence          = mapOf(
-                        "objective"   to listOf(EvidenceRef(id = "ev-obj", source = "user-input")),
-                        "constraints" to listOf(EvidenceRef(id = "ev-cst", source = "user-input")),
-                        "environment" to listOf(EvidenceRef(id = "ev-env", source = "user-input")),
-                        "resources"   to listOf(EvidenceRef(id = "ev-res", source = "user-input"))
-                    ),
-                    swarmConfig       = SwarmConfig(
-                        agentCount    = 2,
-                        consensusRule = ConsensusRule.MAJORITY
-                    ),
-                    objective         = trimmed
-                )
+                bridge.submitIntent(projectId, trimmed)
                 onReload()
+                return true
             }
 
             EventTypes.INTENT_SUBMITTED,
@@ -95,37 +74,40 @@ internal fun handleSend(
                 // Intent evolution phase — update the objective
                 bridge.updateIntent(projectId, trimmed)
                 onReload()
+                return true
             }
 
             EventTypes.INTENT_FINALIZED -> {
                 showMessage("Intent finalized. Abort to modify.")
-                return
+                return false
             }
 
             EventTypes.EXECUTION_AUTHORIZED,
             EventTypes.EXECUTION_IN_PROGRESS -> {
                 showMessage("Execution in progress. Abort to modify.")
-                return
+                return false
             }
 
             EventTypes.EXECUTION_ABORTED -> {
                 showMessage("Return to intent before updating.")
-                return
+                return false
             }
 
             else -> {
                 // Hard safety fallback — no emission allowed in this state
                 showMessage("Action not allowed in current state.")
-                return
+                return false
             }
         }
 
     } catch (e: LedgerValidationException) {
         // CRITICAL: prevent crash propagation from ledger violations
         showMessage(e.message ?: "Invalid action")
+        return false
     } catch (e: Exception) {
         // Absolute safety net
         showMessage("Unexpected error. Action blocked.")
+        return false
     }
 }
 
@@ -327,16 +309,15 @@ fun ProjectScreen(projectId: String) {
             text         = inputText,
             onTextChange = { inputText = it },
             onSend       = {
-                var actionSucceeded = false
-                handleSend(
+                val succeeded = handleSend(
                     events      = events,
                     input       = inputText,
                     bridge      = bridge,
                     projectId   = projectId,
-                    onReload    = { actionSucceeded = true; reload() },
+                    onReload    = ::reload,
                     showMessage = { feedbackMessage = it }
                 )
-                if (actionSucceeded) {
+                if (succeeded) {
                     inputText       = ""
                     feedbackMessage = null
                 }

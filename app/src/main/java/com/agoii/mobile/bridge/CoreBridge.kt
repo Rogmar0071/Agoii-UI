@@ -14,6 +14,7 @@ import com.agoii.mobile.irs.*
 import com.agoii.mobile.observability.ExecutionObservability
 import com.agoii.mobile.observability.ExecutionTimeline
 import com.agoii.mobile.observability.ExecutionTrace
+import com.agoii.mobile.ui.UiSendBridge
 
 /**
  * CoreBridge — mobile runtime adapter.
@@ -28,7 +29,7 @@ import com.agoii.mobile.observability.ExecutionTrace
  * IRS is informational context included in the INTENT_SUBMITTED payload.
  * Ledger remains the sole execution authority.
  */
-class CoreBridge(context: Context) {
+class CoreBridge(context: Context) : UiSendBridge {
 
     private val eventStore          = EventStore(context)
     private val ledger              = EventLedger(eventStore)
@@ -99,6 +100,31 @@ class CoreBridge(context: Context) {
     }
 
     /**
+     * [UiSendBridge] implementation — simplified entry point used by [handleSend].
+     *
+     * Delegates to the full [submitIntent] overload with standard UI defaults
+     * (no externally-sourced evidence or swarm configuration required from the caller).
+     */
+    override fun submitIntent(projectId: String, objective: String): Boolean =
+        submitIntent(
+            projectId         = projectId,
+            rawFields         = mapOf(
+                "objective"   to objective,
+                "constraints" to "",
+                "environment" to "",
+                "resources"   to ""
+            ),
+            evidence          = mapOf(
+                "objective"   to listOf(EvidenceRef(id = "ev-obj", source = "user-input")),
+                "constraints" to listOf(EvidenceRef(id = "ev-cst", source = "user-input")),
+                "environment" to listOf(EvidenceRef(id = "ev-env", source = "user-input")),
+                "resources"   to listOf(EvidenceRef(id = "ev-res", source = "user-input"))
+            ),
+            swarmConfig       = SwarmConfig(agentCount = 2, consensusRule = ConsensusRule.MAJORITY),
+            objective         = objective
+        )
+
+    /**
      * Update an existing intent with a revised objective.
      *
      * Appends INTENT_UPDATED to the ledger. Only valid when the last event is
@@ -106,7 +132,7 @@ class CoreBridge(context: Context) {
      *
      * @return true always — caller is responsible for pre-checking state legality.
      */
-    fun updateIntent(projectId: String, objective: String): Boolean {
+    override fun updateIntent(projectId: String, objective: String): Boolean {
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_UPDATED,
