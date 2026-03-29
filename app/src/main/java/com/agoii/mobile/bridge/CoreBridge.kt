@@ -1,6 +1,11 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
+import com.agoii.mobile.commit.ApprovalStatus
+import com.agoii.mobile.commit.CommitContract
+import com.agoii.mobile.contractor.ContractorCandidate
+import com.agoii.mobile.contractor.ContractorRegistry
+import com.agoii.mobile.contractor.ContractorVerificationEngine
 import com.agoii.mobile.core.*
 import com.agoii.mobile.execution.BuildExecutor
 import com.agoii.mobile.execution.ExecutionAuthority
@@ -34,7 +39,10 @@ class CoreBridge(context: Context) {
     private val buildExecutor       = BuildExecutor()
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
-    private val executionAuthority  = ExecutionAuthority()   // no registry wired — execution attempts produce TASK_EXECUTED(FAILURE)+RCF-1
+
+    // FS-1: Build a verified ContractorRegistry so ExecutionAuthority can succeed
+    private val contractorRegistry  = buildContractorRegistry()
+    private val executionAuthority  = ExecutionAuthority(contractorRegistry)
 
     private val observability       = ExecutionObservability(ledger)
 
@@ -134,7 +142,11 @@ class CoreBridge(context: Context) {
                 EventTypes.EXECUTION_COMPLETED -> {
                     val assemblyResult = executionAuthority.assembleFromLedger(projectId, ledger)
                     if (assemblyResult is com.agoii.mobile.assembly.AssemblyExecutionResult.Assembled) {
-                        executionAuthority.runIcsFromLedger(projectId, ledger)
+                        val icsResult = executionAuthority.runIcsFromLedger(projectId, ledger)
+                        // FS-3: After ICS_COMPLETED, emit COMMIT_CONTRACT (approval gate)
+                        if (icsResult is com.agoii.mobile.ics.IcsExecutionResult.Processed) {
+                            emitCommitContract(projectId, icsResult)
+                        }
                     }
                 }
             }
@@ -142,6 +154,40 @@ class CoreBridge(context: Context) {
         }
 
         return null
+    }
+
+    /**
+     * FS-3: Emit COMMIT_CONTRACT after ICS_COMPLETED.
+     *
+     * Derives proposed actions deterministically from the ICS output entries.
+     * NO real-world execution occurs here — user approval is required.
+     */
+    private fun emitCommitContract(
+        projectId: String,
+        icsResult: com.agoii.mobile.ics.IcsExecutionResult.Processed
+    ) {
+        val icsOutput = icsResult.icsOutput
+        val proposedActions = icsOutput.entries.map { entry ->
+            "${entry.contractId}:${entry.artifactReference}"
+        }
+
+        // Read contractSetId and finalArtifactReference from the ledger (ASSEMBLY_COMPLETED)
+        val events = ledger.loadEvents(projectId)
+        val assemblyCompleted = events.lastOrNull { it.type == EventTypes.ASSEMBLY_COMPLETED }
+        val contractSetId          = assemblyCompleted?.payload?.get("contractSetId")?.toString() ?: ""
+        val finalArtifactReference = assemblyCompleted?.payload?.get("finalArtifactReference")?.toString() ?: ""
+
+        ledger.appendEvent(
+            projectId,
+            EventTypes.COMMIT_CONTRACT,
+            mapOf(
+                "report_reference"       to icsOutput.reportReference,
+                "contractSetId"          to contractSetId,
+                "finalArtifactReference" to finalArtifactReference,
+                "proposedActions"        to proposedActions,
+                "approvalStatus"         to ApprovalStatus.PENDING.name
+            )
+        )
     }
 
     private fun resolveContractName(events: List<Event>, contractId: String): String {
@@ -162,6 +208,44 @@ class CoreBridge(context: Context) {
     /** Append a contracts_approved event directly to the ledger (explicit governance gate). */
     fun approveContracts(projectId: String) {
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
+    }
+
+    /**
+     * FS-3: Approve the pending commit contract → emits COMMIT_EXECUTED.
+     *
+     * Real-world execution is triggered ONLY after this call.
+     */
+    fun approveCommit(projectId: String) {
+        val events = ledger.loadEvents(projectId)
+        val commitEvent = events.lastOrNull { it.type == EventTypes.COMMIT_CONTRACT }
+            ?: return
+        val reportReference = commitEvent.payload["report_reference"]?.toString() ?: ""
+        ledger.appendEvent(
+            projectId,
+            EventTypes.COMMIT_EXECUTED,
+            mapOf(
+                "report_reference" to reportReference,
+                "approvalStatus"   to ApprovalStatus.APPROVED.name
+            )
+        )
+    }
+
+    /**
+     * FS-3: Reject the pending commit contract → emits COMMIT_ABORTED.
+     */
+    fun rejectCommit(projectId: String) {
+        val events = ledger.loadEvents(projectId)
+        val commitEvent = events.lastOrNull { it.type == EventTypes.COMMIT_CONTRACT }
+            ?: return
+        val reportReference = commitEvent.payload["report_reference"]?.toString() ?: ""
+        ledger.appendEvent(
+            projectId,
+            EventTypes.COMMIT_ABORTED,
+            mapOf(
+                "report_reference" to reportReference,
+                "approvalStatus"   to ApprovalStatus.REJECTED.name
+            )
+        )
     }
 
     /** Load all events from the ledger (read-only). */
@@ -204,4 +288,35 @@ class CoreBridge(context: Context) {
 
     fun replayIrs(sessionId: String): List<IrsSnapshot> =
         irsOrchestrator.replayHistory(sessionId)
+
+    // ─── Private helpers ──────────────────────────────────────────────────────
+
+    /**
+     * FS-1: Build a verified ContractorRegistry with a default system contractor.
+     *
+     * Uses the standard [ContractorVerificationEngine] pipeline to produce a VERIFIED
+     * contractor profile. Only registered contractors are used — no hardcoded IDs bypass
+     * the verification gate.
+     */
+    private fun buildContractorRegistry(): ContractorRegistry {
+        val registry = ContractorRegistry()
+        val engine   = ContractorVerificationEngine()
+
+        val candidate = ContractorCandidate(
+            id               = "system-contractor-001",
+            source           = "system",
+            capabilityClaims = mapOf(
+                "constraintObedience" to "high",
+                "structuralAccuracy"  to "high",
+                "driftScore"          to "low",
+                "complexityCapacity"  to "high",
+                "reliability"         to "high"
+            )
+        )
+
+        val result = engine.verify(candidate)
+        result.assignedProfile?.let { registry.registerVerified(it) }
+
+        return registry
+    }
 }

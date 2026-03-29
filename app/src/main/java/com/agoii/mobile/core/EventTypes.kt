@@ -20,6 +20,11 @@ object EventTypes {
     const val ICS_STARTED         = "ics_started"
     const val ICS_COMPLETED       = "ics_completed"
 
+    // ── Commit contract lifecycle events ─────────────────────────────────────
+    const val COMMIT_CONTRACT     = "commit_contract"
+    const val COMMIT_EXECUTED     = "commit_executed"
+    const val COMMIT_ABORTED      = "commit_aborted"
+
     // ── Task execution lifecycle events ──────────────────────────────────────
     const val TASK_CREATED            = "task_created"
     const val TASK_ASSIGNED           = "task_assigned"
@@ -65,7 +70,10 @@ object EventTypes {
         RECOVERY_CONTRACT,
         CONTRACT_CREATED,
         CONTRACT_VALIDATED,
-        CONTRACT_APPROVED
+        CONTRACT_APPROVED,
+        COMMIT_CONTRACT,
+        COMMIT_EXECUTED,
+        COMMIT_ABORTED
     )
 
     /** Default number of contracts generated per intent. */

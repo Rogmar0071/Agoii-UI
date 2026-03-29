@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.agoii.mobile.bridge.CoreBridge
 import com.agoii.mobile.core.AuditResult
 import com.agoii.mobile.core.Event
+import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.core.ReplayVerification
 import com.agoii.mobile.interaction.InteractionContract
@@ -38,11 +39,12 @@ import com.agoii.mobile.ui.theme.*
  * ProjectScreen — the single screen composable.
  *
  * Layout (fixed, per spec):
- *   HEADER      — project_id + audit status
- *   STATE PANEL — derived from replay only
- *   EVENT LIST  — raw ledger events (scrollable, no grouping)
- *   ACTION BAR  — RUN STEP + conditional APPROVE
- *   INPUT BAR   — text field + SEND
+ *   HEADER          — project_id + audit status
+ *   STATE PANEL     — derived from replay only (executionValid/assemblyValid/icsValid)
+ *   EVENT LIST      — raw ledger events (scrollable, coloured by phase)
+ *   COMMIT PANEL    — shown when COMMIT_CONTRACT is PENDING (propose actions + approve/reject)
+ *   ACTION BAR      — RUN STEP + conditional APPROVE (contracts gate)
+ *   INPUT BAR       — text field + SEND
  *
  * UI Rules:
  *  - No auto-execution loops.
@@ -50,6 +52,9 @@ import com.agoii.mobile.ui.theme.*
  *  - Each user action = exactly ONE core operation.
  *  - After every action: reload events, state, and audit from bridge.
  *  - No caching.
+ *  - UI reads from EventLedger ONLY (via bridge).
+ *  - NO business logic in UI.
+ *  - NO direct execution from UI.
  */
 @Composable
 fun ProjectScreen(projectId: String) {
@@ -103,8 +108,11 @@ fun ProjectScreen(projectId: String) {
         Header(projectId = projectId, auditResult = auditResult)
 
         // ── STATE PANEL ─────────────────────────────────────────────────────
-        StatePanel(verification = verification,
-                   interactionResult = interactionResult)
+        StatePanel(
+            verification      = verification,
+            replayState       = replayState,
+            interactionResult = interactionResult
+        )
 
         // ── EVENT LIST ──────────────────────────────────────────────────────
         LazyColumn(
@@ -134,12 +142,39 @@ fun ProjectScreen(projectId: String) {
             }
         }
 
+        // ── COMMIT PANEL — shown only when COMMIT_CONTRACT is PENDING ────────
+        val commitState = replayState?.commit
+        if (commitState != null && commitState.commitPending) {
+            CommitPanel(
+                reportReference       = commitState.reportReference,
+                finalArtifactReference = commitState.finalArtifactReference,
+                proposedActions       = commitState.proposedActions,
+                onApprove             = {
+                    bridge.approveCommit(projectId)
+                    reload()
+                },
+                onReject              = {
+                    bridge.rejectCommit(projectId)
+                    reload()
+                }
+            )
+        }
+
+        // ── COMMIT RESULT FEEDBACK ───────────────────────────────────────────
+        if (commitState != null && (commitState.commitApproved || commitState.commitRejected)) {
+            CommitResultBanner(approved = commitState.commitApproved)
+        }
+
         // ── ACTION BAR ──────────────────────────────────────────────────────
         val showApprove = replayState?.contracts?.valid == true &&
                           replayState?.execution?.assignedTasks == 0
 
+        // Hide RUN STEP once commit is pending (user must decide on commit first)
+        val showRunStep = commitState?.commitPending != true
+
         ActionBar(
             showApprove   = showApprove,
+            showRunStep   = showRunStep,
             onRunStep     = {
                 bridge.runGovernorStep(projectId)
                 reload()
@@ -230,8 +265,11 @@ private fun Header(projectId: String, auditResult: AuditResult?) {
 // ── STATE PANEL ──────────────────────────────────────────────────────────────
 
 @Composable
-private fun StatePanel(verification: ReplayVerification?,
-                       interactionResult: InteractionResult?) {
+private fun StatePanel(
+    verification:      ReplayVerification?,
+    replayState:       ReplayStructuralState?,
+    interactionResult: InteractionResult?
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -240,14 +278,50 @@ private fun StatePanel(verification: ReplayVerification?,
     ) {
         Text("STATE  (from replay)", color = OnSurface.copy(alpha = 0.6f), fontSize = 11.sp)
         Spacer(modifier = Modifier.height(4.dp))
+
+        // ── Lifecycle truth layer (FS-2) ─────────────────────────────────────
+        if (replayState != null) {
+            val execColor  = if (replayState.executionValid) EventComplete else OnSurface.copy(alpha = 0.5f)
+            val asmColor   = if (replayState.assemblyValid)  EventComplete else OnSurface.copy(alpha = 0.5f)
+            val icsColor   = if (replayState.icsValid)       EventComplete else OnSurface.copy(alpha = 0.5f)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("executionValid=${replayState.executionValid}", color = execColor, style = MonoStyle, fontSize = 10.sp)
+                Text("assemblyValid=${replayState.assemblyValid}",  color = asmColor,  style = MonoStyle, fontSize = 10.sp)
+                Text("icsValid=${replayState.icsValid}",            color = icsColor,  style = MonoStyle, fontSize = 10.sp)
+            }
+            // Per-contract execution status
+            val exec = replayState.execution
+            if (exec.totalTasks > 0) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text  = "tasks: assigned=${exec.assignedTasks}  completed=${exec.completedTasks}" +
+                            "  success=${exec.successfulTasks}/${exec.totalTasks}",
+                    color = OnSurface.copy(alpha = 0.7f),
+                    style = MonoStyle,
+                    fontSize = 10.sp
+                )
+            }
+            // ICS output reference when available
+            if (replayState.ics.icsCompleted) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text  = "ics_output=${replayState.ics.icsOutputReference}",
+                    color = EventComplete.copy(alpha = 0.8f),
+                    style = MonoStyle,
+                    fontSize = 10.sp
+                )
+            }
+        }
+
         if (interactionResult != null) {
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text  = interactionResult.content,
                 color = OnBackground,
                 style = MonoStyle,
                 fontSize = 11.sp
             )
-        } else {
+        } else if (replayState == null) {
             Text(
                 text     = "Loading…",
                 color    = OnSurface.copy(alpha = 0.4f),
@@ -276,20 +350,39 @@ private fun StatePanel(verification: ReplayVerification?,
 
 // ── EVENT ROW ────────────────────────────────────────────────────────────────
 
+private fun eventColor(type: String): Color = when {
+    type == EventTypes.INTENT_SUBMITTED ||
+    type == EventTypes.CONTRACTS_GENERATED ||
+    type == EventTypes.CONTRACTS_READY ||
+    type == EventTypes.CONTRACTS_APPROVED  -> EventApproval
+    type == EventTypes.RECOVERY_CONTRACT ||
+    type == EventTypes.CONTRACT_FAILED     -> Color(0xFFD32F2F)
+    type == EventTypes.TASK_EXECUTED        -> EventExecution
+    type == EventTypes.ASSEMBLY_COMPLETED ||
+    type == EventTypes.ICS_COMPLETED       -> EventComplete
+    type == EventTypes.COMMIT_CONTRACT     -> Color(0xFFFFA726)  // amber — awaiting approval
+    type == EventTypes.COMMIT_EXECUTED     -> EventComplete
+    type == EventTypes.COMMIT_ABORTED      -> Color(0xFFD32F2F)
+    else                                   -> EventSystem
+}
+
 @Composable
 private fun EventRow(event: Event) {
+    val color = eventColor(event.type)
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(EventSystem.copy(alpha = 0.15f), shape = RoundedCornerShape(6.dp))
-            .border(1.dp, EventSystem.copy(alpha = 0.4f), shape = RoundedCornerShape(6.dp))
+            .background(color.copy(alpha = 0.12f), shape = RoundedCornerShape(6.dp))
+            .border(1.dp, color.copy(alpha = 0.4f), shape = RoundedCornerShape(6.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         Column {
-            Text(text = event.type, color = EventSystem, style = MonoStyle, fontSize = 12.sp)
+            Text(text = event.type, color = color, style = MonoStyle, fontSize = 12.sp)
             if (event.payload.isNotEmpty()) {
                 Text(
-                    text  = event.payload.entries.joinToString(" | ") { "${it.key}=${it.value}" },
+                    text  = event.payload.entries
+                        .filter { it.key != "proposedActions" }  // rendered separately in CommitPanel
+                        .joinToString(" | ") { "${it.key}=${it.value}" },
                     color = OnSurface.copy(alpha = 0.7f),
                     style = MonoStyle,
                     fontSize = 10.sp
@@ -299,11 +392,84 @@ private fun EventRow(event: Event) {
     }
 }
 
+// ── COMMIT PANEL ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun CommitPanel(
+    reportReference:        String,
+    finalArtifactReference: String,
+    proposedActions:        List<String>,
+    onApprove:              () -> Unit,
+    onReject:               () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFFFA726).copy(alpha = 0.12f))
+            .border(1.dp, Color(0xFFFFA726).copy(alpha = 0.5f))
+            .padding(horizontal = 16.dp, vertical = 10.dp)
+    ) {
+        Text(
+            text  = "COMMIT CONTRACT — APPROVAL REQUIRED",
+            color = Color(0xFFFFA726),
+            style = LabelStyle,
+            fontSize = 12.sp
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text("report_reference=$reportReference", color = OnSurface.copy(alpha = 0.7f), style = MonoStyle, fontSize = 10.sp)
+        Text("finalArtifact=$finalArtifactReference",    color = OnSurface.copy(alpha = 0.7f), style = MonoStyle, fontSize = 10.sp)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text("PROPOSED ACTIONS:", color = OnSurface.copy(alpha = 0.6f), style = MonoStyle, fontSize = 10.sp)
+        proposedActions.forEachIndexed { i, action ->
+            Text("  ${i + 1}. $action", color = OnBackground, style = MonoStyle, fontSize = 10.sp)
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick  = onApprove,
+                modifier = Modifier.weight(1f),
+                colors   = ButtonDefaults.buttonColors(containerColor = EventComplete)
+            ) {
+                Text("APPROVE COMMIT", color = Color.White, fontSize = 12.sp)
+            }
+            Button(
+                onClick  = onReject,
+                modifier = Modifier.weight(1f),
+                colors   = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+            ) {
+                Text("REJECT COMMIT", color = Color.White, fontSize = 12.sp)
+            }
+        }
+    }
+    Divider(color = Surface, thickness = 1.dp)
+}
+
+// ── COMMIT RESULT BANNER ─────────────────────────────────────────────────────
+
+@Composable
+private fun CommitResultBanner(approved: Boolean) {
+    val (color, label) = if (approved) {
+        EventComplete to "✓ COMMIT EXECUTED — real-world action triggered"
+    } else {
+        Color(0xFFD32F2F) to "✗ COMMIT ABORTED — no real-world action taken"
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(color.copy(alpha = 0.15f))
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+    ) {
+        Text(text = label, color = color, style = MonoStyle, fontSize = 11.sp)
+    }
+    Divider(color = Surface, thickness = 1.dp)
+}
+
 // ── ACTION BAR ───────────────────────────────────────────────────────────────
 
 @Composable
 private fun ActionBar(
     showApprove: Boolean,
+    showRunStep: Boolean,
     onRunStep:   () -> Unit,
     onApprove:   () -> Unit
 ) {
@@ -314,18 +480,20 @@ private fun ActionBar(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Button(
-            onClick  = onRunStep,
-            modifier = Modifier.weight(1f),
-            colors   = ButtonDefaults.buttonColors(containerColor = Primary)
-        ) {
-            Text("RUN STEP", color = Color.Black, fontSize = 13.sp)
+        if (showRunStep) {
+            Button(
+                onClick  = onRunStep,
+                modifier = Modifier.weight(1f),
+                colors   = ButtonDefaults.buttonColors(containerColor = Primary)
+            ) {
+                Text("RUN STEP", color = Color.Black, fontSize = 13.sp)
+            }
         }
 
         if (showApprove) {
             Button(
                 onClick  = onApprove,
-                modifier = Modifier.weight(1f),
+                modifier = if (showRunStep) Modifier.weight(1f) else Modifier.fillMaxWidth(),
                 colors   = ButtonDefaults.buttonColors(containerColor = EventApproval)
             ) {
                 Text("APPROVE", color = Color.White, fontSize = 13.sp)
