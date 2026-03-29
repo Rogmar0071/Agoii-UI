@@ -125,6 +125,21 @@ class Governor(
 
         return when (last.type) {
 
+            // User approves contracts → Governor advances to EXECUTION_STARTED
+            EventTypes.CONTRACTS_APPROVED -> {
+                Event(type = EventTypes.EXECUTION_STARTED, payload = emptyMap())
+            }
+
+            // EXECUTION_STARTED → begin first contract
+            EventTypes.EXECUTION_STARTED -> {
+                val total = deriveTotal(events) ?: return null
+                canIssue(1) ?: return null
+                Event(
+                    type    = EventTypes.CONTRACT_STARTED,
+                    payload = mapOf("position" to 1, "total" to total, "contract_id" to "contract_1")
+                )
+            }
+
             // CONTRACTS_GENERATED is the Execution Authority's responsibility.
             // Governor does not derive contracts; it waits.
             EventTypes.INTENT_SUBMITTED -> null
@@ -291,14 +306,15 @@ class Governor(
      * Derives the report reference (RRID) from the first [EventTypes.CONTRACTS_GENERATED]
      * event in the ledger for RRIL-1 propagation into TASK_ASSIGNED payload.
      *
-     * Reads "report_id" (written by ExecutionEntryPoint) with "report_reference" as fallback.
+     * Reads "report_reference" (canonical key after FS-5 normalization) with "report_id"
+     * as legacy fallback for backward compatibility.
      * Returns empty string when no CONTRACTS_GENERATED event or field is found.
      */
     private fun deriveReportReference(events: List<Event>): String {
         val contractsGen = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
             ?: return ""
-        return contractsGen.payload["report_id"]?.toString()
-            ?: contractsGen.payload["report_reference"]?.toString()
+        return contractsGen.payload["report_reference"]?.toString()
+            ?: contractsGen.payload["report_id"]?.toString()
             ?: ""
     }
 

@@ -1,6 +1,10 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
+import com.agoii.mobile.commit.ApprovalStatus
+import com.agoii.mobile.contractor.ContractorCandidate
+import com.agoii.mobile.contractor.ContractorRegistry
+import com.agoii.mobile.contractor.ContractorVerificationEngine
 import com.agoii.mobile.core.*
 import com.agoii.mobile.execution.BuildExecutor
 import com.agoii.mobile.execution.ExecutionAuthority
@@ -34,7 +38,10 @@ class CoreBridge(context: Context) {
     private val buildExecutor       = BuildExecutor()
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
-    private val executionAuthority  = ExecutionAuthority()   // no registry wired — execution attempts produce TASK_EXECUTED(FAILURE)+RCF-1
+
+    // FS-1: Build a verified ContractorRegistry so ExecutionAuthority can succeed
+    private val contractorRegistry  = buildContractorRegistry()
+    private val executionAuthority  = ExecutionAuthority(contractorRegistry)
 
     private val observability       = ExecutionObservability(ledger)
 
@@ -134,7 +141,11 @@ class CoreBridge(context: Context) {
                 EventTypes.EXECUTION_COMPLETED -> {
                     val assemblyResult = executionAuthority.assembleFromLedger(projectId, ledger)
                     if (assemblyResult is com.agoii.mobile.assembly.AssemblyExecutionResult.Assembled) {
-                        executionAuthority.runIcsFromLedger(projectId, ledger)
+                        val icsResult = executionAuthority.runIcsFromLedger(projectId, ledger)
+                        // FS-3: After ICS_COMPLETED, emit COMMIT_CONTRACT (approval gate)
+                        if (icsResult is com.agoii.mobile.ics.IcsExecutionResult.Processed) {
+                            emitCommitContract(projectId, icsResult)
+                        }
                     }
                 }
             }
@@ -142,6 +153,40 @@ class CoreBridge(context: Context) {
         }
 
         return null
+    }
+
+    /**
+     * FS-3: Emit COMMIT_CONTRACT after ICS_COMPLETED.
+     *
+     * Derives proposed actions deterministically from the ICS output entries.
+     * NO real-world execution occurs here — user approval is required.
+     */
+    private fun emitCommitContract(
+        projectId: String,
+        icsResult: com.agoii.mobile.ics.IcsExecutionResult.Processed
+    ) {
+        val icsOutput = icsResult.icsOutput
+        val proposedActions = icsOutput.entries.map { entry ->
+            "${entry.contractId}:${entry.artifactReference}"
+        }
+
+        // Read contractSetId and finalArtifactReference from the ledger (ASSEMBLY_COMPLETED)
+        val events = ledger.loadEvents(projectId)
+        val assemblyCompleted = events.lastOrNull { it.type == EventTypes.ASSEMBLY_COMPLETED }
+        val contractSetId          = assemblyCompleted?.payload?.get("contractSetId")?.toString() ?: ""
+        val finalArtifactReference = assemblyCompleted?.payload?.get("finalArtifactReference")?.toString() ?: ""
+
+        ledger.appendEvent(
+            projectId,
+            EventTypes.COMMIT_CONTRACT,
+            mapOf(
+                "report_reference"       to icsOutput.reportReference,
+                "contractSetId"          to contractSetId,
+                "finalArtifactReference" to finalArtifactReference,
+                "proposedActions"        to proposedActions,
+                "approvalStatus"         to ApprovalStatus.PENDING.name
+            )
+        )
     }
 
     private fun resolveContractName(events: List<Event>, contractId: String): String {
@@ -162,6 +207,26 @@ class CoreBridge(context: Context) {
     /** Append a contracts_approved event directly to the ledger (explicit governance gate). */
     fun approveContracts(projectId: String) {
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
+    }
+
+    /**
+     * Signal user approval of the pending COMMIT_CONTRACT.
+     *
+     * GOVERNANCE RULE (V1/V4): CoreBridge is a signal router only.
+     * ExecutionAuthority is the sole writer of COMMIT_EXECUTED.
+     */
+    fun signalCommitApproval(projectId: String) {
+        executionAuthority.resolveCommitDecision(projectId, ledger, approved = true)
+    }
+
+    /**
+     * Signal user rejection of the pending COMMIT_CONTRACT.
+     *
+     * GOVERNANCE RULE (V1/V4): CoreBridge is a signal router only.
+     * ExecutionAuthority is the sole writer of COMMIT_ABORTED.
+     */
+    fun signalCommitRejection(projectId: String) {
+        executionAuthority.resolveCommitDecision(projectId, ledger, approved = false)
     }
 
     /** Load all events from the ledger (read-only). */
@@ -204,4 +269,41 @@ class CoreBridge(context: Context) {
 
     fun replayIrs(sessionId: String): List<IrsSnapshot> =
         irsOrchestrator.replayHistory(sessionId)
+
+    // ─── Private helpers ──────────────────────────────────────────────────────
+
+    /**
+     * FS-1 / V5: Build a verified ContractorRegistry with the system contractor.
+     *
+     * DETERMINISM GUARANTEE (V5): [ContractorVerificationEngine.verify] is a pure function
+     * with no external dependencies. [DEFAULT_CONTRACTOR_CLAIMS] is a compile-time constant.
+     * Same input → same output on every run; no environment dependency, no discovery variance.
+     */
+    private fun buildContractorRegistry(): ContractorRegistry {
+        val registry = ContractorRegistry()
+        val engine   = ContractorVerificationEngine()
+
+        val candidate = ContractorCandidate(
+            id               = DEFAULT_CONTRACTOR_ID,
+            source           = DEFAULT_CONTRACTOR_SOURCE,
+            capabilityClaims = DEFAULT_CONTRACTOR_CLAIMS
+        )
+
+        val result = engine.verify(candidate)
+        result.assignedProfile?.let { registry.registerVerified(it) }
+
+        return registry
+    }
+
+    companion object {
+        private const val DEFAULT_CONTRACTOR_ID     = "system-contractor-001"
+        private const val DEFAULT_CONTRACTOR_SOURCE = "system"
+        private val DEFAULT_CONTRACTOR_CLAIMS = mapOf(
+            "constraintObedience" to "high",
+            "structuralAccuracy"  to "high",
+            "driftScore"          to "low",
+            "complexityCapacity"  to "high",
+            "reliability"         to "high"
+        )
+    }
 }

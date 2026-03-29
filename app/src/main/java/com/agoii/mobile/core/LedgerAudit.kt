@@ -138,6 +138,12 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.CONTRACT_VALIDATED && to == EventTypes.RECOVERY_CONTRACT) return true
             // UCS-1 ingestion: approved contract enters execution spine
             if (from == EventTypes.CONTRACT_APPROVED && to == EventTypes.CONTRACTS_GENERATED) return true
+            // Commit layer: ICS_COMPLETED triggers COMMIT_CONTRACT gate
+            if (from == EventTypes.ICS_COMPLETED && to == EventTypes.COMMIT_CONTRACT) return true
+            // Commit layer: user approves → real-world execution
+            if (from == EventTypes.COMMIT_CONTRACT && to == EventTypes.COMMIT_EXECUTED) return true
+            // Commit layer: user rejects → execution aborted
+            if (from == EventTypes.COMMIT_CONTRACT && to == EventTypes.COMMIT_ABORTED) return true
             return false
         }
     }

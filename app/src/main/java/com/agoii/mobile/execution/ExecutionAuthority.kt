@@ -17,7 +17,8 @@
 //   - RCF-1 recovery contract issuance on failure
 // Phase 3 (assembleFromLedger):    Assembly pipeline after EXECUTION_COMPLETED.
 // Phase 4 (runIcsFromLedger):      ICS pipeline after ASSEMBLY_COMPLETED.
-// Phase 5 (route):                 Deterministic routing via UniversalContract execution
+// Phase 5 (resolveCommitDecision): Sole writer of COMMIT_EXECUTED / COMMIT_ABORTED (V1 — single authority).
+// Phase 6 (route):                 Deterministic routing via UniversalContract execution
 //                                  semantics (UCS-1 — PURE, no side effects).
 // Phase 6 (ingestUniversalContract): UCS-1 ingestion pipeline (GOVERNANCE INPUT ONLY):
 //   Surface 2 — validation (UniversalContractValidator)
@@ -710,7 +711,44 @@ class ExecutionAuthority(
         ledger:    EventLedger
     ): IcsExecutionResult = icsModule.process(projectId, ledger)
 
-    // ── Private helpers ───────────────────────────────────────────────────────
+    // ═══════════════════════════════════════════════════════════════════════
+    // PHASE 5 — Commit resolution (single write authority — AERP-1)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Resolve the pending COMMIT_CONTRACT by writing COMMIT_EXECUTED or COMMIT_ABORTED.
+     *
+     * GOVERNANCE RULE: ExecutionAuthority is the ONLY writer of these events.
+     * CoreBridge is a signal router that delegates here; the UI has zero write authority.
+     *
+     * @param projectId Ledger identifier.
+     * @param ledger    EventLedger — single write authority.
+     * @param approved  true → COMMIT_EXECUTED; false → COMMIT_ABORTED.
+     */
+    fun resolveCommitDecision(projectId: String, ledger: EventLedger, approved: Boolean) {
+        val events = ledger.loadEvents(projectId)
+        val commitEvent = events.lastOrNull { it.type == EventTypes.COMMIT_CONTRACT } ?: return
+        val reportReference = commitEvent.payload["report_reference"]?.toString() ?: ""
+        if (approved) {
+            ledger.appendEvent(
+                projectId,
+                EventTypes.COMMIT_EXECUTED,
+                mapOf(
+                    "report_reference" to reportReference,
+                    "approvalStatus"   to "APPROVED"
+                )
+            )
+        } else {
+            ledger.appendEvent(
+                projectId,
+                EventTypes.COMMIT_ABORTED,
+                mapOf(
+                    "report_reference" to reportReference,
+                    "approvalStatus"   to "REJECTED"
+                )
+            )
+        }
+    }
 
     // ─── AGOII-ANCHOR-STATE-IMMUTABILITY-006 public surface ──────────────────
 

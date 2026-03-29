@@ -93,8 +93,9 @@ class ValidationLayer {
                 firstSeqViolationAt  = i
             }
 
-            // Terminal detection — ICS_COMPLETED anywhere in simulated
-            if (ev.type == EventTypes.ICS_COMPLETED) isTerminal = true
+            // Terminal detection — COMMIT_EXECUTED or COMMIT_ABORTED close the full lifecycle.
+            // ICS_COMPLETED is no longer terminal (COMMIT_CONTRACT follows it).
+            if (ev.type == EventTypes.COMMIT_EXECUTED || ev.type == EventTypes.COMMIT_ABORTED) isTerminal = true
 
             // Contract tracking
             when (ev.type) {
@@ -198,6 +199,10 @@ class ValidationLayer {
             EventTypes.CONTRACT_CREATED    -> checkContractCreated(projectId, payload)
             EventTypes.CONTRACT_VALIDATED  -> checkContractValidatedEvent(projectId, payload)
             EventTypes.CONTRACT_APPROVED   -> checkContractApproved(projectId, payload)
+            // Commit contract lifecycle events
+            EventTypes.COMMIT_CONTRACT     -> checkCommitContract(projectId, payload)
+            EventTypes.COMMIT_EXECUTED     -> checkCommitResult(projectId, payload, EventTypes.COMMIT_EXECUTED)
+            EventTypes.COMMIT_ABORTED      -> checkCommitResult(projectId, payload, EventTypes.COMMIT_ABORTED)
         }
     }
 
@@ -732,11 +737,11 @@ class ValidationLayer {
         // Invariant 4 — Contract Coverage: delegated to checkExecutionCompleted (payload layer)
         // Invariant 5 — No Skipped Lifecycle: delegated to checkTransition via LedgerAudit
 
-        // Invariant 6 — Terminal Lock: ICS_COMPLETED in simulated and candidate is not itself
-        // ICS_COMPLETED means the ledger was already terminal before this candidate arrived.
-        if (state.isTerminal && type != EventTypes.ICS_COMPLETED) {
+        // Invariant 6 — Terminal Lock: COMMIT_EXECUTED or COMMIT_ABORTED in simulated and candidate
+        // is not itself one of those events means the ledger was already terminal before this candidate.
+        if (state.isTerminal && type != EventTypes.COMMIT_EXECUTED && type != EventTypes.COMMIT_ABORTED) {
             throw LedgerValidationException(
-                "Invariant 6: terminal state reached (ICS_COMPLETED) — " +
+                "Invariant 6: terminal state reached (COMMIT_EXECUTED/COMMIT_ABORTED) — " +
                     "no further events are permitted in '$projectId'"
             )
         }
@@ -787,6 +792,34 @@ class ValidationLayer {
         else      -> null
     }
 
+    private fun checkCommitContract(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.COMMIT_CONTRACT, payload, COMMIT_CONTRACT_KEYS)
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "COMMIT_CONTRACT missing or blank 'report_reference' in '$projectId'"
+            )
+        payload["contractSetId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "COMMIT_CONTRACT missing or blank 'contractSetId' in '$projectId'"
+            )
+        payload["finalArtifactReference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "COMMIT_CONTRACT missing or blank 'finalArtifactReference' in '$projectId'"
+            )
+        payload["approvalStatus"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "COMMIT_CONTRACT missing or blank 'approvalStatus' in '$projectId'"
+            )
+    }
+
+    private fun checkCommitResult(projectId: String, payload: Map<String, Any>, type: String) {
+        requireKeys(projectId, type, payload, COMMIT_RESULT_KEYS)
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "$type missing or blank 'report_reference' in '$projectId'"
+            )
+    }
+
     companion object {
         private val TASK_LIFECYCLE_TYPES    = setOf(
             EventTypes.TASK_ASSIGNED,
@@ -797,7 +830,7 @@ class ValidationLayer {
         )
         private val CONTRACTS_GENERATED_KEYS = setOf(
             "intentId", "contractSetId", "contracts", "total",
-            "report_id"   // RRIL-1: report reference field propagated from CONTRACTS_GENERATED into downstream events
+            "report_reference"   // RRIL-1: canonical RRID key (standardized from report_id)
         )
         private val CONTRACT_STARTED_KEYS   = setOf("position", "total", "contract_id")
         private val TASK_ASSIGNED_KEYS      = setOf(
@@ -835,5 +868,11 @@ class ValidationLayer {
         )
         private val CONTRACT_VALIDATED_KEYS  = setOf("contractId", "report_reference")
         private val CONTRACT_APPROVED_KEYS   = setOf("contractId", "report_reference", "executionRoute")
+        // Commit contract lifecycle event key sets
+        private val COMMIT_CONTRACT_KEYS     = setOf(
+            "report_reference", "contractSetId", "finalArtifactReference",
+            "proposedActions", "approvalStatus"
+        )
+        private val COMMIT_RESULT_KEYS       = setOf("report_reference", "approvalStatus")
     }
 }
