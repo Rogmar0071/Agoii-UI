@@ -244,8 +244,18 @@ fun ProjectScreen(projectId: String) {
             showApprove   = showApprove,
             showRunStep   = showRunStep,
             onRunStep     = {
-                bridge.runGovernorStep(projectId)
-                reload()
+                try {
+                    val result = bridge.runGovernorStep(projectId)
+                    if (result != null) {
+                        reload()
+                    } else {
+                        sendMessage = "No further actions available"
+                    }
+                } catch (e: LedgerValidationException) {
+                    sendMessage = "Operation not allowed in current state"
+                } catch (e: Exception) {
+                    sendMessage = "Execution failed. Please try again."
+                }
             },
             onApprove     = {
                 bridge.approveContracts(projectId)
