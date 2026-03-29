@@ -103,17 +103,20 @@ fun ProjectScreen(projectId: String) {
             .fillMaxSize()
             .background(Background)
             .statusBarsPadding()
+            .imePadding()
     ) {
         // ── HEADER ──────────────────────────────────────────────────────────
         Header(projectId = projectId, auditResult = auditResult)
 
-        // ── STATE PANEL ─────────────────────────────────────────────────────
-        StatePanel(
-            verification      = verification,
-            replayState       = replayState,
-            interactionResult = interactionResult,
-            events            = events
-        )
+        // ── STATE PANEL — only rendered when ledger has events (truth guard) ──
+        if (events.isNotEmpty()) {
+            StatePanel(
+                verification      = verification,
+                replayState       = replayState,
+                interactionResult = interactionResult,
+                events            = events
+            )
+        }
 
         // ── EVENT LIST ──────────────────────────────────────────────────────
         LazyColumn(
@@ -532,7 +535,7 @@ private fun InputBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .imePadding()
+            .navigationBarsPadding()
             .background(SurfaceVariant)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
