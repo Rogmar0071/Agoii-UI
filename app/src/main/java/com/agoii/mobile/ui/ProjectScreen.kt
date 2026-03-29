@@ -75,15 +75,6 @@ fun ProjectScreen(projectId: String) {
     /** Reload ALL data from the bridge after every action. No caching. */
     fun reload() {
         events       = bridge.loadEvents(projectId)
-        // IDLE STATE HARD GATE: do not access replay-derived state when no events exist.
-        // executionValid / commitValid are meaningless before any events are written.
-        if (events.isEmpty()) {
-            replayState       = null
-            auditResult       = null
-            verification      = null
-            interactionResult = null
-            return
-        }
         replayState  = bridge.replayState(projectId)
         auditResult  = bridge.auditLedger(projectId)
         verification = bridge.verifyReplay(projectId)
@@ -188,9 +179,8 @@ fun ProjectScreen(projectId: String) {
         val showApprove = replayState?.contracts?.valid == true &&
                           replayState?.execution?.assignedTasks == 0
 
-        // Hide RUN STEP in zero-event state (no events = idle, user must submit intent first)
-        // and once commit is pending (user must decide on commit first)
-        val showRunStep = events.isNotEmpty() && replayState?.commitPending != true
+        // Hide RUN STEP once commit is pending (user must decide on commit first)
+        val showRunStep = replayState?.commitPending != true
 
         ActionBar(
             showApprove   = showApprove,
