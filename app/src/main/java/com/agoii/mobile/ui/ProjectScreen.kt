@@ -237,15 +237,38 @@ fun ProjectScreen(projectId: String) {
         val showApprove = replayState?.contracts?.valid == true &&
                           replayState?.execution?.assignedTasks == 0
 
+        val lastEventType = events.lastOrNull()?.type
+        val canRunStep = lastEventType in RUN_STEP_ALLOWED_EVENTS
+
         // Hide RUN STEP once commit is pending (user must decide on commit first)
-        val showRunStep = replayState?.commitPending != true
+        val showRunStep = canRunStep && replayState?.commitPending != true
 
         ActionBar(
             showApprove   = showApprove,
             showRunStep   = showRunStep,
             onRunStep     = {
-                bridge.runGovernorStep(projectId)
-                reload()
+                // Hard containment: re-evaluate state at click time as defense in depth.
+                // showRunStep already guards visibility, but state may change between
+                // render and interaction (e.g., background reload).
+                val currentLastType = events.lastOrNull()?.type
+
+                if (currentLastType in RUN_STEP_ALLOWED_EVENTS) {
+                    try {
+                        // Returns null when ExecutionAuthority finds no further actions.
+                        val result = bridge.runGovernorStep(projectId)
+                        if (result != null) {
+                            reload()
+                        } else {
+                            sendMessage = "No further actions available"
+                        }
+                    } catch (e: LedgerValidationException) {
+                        sendMessage = "Operation not allowed in current state"
+                    } catch (e: Exception) {
+                        sendMessage = "Execution failed. Please try again."
+                    }
+                } else {
+                    sendMessage = "Action not allowed in current state"
+                }
             },
             onApprove     = {
                 bridge.approveContracts(projectId)
@@ -411,6 +434,18 @@ private fun StatePanel(
 
 /** Payload keys that are rendered in dedicated panels rather than the generic event row. */
 private val PAYLOAD_KEYS_EXCLUDED_FROM_ROW = setOf("proposedActions")
+
+/**
+ * Event types from which RUN STEP may be invoked.
+ * ExecutionAuthority.evaluate() is the authoritative execution gate; this set
+ * only prevents bridge calls in obviously invalid lifecycle positions.
+ */
+private val RUN_STEP_ALLOWED_EVENTS = setOf(
+    EventTypes.INTENT_SUBMITTED,
+    EventTypes.CONTRACTS_READY,
+    EventTypes.CONTRACT_STARTED,
+    EventTypes.TASK_COMPLETED
+)
 
 private fun eventColor(type: String): Color = when {
     type == EventTypes.INTENT_SUBMITTED ||
