@@ -303,20 +303,26 @@ class CoreBridge(context: Context) {
         val engine   = ContractorVerificationEngine()
 
         val candidate = ContractorCandidate(
-            id               = "system-contractor-001",
-            source           = "system",
-            capabilityClaims = mapOf(
-                "constraintObedience" to "high",
-                "structuralAccuracy"  to "high",
-                "driftScore"          to "low",
-                "complexityCapacity"  to "high",
-                "reliability"         to "high"
-            )
+            id               = DEFAULT_CONTRACTOR_ID,
+            source           = DEFAULT_CONTRACTOR_SOURCE,
+            capabilityClaims = DEFAULT_CONTRACTOR_CLAIMS
         )
 
         val result = engine.verify(candidate)
         result.assignedProfile?.let { registry.registerVerified(it) }
 
         return registry
+    }
+
+    companion object {
+        private const val DEFAULT_CONTRACTOR_ID     = "system-contractor-001"
+        private const val DEFAULT_CONTRACTOR_SOURCE = "system"
+        private val DEFAULT_CONTRACTOR_CLAIMS = mapOf(
+            "constraintObedience" to "high",
+            "structuralAccuracy"  to "high",
+            "driftScore"          to "low",
+            "complexityCapacity"  to "high",
+            "reliability"         to "high"
+        )
     }
 }

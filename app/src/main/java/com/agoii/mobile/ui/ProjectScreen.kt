@@ -350,6 +350,9 @@ private fun StatePanel(
 
 // ── EVENT ROW ────────────────────────────────────────────────────────────────
 
+/** Payload keys that are rendered in dedicated panels rather than the generic event row. */
+private val PAYLOAD_KEYS_EXCLUDED_FROM_ROW = setOf("proposedActions")
+
 private fun eventColor(type: String): Color = when {
     type == EventTypes.INTENT_SUBMITTED ||
     type == EventTypes.CONTRACTS_GENERATED ||
@@ -381,7 +384,7 @@ private fun EventRow(event: Event) {
             if (event.payload.isNotEmpty()) {
                 Text(
                     text  = event.payload.entries
-                        .filter { it.key != "proposedActions" }  // rendered separately in CommitPanel
+                        .filter { it.key !in PAYLOAD_KEYS_EXCLUDED_FROM_ROW }
                         .joinToString(" | ") { "${it.key}=${it.value}" },
                     color = OnSurface.copy(alpha = 0.7f),
                     style = MonoStyle,

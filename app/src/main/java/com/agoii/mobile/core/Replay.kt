@@ -111,7 +111,6 @@ class Replay(private val eventStore: EventRepository) {
                     commitPending = true
                     commitApproved = false
                     commitRejected = false
-                    @Suppress("UNCHECKED_CAST")
                     commitProposedActions = (event.payload["proposedActions"] as? List<String>) ?: emptyList()
                     commitFinalArtifactReference = event.payload["finalArtifactReference"]?.toString() ?: ""
                     commitReportReference = event.payload["report_reference"]?.toString() ?: ""
