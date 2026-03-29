@@ -668,8 +668,8 @@ class ExecutionAuthority(
      *
      * Delegates exclusively to [AssemblyModule], which:
      *  - enforces all trigger conditions (all contracts complete, no duplicate, CONTRACTS_GENERATED present)
-     *  - reconstructs [com.agoii.mobile.assembly.AssemblyInput] from ledger only (RRIL-1)
-     *  - appends ASSEMBLY_STARTED, ASSEMBLY_VALIDATED, ASSEMBLY_COMPLETED to [ledger]
+     *  - reads contract ordering from CONTRACT_COMPLETED events (RRIL-1)
+     *  - appends ASSEMBLY_STARTED and ASSEMBLY_COMPLETED to [ledger]
      *  - returns the structured [com.agoii.mobile.assembly.FinalArtifact]
      *
      * GOVERNANCE RULE: Governor MUST NOT call this method.
