@@ -23,6 +23,7 @@ import com.agoii.mobile.bridge.CoreBridge
 import com.agoii.mobile.core.AuditResult
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.core.LedgerValidationException
 import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.core.ReplayVerification
 import com.agoii.mobile.interaction.InteractionContract
@@ -34,6 +35,118 @@ import com.agoii.mobile.irs.ConsensusRule
 import com.agoii.mobile.irs.EvidenceRef
 import com.agoii.mobile.irs.SwarmConfig
 import com.agoii.mobile.ui.theme.*
+
+// ── CRASH CONTAINMENT: AGOII-HOTFIX-UI-EMISSION-GUARD-01 ────────────────────
+// Single entry point for all send actions. State-aware routing prevents illegal
+// event emission. All CoreBridge calls are wrapped to convert crashes into
+// user-visible feedback (no LedgerValidationException can propagate to the UI).
+
+/**
+ * State-aware send handler. Routes the user's input to the correct CoreBridge
+ * operation based on the current ledger phase, or shows a feedback message when
+ * the action is not permitted in the current state.
+ *
+ * RULE: UI MUST NEVER EMIT AN EVENT THAT VIOLATES LedgerAudit.
+ * ENFORCEMENT: every send action must go through this function.
+ */
+internal fun handleSend(
+    events:      List<Event>,
+    input:       String,
+    bridge:      CoreBridge,
+    projectId:   String,
+    onReload:    () -> Unit,
+    showMessage: (String) -> Unit
+) {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return
+
+    val lastEventType = events.lastOrNull()?.type
+
+    try {
+        when (lastEventType) {
+
+            null -> {
+                // First entry — no existing intent on this project
+                bridge.submitIntent(
+                    projectId         = projectId,
+                    rawFields         = mapOf(
+                        "objective"   to trimmed,
+                        "constraints" to "",
+                        "environment" to "",
+                        "resources"   to ""
+                    ),
+                    evidence          = mapOf(
+                        "objective"   to listOf(EvidenceRef(id = "ev-obj", source = "user-input")),
+                        "constraints" to listOf(EvidenceRef(id = "ev-cst", source = "user-input")),
+                        "environment" to listOf(EvidenceRef(id = "ev-env", source = "user-input")),
+                        "resources"   to listOf(EvidenceRef(id = "ev-res", source = "user-input"))
+                    ),
+                    swarmConfig       = SwarmConfig(
+                        agentCount    = 2,
+                        consensusRule = ConsensusRule.MAJORITY
+                    ),
+                    objective         = trimmed
+                )
+                onReload()
+            }
+
+            EventTypes.INTENT_SUBMITTED,
+            EventTypes.INTENT_UPDATED -> {
+                // Intent evolution phase — update the objective
+                bridge.updateIntent(projectId, trimmed)
+                onReload()
+            }
+
+            EventTypes.INTENT_FINALIZED -> {
+                showMessage("Intent finalized. Abort to modify.")
+                return
+            }
+
+            EventTypes.EXECUTION_AUTHORIZED,
+            EventTypes.EXECUTION_IN_PROGRESS -> {
+                showMessage("Execution in progress. Abort to modify.")
+                return
+            }
+
+            EventTypes.EXECUTION_ABORTED -> {
+                showMessage("Return to intent before updating.")
+                return
+            }
+
+            else -> {
+                // Hard safety fallback — no emission allowed in this state
+                showMessage("Action not allowed in current state.")
+                return
+            }
+        }
+
+    } catch (e: LedgerValidationException) {
+        // CRITICAL: prevent crash propagation from ledger violations
+        showMessage(e.message ?: "Invalid action")
+    } catch (e: Exception) {
+        // Absolute safety net
+        showMessage("Unexpected error. Action blocked.")
+    }
+}
+
+/**
+ * Maps the last event type to a human-readable UI phase name.
+ * Use this instead of scattered boolean flags for phase detection.
+ */
+internal fun resolveUiPhase(lastEventType: String?): String {
+    return when (lastEventType) {
+        null                              -> "NO_INTENT"
+        EventTypes.INTENT_SUBMITTED,
+        EventTypes.INTENT_UPDATED         -> "INTENT_PHASE"
+        EventTypes.INTENT_FINALIZED       -> "FINALIZED"
+        EventTypes.EXECUTION_AUTHORIZED,
+        EventTypes.EXECUTION_IN_PROGRESS  -> "EXECUTION"
+        EventTypes.EXECUTION_ABORTED      -> "ABORTED"
+        else                              -> "UNKNOWN"
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * ProjectScreen — the single screen composable.
@@ -69,6 +182,7 @@ fun ProjectScreen(projectId: String) {
     var verification      by remember { mutableStateOf<ReplayVerification?>(null) }
     var interactionResult by remember { mutableStateOf<InteractionResult?>(null) }
     var inputText         by remember { mutableStateOf("") }
+    var feedbackMessage   by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
 
@@ -203,35 +317,28 @@ fun ProjectScreen(projectId: String) {
             }
         )
 
+        // ── FEEDBACK BANNER ─────────────────────────────────────────────────
+        feedbackMessage?.let { msg ->
+            FeedbackBanner(message = msg, onDismiss = { feedbackMessage = null })
+        }
+
         // ── INPUT BAR ───────────────────────────────────────────────────────
         InputBar(
-            text      = inputText,
+            text         = inputText,
             onTextChange = { inputText = it },
-            onSend    = {
-                val objective = inputText.trim()
-                if (objective.isNotEmpty()) {
-                    bridge.submitIntent(
-                        projectId         = projectId,
-                        rawFields         = mapOf(
-                            "objective"   to objective,
-                            "constraints" to "",
-                            "environment" to "",
-                            "resources"   to ""
-                        ),
-                        evidence          = mapOf(
-                            "objective"   to listOf(EvidenceRef(id = "ev-obj",  source = "user-input")),
-                            "constraints" to listOf(EvidenceRef(id = "ev-cst",  source = "user-input")),
-                            "environment" to listOf(EvidenceRef(id = "ev-env",  source = "user-input")),
-                            "resources"   to listOf(EvidenceRef(id = "ev-res",  source = "user-input"))
-                        ),
-                        swarmConfig       = SwarmConfig(
-                            agentCount    = 2,
-                            consensusRule = ConsensusRule.MAJORITY
-                        ),
-                        objective         = objective
-                    )
-                    inputText = ""
-                    reload()
+            onSend       = {
+                var actionSucceeded = false
+                handleSend(
+                    events      = events,
+                    input       = inputText,
+                    bridge      = bridge,
+                    projectId   = projectId,
+                    onReload    = { actionSucceeded = true; reload() },
+                    showMessage = { feedbackMessage = it }
+                )
+                if (actionSucceeded) {
+                    inputText       = ""
+                    feedbackMessage = null
                 }
             }
         )
@@ -526,6 +633,32 @@ private fun ActionBar(
             ) {
                 Text("APPROVE", color = Color.White, fontSize = 13.sp)
             }
+        }
+    }
+}
+
+// ── FEEDBACK BANNER ───────────────────────────────────────────────────────────
+
+/** Displays a dismissible feedback message when an action is blocked or fails. */
+@Composable
+private fun FeedbackBanner(message: String, onDismiss: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF37474F))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text     = message,
+            color    = Color(0xFFFFCC02),
+            style    = MonoStyle,
+            fontSize = 11.sp,
+            modifier = Modifier.weight(1f)
+        )
+        TextButton(onClick = onDismiss) {
+            Text("✕", color = OnSurface.copy(alpha = 0.6f), fontSize = 12.sp)
         }
     }
 }

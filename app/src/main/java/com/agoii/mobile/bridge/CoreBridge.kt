@@ -99,6 +99,26 @@ class CoreBridge(context: Context) {
     }
 
     /**
+     * Update an existing intent with a revised objective.
+     *
+     * Appends INTENT_UPDATED to the ledger. Only valid when the last event is
+     * INTENT_SUBMITTED or INTENT_UPDATED (intent evolution phase).
+     *
+     * @return true always — caller is responsible for pre-checking state legality.
+     */
+    fun updateIntent(projectId: String, objective: String): Boolean {
+        ledger.appendEvent(
+            projectId,
+            EventTypes.INTENT_UPDATED,
+            mapOf(
+                "objective" to objective,
+                "updatedAt" to System.currentTimeMillis()
+            )
+        )
+        return true
+    }
+
+    /**
      * Trigger one execution step.
      *
      * Returns:

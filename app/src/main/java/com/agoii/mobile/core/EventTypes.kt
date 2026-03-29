@@ -37,6 +37,17 @@ object EventTypes {
     const val CONTRACT_FAILED         = "contract_failed"
     const val RECOVERY_CONTRACT       = "recovery_contract"
 
+    // ── Intent evolution lifecycle events ─────────────────────────────────────
+    // Added by AGOII-MQP-INTENT-EVOLUTION-EXECUTION-ALIGNMENT-01
+    const val INTENT_UPDATED    = "intent_updated"
+    const val INTENT_FINALIZED  = "intent_finalized"
+
+    // ── Execution authority lifecycle events ──────────────────────────────────
+    // Added by AGOII-MQP-INTENT-EVOLUTION-EXECUTION-ALIGNMENT-01
+    const val EXECUTION_AUTHORIZED  = "execution_authorized"
+    const val EXECUTION_IN_PROGRESS = "execution_in_progress"
+    const val EXECUTION_ABORTED     = "execution_aborted"
+
     // ── UCS-1 contract ingestion lifecycle events ─────────────────────────────
     // Emitted by ExecutionAuthority.ingestUniversalContract() to replace
     // in-memory lifecycle tracking (ledger determinism — UCS-1 directive).
@@ -73,7 +84,12 @@ object EventTypes {
         CONTRACT_APPROVED,
         COMMIT_CONTRACT,
         COMMIT_EXECUTED,
-        COMMIT_ABORTED
+        COMMIT_ABORTED,
+        INTENT_UPDATED,
+        INTENT_FINALIZED,
+        EXECUTION_AUTHORIZED,
+        EXECUTION_IN_PROGRESS,
+        EXECUTION_ABORTED
     )
 
     /** Default number of contracts generated per intent. */
