@@ -237,8 +237,11 @@ fun ProjectScreen(projectId: String) {
         val showApprove = replayState?.contracts?.valid == true &&
                           replayState?.execution?.assignedTasks == 0
 
-        // Hide RUN STEP once commit is pending (user must decide on commit first)
-        val showRunStep = replayState?.commitPending != true
+        // R1: RUN STEP is only allowed after INTENT_FINALIZED (execution authority gate).
+        // Also hidden once commit is pending (user must decide on commit first).
+        val lastEventType = events.lastOrNull()?.type
+        val isExecutionAllowed = lastEventType == EventTypes.INTENT_FINALIZED
+        val showRunStep = isExecutionAllowed && replayState?.commitPending != true
 
         ActionBar(
             showApprove   = showApprove,

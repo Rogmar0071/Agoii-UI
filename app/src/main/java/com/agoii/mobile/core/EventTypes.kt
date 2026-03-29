@@ -7,6 +7,8 @@ package com.agoii.mobile.core
  */
 object EventTypes {
     const val INTENT_SUBMITTED    = "intent_submitted"
+    const val INTENT_UPDATED      = "intent_updated"
+    const val INTENT_FINALIZED    = "intent_finalized"
     const val CONTRACTS_GENERATED = "contracts_generated"
     const val CONTRACTS_READY     = "contracts_ready"
     const val CONTRACTS_APPROVED  = "contracts_approved"
@@ -46,6 +48,8 @@ object EventTypes {
 
     val ALL: Set<String> = setOf(
         INTENT_SUBMITTED,
+        INTENT_UPDATED,
+        INTENT_FINALIZED,
         CONTRACTS_GENERATED,
         CONTRACTS_READY,
         CONTRACTS_APPROVED,
