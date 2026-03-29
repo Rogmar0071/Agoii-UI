@@ -44,7 +44,7 @@ data class AssemblyInput(
 /**
  * Per-contract output entry in the [FinalArtifact].
  *
- * [report_reference] preserves RRIL-1 lineage from the originating CONTRACT_COMPLETED event.
+ * [reportReference] preserves RRIL-1 lineage from the originating CONTRACT_COMPLETED event.
  * [artifactStructure] is sourced directly from the frozen ContractReport (TASK_EXECUTED.artifactStructure).
  */
 data class ContractOutput(

@@ -160,10 +160,14 @@ class AssemblyModule {
             (reportReference.isEmpty() ||
                 ev.payload["report_reference"]?.toString() == reportReference)
         }.forEach { ev ->
-            val contractId      = ev.payload["contractId"]?.toString()      ?: return@forEach
-            val artifactRef     = ev.payload["artifactReference"]?.toString() ?: return@forEach
+            val contractId     = ev.payload["contractId"]?.toString()      ?: return@forEach
+            val artifactRef    = ev.payload["artifactReference"]?.toString() ?: return@forEach
             @Suppress("UNCHECKED_CAST")
-            val artifactStruct  = ev.payload["artifactStructure"] as? Map<String, Any> ?: return@forEach
+            val artifactStruct = ev.payload["artifactStructure"] as? Map<String, Any>
+            // If artifactStructure is absent, skip this entry. The contract will not be
+            // registered in taskExecutionData and will be caught by the INCOMPLETE_EXECUTION_SURFACE
+            // check in Step 8 (spec 5.6). This is intentional — silent skip here, hard block below.
+            if (artifactStruct == null) return@forEach
             // Last SUCCESS wins (idempotent across retries)
             taskExecutionData[contractId] = ContractExecutionData(
                 artifactReference = artifactRef,
