@@ -34,7 +34,9 @@ class ValidationLayer {
         /** True when EXECUTION_COMPLETED appears in simulated. */
         val hasExecutionCompleted: Boolean,
         /** All task lifecycle levels reached per taskId in simulated. */
-        val tasks: Map<String, Set<TaskLifecycle>>
+        val tasks: Map<String, Set<TaskLifecycle>>,
+        /** Count of INTENT_SUBMITTED events in simulated (I1: must be exactly 1 after first event). */
+        val intentSubmittedCount: Int = 0
     )
 
     // ── Public entry point ────────────────────────────────────────────────────
@@ -80,6 +82,7 @@ class ValidationLayer {
         val taskState          = mutableMapOf<String, MutableSet<TaskLifecycle>>()
         var priorEventType: String? = null
         val lastIndex          = simulated.size - 1
+        var intentSubmittedCount = 0
 
         for (i in simulated.indices) {
             val ev = simulated[i]
@@ -96,6 +99,9 @@ class ValidationLayer {
             // Terminal detection — COMMIT_EXECUTED or COMMIT_ABORTED close the full lifecycle.
             // ICS_COMPLETED is no longer terminal (COMMIT_CONTRACT follows it).
             if (ev.type == EventTypes.COMMIT_EXECUTED || ev.type == EventTypes.COMMIT_ABORTED) isTerminal = true
+
+            // I1: count INTENT_SUBMITTED occurrences
+            if (ev.type == EventTypes.INTENT_SUBMITTED) intentSubmittedCount++
 
             // Contract tracking
             when (ev.type) {
@@ -140,7 +146,8 @@ class ValidationLayer {
             activeContractCount   = contractFreq.values.filter { it > 0 }.sum(),
             contractNetByPosition = contractFreq.toMap(),
             hasExecutionCompleted = hasExecutionCompleted,
-            tasks                 = taskState.mapValues { it.value.toSet() }
+            tasks                 = taskState.mapValues { it.value.toSet() },
+            intentSubmittedCount  = intentSubmittedCount
         )
     }
 
@@ -180,6 +187,14 @@ class ValidationLayer {
     ) {
         checkGlobalPayload(projectId, type, payload)
         when (type) {
+            // Intent evolution phase (MQP AGOII-MQP-INTENT-EVOLUTION-EXECUTION-ALIGNMENT-01)
+            EventTypes.INTENT_UPDATED          -> checkIntentUpdated(projectId, payload)
+            EventTypes.INTENT_FINALIZED        -> checkIntentFinalized(projectId, payload)
+            // Execution authority separation
+            EventTypes.EXECUTION_AUTHORIZED    -> checkExecutionAuthorized(projectId, payload)
+            EventTypes.EXECUTION_IN_PROGRESS   -> checkExecutionInProgress(projectId, payload)
+            EventTypes.EXECUTION_ABORTED       -> checkExecutionAborted(projectId, payload)
+            EventTypes.RETURN_TO_INTENT_STATE  -> checkReturnToIntentState(projectId, payload)
             EventTypes.CONTRACTS_GENERATED -> checkContractsGenerated(projectId, payload)
             EventTypes.CONTRACT_STARTED    -> checkContractStarted(projectId, payload)
             EventTypes.TASK_ASSIGNED       -> checkTaskAssigned(projectId, payload)
@@ -711,6 +726,15 @@ class ValidationLayer {
     ) {
         // Invariant 1 — Sequential Integrity: enforced in checkStructural (single source)
 
+        // I1 (MQP AGOII-MQP-INTENT-EVOLUTION-EXECUTION-ALIGNMENT-01): exactly ONE INTENT_SUBMITTED
+        // per project. intentSubmittedCount already includes the candidate when it is INTENT_SUBMITTED.
+        if (state.intentSubmittedCount > 1) {
+            throw LedgerValidationException(
+                "I1: INTENT_SUBMITTED must appear exactly once per project — " +
+                    "duplicate detected in '$projectId'"
+            )
+        }
+
         // Invariant 2 — Single Active Contract: at most 1 open contract in simulated
         if (state.activeContractCount > 1) {
             throw LedgerValidationException(
@@ -792,8 +816,43 @@ class ValidationLayer {
         else      -> null
     }
 
+    // ── Intent evolution payload checks (MQP AGOII-MQP-INTENT-EVOLUTION-EXECUTION-ALIGNMENT-01) ──
+
+    private fun checkIntentUpdated(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.INTENT_UPDATED, payload, INTENT_UPDATED_KEYS)
+        payload["objective"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "INTENT_UPDATED missing or blank 'objective' in '$projectId'"
+            )
+    }
+
+    private fun checkIntentFinalized(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.INTENT_FINALIZED, payload, INTENT_FINALIZED_KEYS)
+    }
+
+    // ── Execution authority separation payload checks ─────────────────────────
+
+    private fun checkExecutionAuthorized(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.EXECUTION_AUTHORIZED, payload, EXECUTION_AUTHORIZED_KEYS)
+    }
+
+    private fun checkExecutionInProgress(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.EXECUTION_IN_PROGRESS, payload, EXECUTION_IN_PROGRESS_KEYS)
+    }
+
+    private fun checkExecutionAborted(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.EXECUTION_ABORTED, payload, EXECUTION_ABORTED_KEYS)
+        payload["reason"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "EXECUTION_ABORTED missing or blank 'reason' in '$projectId'"
+            )
+    }
+
+    private fun checkReturnToIntentState(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.RETURN_TO_INTENT_STATE, payload, RETURN_TO_INTENT_STATE_KEYS)
+    }
+
     private fun checkCommitContract(projectId: String, payload: Map<String, Any>) {
-        requireKeys(projectId, EventTypes.COMMIT_CONTRACT, payload, COMMIT_CONTRACT_KEYS)
         payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw LedgerValidationException(
                 "COMMIT_CONTRACT missing or blank 'report_reference' in '$projectId'"
@@ -828,6 +887,14 @@ class ValidationLayer {
             EventTypes.TASK_COMPLETED,
             EventTypes.TASK_VALIDATED
         )
+        // Intent evolution phase key sets (MQP AGOII-MQP-INTENT-EVOLUTION-EXECUTION-ALIGNMENT-01)
+        private val INTENT_UPDATED_KEYS         = setOf("objective")
+        private val INTENT_FINALIZED_KEYS       = setOf("finalizedAt")
+        // Execution authority separation key sets
+        private val EXECUTION_AUTHORIZED_KEYS   = setOf("authorizedAt")
+        private val EXECUTION_IN_PROGRESS_KEYS  = emptySet<String>()
+        private val EXECUTION_ABORTED_KEYS      = setOf("reason", "abortedAt")
+        private val RETURN_TO_INTENT_STATE_KEYS = setOf("returnedAt")
         private val CONTRACTS_GENERATED_KEYS = setOf(
             "intentId", "contractSetId", "contracts", "total",
             "report_reference"   // RRIL-1: canonical RRID key (standardized from report_id)

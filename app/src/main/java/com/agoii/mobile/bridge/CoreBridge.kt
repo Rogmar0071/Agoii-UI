@@ -52,6 +52,10 @@ class CoreBridge(context: Context) {
      * INTENT_SUBMITTED is ALWAYS written. IRS runs informational-only.
      * The IRS result is included as metadata in the payload; it NEVER blocks entry.
      *
+     * After this call the project enters the intent evolution phase.
+     * The caller may then invoke [updateIntent] (0..N times) before calling
+     * [finalizeIntent] to commit the intent state and unblock execution.
+     *
      * @return true always — intent entry is unconditional per AGOII MASTER alignment.
      */
     fun submitIntent(
@@ -99,6 +103,92 @@ class CoreBridge(context: Context) {
     }
 
     /**
+     * Evolve the intent by appending an INTENT_UPDATED event.
+     *
+     * Legal only before INTENT_FINALIZED (I2) or after RETURN_TO_INTENT_STATE (I6).
+     * The transition table in [LedgerAudit] enforces this constraint at ledger level.
+     *
+     * @param projectId The project ledger to write to.
+     * @param objective The updated objective value for this iteration.
+     */
+    fun updateIntent(projectId: String, objective: String) {
+        ledger.appendEvent(
+            projectId,
+            EventTypes.INTENT_UPDATED,
+            mapOf("objective" to objective)
+        )
+    }
+
+    /**
+     * Freeze the intent state by appending INTENT_FINALIZED.
+     *
+     * After this call:
+     *  - Intent is immutable (I3).
+     *  - [runGovernorStep] will start the contract generation pipeline (I4).
+     *
+     * @param projectId The project ledger to write to.
+     */
+    fun finalizeIntent(projectId: String) {
+        ledger.appendEvent(
+            projectId,
+            EventTypes.INTENT_FINALIZED,
+            mapOf("finalizedAt" to System.currentTimeMillis())
+        )
+    }
+
+    /**
+     * Emit EXECUTION_AUTHORIZED — the canonical user approval gate.
+     *
+     * Replaces [approveContracts] for new projects following the MQP lifecycle.
+     * The Governor will advance from EXECUTION_AUTHORIZED to EXECUTION_IN_PROGRESS
+     * on the next [runGovernorStep] call.
+     *
+     * @param projectId The project ledger to write to.
+     */
+    fun authorizeExecution(projectId: String) {
+        ledger.appendEvent(
+            projectId,
+            EventTypes.EXECUTION_AUTHORIZED,
+            mapOf("authorizedAt" to System.currentTimeMillis())
+        )
+    }
+
+    /**
+     * Interrupt a running execution by appending EXECUTION_ABORTED.
+     *
+     * After this call the caller must invoke [returnToIntentState] and then
+     * [updateIntent] + [finalizeIntent] to re-enter the execution pipeline (I6).
+     *
+     * @param projectId The project ledger to write to.
+     * @param reason    Human-readable description of why the execution was aborted.
+     */
+    fun abortExecution(projectId: String, reason: String) {
+        ledger.appendEvent(
+            projectId,
+            EventTypes.EXECUTION_ABORTED,
+            mapOf(
+                "reason"    to reason,
+                "abortedAt" to System.currentTimeMillis()
+            )
+        )
+    }
+
+    /**
+     * Open the intent phase for re-entry after [abortExecution].
+     *
+     * Appends RETURN_TO_INTENT_STATE which enables [updateIntent] again (I6).
+     *
+     * @param projectId The project ledger to write to.
+     */
+    fun returnToIntentState(projectId: String) {
+        ledger.appendEvent(
+            projectId,
+            EventTypes.RETURN_TO_INTENT_STATE,
+            mapOf("returnedAt" to System.currentTimeMillis())
+        )
+    }
+
+    /**
      * Trigger one execution step.
      *
      * Returns:
@@ -109,9 +199,26 @@ class CoreBridge(context: Context) {
         val events    = ledger.loadEvents(projectId)
         val lastEvent = events.lastOrNull()
 
-        // ── Intent → Contracts (ExecutionEntryPoint ONLY) ───────────────────────
-        if (lastEvent?.type == EventTypes.INTENT_SUBMITTED) {
-            val result = executionEntryPoint.executeIntent(projectId, lastEvent.payload)
+        // ── Intent phase → Contracts (ExecutionEntryPoint ONLY) ─────────────────
+        // MQP path: INTENT_FINALIZED unblocks contract generation (I4 enforcement).
+        // Backward-compat path: INTENT_SUBMITTED still valid for pre-MQP ledgers.
+        val intentPayloadToProcess: Map<String, Any>? = when (lastEvent?.type) {
+            EventTypes.INTENT_FINALIZED -> {
+                // Resolve the effective objective from the ledger: latest INTENT_UPDATED
+                // takes precedence; fall back to INTENT_SUBMITTED.
+                val updatedObjective = events.lastOrNull { it.type == EventTypes.INTENT_UPDATED }
+                    ?.payload?.get("objective")?.toString()
+                val submittedObjective = events.firstOrNull { it.type == EventTypes.INTENT_SUBMITTED }
+                    ?.payload?.get("objective")?.toString()
+                val objective = updatedObjective ?: submittedObjective
+                if (objective != null) mapOf("objective" to objective) else null
+            }
+            EventTypes.INTENT_SUBMITTED -> lastEvent.payload  // backward-compat
+            else -> null
+        }
+
+        if (intentPayloadToProcess != null) {
+            val result = executionEntryPoint.executeIntent(projectId, intentPayloadToProcess)
 
             // 🔴 CRITICAL: react to ledger write, not decision
             if (result.event != null) {

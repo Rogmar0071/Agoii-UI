@@ -95,6 +95,13 @@ class Governor(
             // CONTRACTS_GENERATED is authored by ExecutionAuthority — not by Governor.
             // Governor reads from the ledger only; if it has not yet been written, wait.
             EventTypes.INTENT_SUBMITTED    -> GovernorResult.NO_EVENT
+            // Intent evolution wait states: user must update or finalize intent.
+            EventTypes.INTENT_UPDATED      -> GovernorResult.NO_EVENT
+            // INTENT_FINALIZED: wait for ExecutionEntryPoint to write CONTRACTS_GENERATED.
+            EventTypes.INTENT_FINALIZED    -> GovernorResult.NO_EVENT
+            // EXECUTION_ABORTED / RETURN_TO_INTENT_STATE: wait for user to re-enter intent phase.
+            EventTypes.EXECUTION_ABORTED       -> GovernorResult.NO_EVENT
+            EventTypes.RETURN_TO_INTENT_STATE  -> GovernorResult.NO_EVENT
 
             // Terminal: EXECUTION_COMPLETED closes the lifecycle — no further events.
             EventTypes.EXECUTION_COMPLETED -> GovernorResult.COMPLETED
@@ -130,7 +137,22 @@ class Governor(
                 Event(type = EventTypes.EXECUTION_STARTED, payload = emptyMap())
             }
 
-            // EXECUTION_STARTED → begin first contract
+            // Canonical execution authority: EXECUTION_AUTHORIZED → EXECUTION_IN_PROGRESS
+            EventTypes.EXECUTION_AUTHORIZED -> {
+                Event(type = EventTypes.EXECUTION_IN_PROGRESS, payload = emptyMap())
+            }
+
+            // EXECUTION_IN_PROGRESS: begin first contract (canonical path)
+            EventTypes.EXECUTION_IN_PROGRESS -> {
+                val total = deriveTotal(events) ?: return null
+                canIssue(1) ?: return null
+                Event(
+                    type    = EventTypes.CONTRACT_STARTED,
+                    payload = mapOf("position" to 1, "total" to total, "contract_id" to "contract_1")
+                )
+            }
+
+            // EXECUTION_STARTED → begin first contract (backward-compat path)
             EventTypes.EXECUTION_STARTED -> {
                 val total = deriveTotal(events) ?: return null
                 canIssue(1) ?: return null
@@ -141,8 +163,10 @@ class Governor(
             }
 
             // CONTRACTS_GENERATED is the Execution Authority's responsibility.
-            // Governor does not derive contracts; it waits.
+            // Governor does not derive contracts; it waits (both intent paths).
             EventTypes.INTENT_SUBMITTED -> null
+            EventTypes.INTENT_UPDATED   -> null
+            EventTypes.INTENT_FINALIZED -> null
 
             // ── Simple passthrough transitions (empty payload) ────────────────────
 

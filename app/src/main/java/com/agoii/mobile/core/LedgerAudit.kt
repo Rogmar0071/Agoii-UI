@@ -67,7 +67,6 @@ class LedgerAudit(private val eventStore: EventRepository) {
          * and [ValidationLayer] remain independent of the governor package.
          */
         private val validTransitions: Map<String, String> = mapOf(
-            EventTypes.INTENT_SUBMITTED    to EventTypes.CONTRACTS_GENERATED,
             EventTypes.CONTRACTS_GENERATED to EventTypes.CONTRACTS_READY,
             EventTypes.CONTRACTS_APPROVED  to EventTypes.EXECUTION_STARTED,
             EventTypes.EXECUTION_COMPLETED to EventTypes.ASSEMBLY_STARTED,
@@ -84,6 +83,25 @@ class LedgerAudit(private val eventStore: EventRepository) {
         internal fun isLegalTransition(from: String, to: String): Boolean {
             // Standard governor-driven single-step transitions (includes assembly pipeline)
             if (validTransitions[from] == to) return true
+            // ── Intent evolution (I1–I3): INTENT_SUBMITTED is the single anchor; intent is
+            //    mutable via INTENT_UPDATED before INTENT_FINALIZED freezes it.
+            if (from == EventTypes.INTENT_SUBMITTED && to == EventTypes.INTENT_UPDATED) return true
+            if (from == EventTypes.INTENT_SUBMITTED && to == EventTypes.INTENT_FINALIZED) return true
+            if (from == EventTypes.INTENT_UPDATED   && to == EventTypes.INTENT_UPDATED) return true
+            if (from == EventTypes.INTENT_UPDATED   && to == EventTypes.INTENT_FINALIZED) return true
+            // ── INTENT_FINALIZED → execution pipeline (I4: execution requires INTENT_FINALIZED)
+            if (from == EventTypes.INTENT_FINALIZED && to == EventTypes.CONTRACTS_GENERATED) return true
+            // ── Backward-compat: pre-MQP ledgers flow directly from INTENT_SUBMITTED
+            if (from == EventTypes.INTENT_SUBMITTED && to == EventTypes.CONTRACTS_GENERATED) return true
+            // ── Execution authority separation: canonical approval gate (replaces CONTRACTS_APPROVED)
+            if (from == EventTypes.CONTRACTS_READY  && to == EventTypes.EXECUTION_AUTHORIZED) return true
+            if (from == EventTypes.EXECUTION_AUTHORIZED  && to == EventTypes.EXECUTION_IN_PROGRESS) return true
+            if (from == EventTypes.EXECUTION_IN_PROGRESS && to == EventTypes.CONTRACT_STARTED) return true
+            // ── Execution interruption / recovery (I6): ABORT → RETURN → INTENT_UPDATED cycle
+            if (from == EventTypes.EXECUTION_IN_PROGRESS && to == EventTypes.EXECUTION_ABORTED) return true
+            if (from == EventTypes.EXECUTION_STARTED     && to == EventTypes.EXECUTION_ABORTED) return true
+            if (from == EventTypes.EXECUTION_ABORTED     && to == EventTypes.RETURN_TO_INTENT_STATE) return true
+            if (from == EventTypes.RETURN_TO_INTENT_STATE && to == EventTypes.INTENT_UPDATED) return true
             // User-driven: approval after contracts are ready
             if (from == EventTypes.CONTRACTS_READY && to == EventTypes.CONTRACTS_APPROVED) return true
             // New lifecycle: contracts_ready advances directly to contract_started (no approval gate)

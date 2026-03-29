@@ -7,10 +7,18 @@ package com.agoii.mobile.core
  */
 object EventTypes {
     const val INTENT_SUBMITTED    = "intent_submitted"
+    // ── Intent evolution phase (MQP AGOII-MQP-INTENT-EVOLUTION-EXECUTION-ALIGNMENT-01) ─
+    const val INTENT_UPDATED      = "intent_updated"      // 0..N before INTENT_FINALIZED
+    const val INTENT_FINALIZED    = "intent_finalized"    // Commit boundary — freezes intent state
     const val CONTRACTS_GENERATED = "contracts_generated"
     const val CONTRACTS_READY     = "contracts_ready"
     const val CONTRACTS_APPROVED  = "contracts_approved"
     const val EXECUTION_STARTED   = "execution_started"
+    // ── Execution authority separation (MQP AGOII-MQP-INTENT-EVOLUTION-EXECUTION-ALIGNMENT-01) ─
+    const val EXECUTION_AUTHORIZED  = "execution_authorized"   // User approval gate (canonical)
+    const val EXECUTION_IN_PROGRESS = "execution_in_progress"  // System event: execution begins
+    const val EXECUTION_ABORTED     = "execution_aborted"      // Interruption
+    const val RETURN_TO_INTENT_STATE = "return_to_intent_state" // Recovery: returns to intent phase
     const val CONTRACT_STARTED    = "contract_started"
     const val CONTRACT_COMPLETED  = "contract_completed"
     const val EXECUTION_COMPLETED = "execution_completed"
@@ -46,10 +54,16 @@ object EventTypes {
 
     val ALL: Set<String> = setOf(
         INTENT_SUBMITTED,
+        INTENT_UPDATED,
+        INTENT_FINALIZED,
         CONTRACTS_GENERATED,
         CONTRACTS_READY,
         CONTRACTS_APPROVED,
         EXECUTION_STARTED,
+        EXECUTION_AUTHORIZED,
+        EXECUTION_IN_PROGRESS,
+        EXECUTION_ABORTED,
+        RETURN_TO_INTENT_STATE,
         CONTRACT_STARTED,
         CONTRACT_COMPLETED,
         EXECUTION_COMPLETED,

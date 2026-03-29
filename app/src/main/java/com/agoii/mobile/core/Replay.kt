@@ -14,6 +14,15 @@ data class ReplayStructuralState(
     val commitAborted: Boolean = false,
     /** derived: commitContractExists && !commitExecuted && !commitAborted */
     val commitPending: Boolean = false,
+    // MQP AGOII-MQP-INTENT-EVOLUTION-EXECUTION-ALIGNMENT-01 — intent evolution phase
+    /** true when INTENT_FINALIZED has been seen; intent state is frozen */
+    val intentFinalized: Boolean = false,
+    /** true when EXECUTION_AUTHORIZED has been seen (canonical approval gate) */
+    val executionAuthorized: Boolean = false,
+    /** true when EXECUTION_ABORTED has been seen (execution interrupted) */
+    val executionAborted: Boolean = false,
+    /** true when RETURN_TO_INTENT_STATE has been seen (recovery: intent phase reopened) */
+    val returnedToIntentState: Boolean = false,
     // AERP-1 truth layer — top-level validity fields
     val executionValid: Boolean = false,
     val assemblyValid: Boolean = false,
@@ -23,7 +32,11 @@ data class ReplayStructuralState(
 )
 
 data class IntentStructuralState(
-    val structurallyComplete: Boolean
+    val structurallyComplete: Boolean,
+    /** true when INTENT_FINALIZED has been appended; intent state is frozen (I3) */
+    val finalized: Boolean = false,
+    /** number of INTENT_UPDATED events appended before INTENT_FINALIZED */
+    val updatedCount: Int = 0
 )
 
 data class ContractStructuralState(
@@ -57,6 +70,8 @@ class Replay(private val eventStore: EventRepository) {
 
     fun deriveStructuralState(events: List<Event>): ReplayStructuralState {
         var intentSubmitted = false
+        var intentUpdatedCount = 0
+        var intentFinalized = false
         var contractsGenerated = false
         var totalContractsFromLedger = 0
         var assemblyStarted = false
@@ -67,6 +82,9 @@ class Replay(private val eventStore: EventRepository) {
         var commitContractExists = false
         var commitExecuted = false
         var commitAborted = false
+        var executionAuthorized = false
+        var executionAborted = false
+        var returnedToIntentState = false
 
         var assignedTasks = 0
         var completedTasks = 0
@@ -77,6 +95,8 @@ class Replay(private val eventStore: EventRepository) {
         for (event in events) {
             when (event.type) {
                 EventTypes.INTENT_SUBMITTED    -> intentSubmitted = true
+                EventTypes.INTENT_UPDATED      -> intentUpdatedCount++
+                EventTypes.INTENT_FINALIZED    -> intentFinalized = true
                 EventTypes.CONTRACTS_GENERATED -> {
                     contractsGenerated = true
                     totalContractsFromLedger = resolveInt(event.payload["total"]) ?: 0
@@ -97,6 +117,9 @@ class Replay(private val eventStore: EventRepository) {
                 EventTypes.COMMIT_CONTRACT     -> commitContractExists = true
                 EventTypes.COMMIT_EXECUTED     -> commitExecuted = true
                 EventTypes.COMMIT_ABORTED      -> commitAborted = true
+                EventTypes.EXECUTION_AUTHORIZED    -> executionAuthorized = true
+                EventTypes.EXECUTION_ABORTED       -> executionAborted = true
+                EventTypes.RETURN_TO_INTENT_STATE  -> returnedToIntentState = true
             }
         }
 
@@ -126,7 +149,9 @@ class Replay(private val eventStore: EventRepository) {
 
         return ReplayStructuralState(
             intent = IntentStructuralState(
-                structurallyComplete = intentSubmitted
+                structurallyComplete = intentSubmitted,
+                finalized            = intentFinalized,
+                updatedCount         = intentUpdatedCount
             ),
             contracts = ContractStructuralState(
                 generated = contractsGenerated,
@@ -156,6 +181,10 @@ class Replay(private val eventStore: EventRepository) {
             commitExecuted = commitExecuted,
             commitAborted = commitAborted,
             commitPending = commitPending,
+            intentFinalized = intentFinalized,
+            executionAuthorized = executionAuthorized,
+            executionAborted = executionAborted,
+            returnedToIntentState = returnedToIntentState,
             executionValid = executionValid,
             assemblyValid = assemblyValidNew,
             icsValid = icsValid,

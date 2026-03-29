@@ -181,60 +181,140 @@ fun ProjectScreen(projectId: String) {
             CommitResultBanner(approved = replayState?.commitExecuted == true)
         }
 
-        // ── ACTION BAR ──────────────────────────────────────────────────────
-        // showApprove: contracts exist but execution hasn't started yet →
-        // user must approve contracts (CONTRACTS_APPROVED gate) to begin execution
-        val showApprove = replayState?.contracts?.valid == true &&
-                          replayState?.execution?.assignedTasks == 0
+        // ── DERIVED UI STATE (I9: state-aware, cannot emit illegal events) ───
+        val intentSubmitted       = replayState?.intent?.structurallyComplete == true
+        val intentFinalized       = replayState?.intentFinalized == true
+        val executionAborted      = replayState?.executionAborted == true
+        val returnedToIntentState = replayState?.returnedToIntentState == true
+        val executionAuthorized   = replayState?.executionAuthorized == true
+        val commitPendingNow      = replayState?.commitPending == true
 
-        // Hide RUN STEP once commit is pending (user must decide on commit first)
-        val showRunStep = replayState?.commitPending != true
+        // Intent evolution phase: derive from last event type (I9 — state-aware).
+        // In evolution phase when the last ledger event is one of:
+        //   INTENT_SUBMITTED — just anchored, not yet finalized
+        //   INTENT_UPDATED   — intent updated, not yet finalized
+        //   RETURN_TO_INTENT_STATE — recovery cycle, user can now re-update
+        val lastEventType = events.lastOrNull()?.type
+        val inIntentEvolutionPhase = lastEventType in setOf(
+            EventTypes.INTENT_SUBMITTED,
+            EventTypes.INTENT_UPDATED,
+            EventTypes.RETURN_TO_INTENT_STATE
+        )
+
+        // Show ABORT when execution is running (tasks assigned, not complete, not aborted)
+        val assignedTasks  = replayState?.execution?.assignedTasks ?: 0
+        val executionValid = replayState?.executionValid == true
+        val showAbort      = assignedTasks > 0 && !executionValid && !executionAborted &&
+            !commitPendingNow
+        // Show RETURN TO INTENT when aborted but not yet returned
+        val showReturnToIntent = executionAborted && !returnedToIntentState
+
+        // ── EXECUTION ABORT PANEL ────────────────────────────────────────────
+        if (showAbort) {
+            IntentEvolutionBanner(
+                message = "Execution in progress — ABORT to return to intent phase",
+                color   = Color(0xFFFFA726),
+                onAction  = {
+                    bridge.abortExecution(projectId, "user_requested_abort")
+                    reload()
+                },
+                actionLabel = "ABORT EXECUTION"
+            )
+        }
+
+        // ── RETURN TO INTENT PANEL ───────────────────────────────────────────
+        if (showReturnToIntent) {
+            IntentEvolutionBanner(
+                message = "Execution aborted — return to intent phase to update and re-finalize",
+                color   = Color(0xFFD32F2F),
+                onAction  = {
+                    bridge.returnToIntentState(projectId)
+                    reload()
+                },
+                actionLabel = "RETURN TO INTENT"
+            )
+        }
+
+        // ── ACTION BAR ──────────────────────────────────────────────────────
+        // showApprove: contracts exist but execution hasn't started yet (legacy path — no INTENT_FINALIZED)
+        val showApprove = replayState?.contracts?.valid == true &&
+                          replayState?.execution?.assignedTasks == 0 &&
+                          !intentFinalized
+        // showAuthorize: contracts ready and INTENT_FINALIZED (new canonical EXECUTION_AUTHORIZED path)
+        val showAuthorize = replayState?.contracts?.valid == true &&
+                            replayState?.execution?.assignedTasks == 0 &&
+                            intentFinalized && !executionAuthorized
+        // showFinalizeIntent: user is in the intent evolution phase
+        val showFinalizeIntent = inIntentEvolutionPhase
+        // Hide RUN STEP during commit-pending, intent-evolution, abort/return recovery
+        val showRunStep = !commitPendingNow &&
+            !inIntentEvolutionPhase && !showAbort && !showReturnToIntent
 
         ActionBar(
-            showApprove   = showApprove,
-            showRunStep   = showRunStep,
-            onRunStep     = {
+            showApprove        = showApprove,
+            showAuthorize      = showAuthorize,
+            showFinalizeIntent = showFinalizeIntent,
+            showRunStep        = showRunStep,
+            onRunStep          = {
                 bridge.runGovernorStep(projectId)
                 reload()
             },
-            onApprove     = {
+            onApprove          = {
                 bridge.approveContracts(projectId)
+                reload()
+            },
+            onAuthorize        = {
+                bridge.authorizeExecution(projectId)
+                reload()
+            },
+            onFinalizeIntent   = {
+                bridge.finalizeIntent(projectId)
                 reload()
             }
         )
 
         // ── INPUT BAR ───────────────────────────────────────────────────────
-        InputBar(
-            text      = inputText,
-            onTextChange = { inputText = it },
-            onSend    = {
-                val objective = inputText.trim()
-                if (objective.isNotEmpty()) {
-                    bridge.submitIntent(
-                        projectId         = projectId,
-                        rawFields         = mapOf(
-                            "objective"   to objective,
-                            "constraints" to "",
-                            "environment" to "",
-                            "resources"   to ""
-                        ),
-                        evidence          = mapOf(
-                            "objective"   to listOf(EvidenceRef(id = "ev-obj",  source = "user-input")),
-                            "constraints" to listOf(EvidenceRef(id = "ev-cst",  source = "user-input")),
-                            "environment" to listOf(EvidenceRef(id = "ev-env",  source = "user-input")),
-                            "resources"   to listOf(EvidenceRef(id = "ev-res",  source = "user-input"))
-                        ),
-                        swarmConfig       = SwarmConfig(
-                            agentCount    = 2,
-                            consensusRule = ConsensusRule.MAJORITY
-                        ),
-                        objective         = objective
-                    )
-                    inputText = ""
-                    reload()
+        // Visible when no events yet (first submit) or during intent evolution phase.
+        val showInputBar = !intentSubmitted || inIntentEvolutionPhase
+        if (showInputBar) {
+            val placeholder = if (!intentSubmitted) "Enter objective…" else "Update intent objective…"
+            InputBar(
+                text         = inputText,
+                placeholder  = placeholder,
+                onTextChange = { inputText = it },
+                onSend       = {
+                    val objective = inputText.trim()
+                    if (objective.isNotEmpty()) {
+                        if (!intentSubmitted) {
+                            bridge.submitIntent(
+                                projectId         = projectId,
+                                rawFields         = mapOf(
+                                    "objective"   to objective,
+                                    "constraints" to "",
+                                    "environment" to "",
+                                    "resources"   to ""
+                                ),
+                                evidence          = mapOf(
+                                    "objective"   to listOf(EvidenceRef(id = "ev-obj",  source = "user-input")),
+                                    "constraints" to listOf(EvidenceRef(id = "ev-cst",  source = "user-input")),
+                                    "environment" to listOf(EvidenceRef(id = "ev-env",  source = "user-input")),
+                                    "resources"   to listOf(EvidenceRef(id = "ev-res",  source = "user-input"))
+                                ),
+                                swarmConfig       = SwarmConfig(
+                                    agentCount    = 2,
+                                    consensusRule = ConsensusRule.MAJORITY
+                                ),
+                                objective         = objective
+                            )
+                        } else {
+                            bridge.updateIntent(projectId, objective)
+                        }
+                        inputText = ""
+                        reload()
+                    }
                 }
-            }
-        )
+            )
+        }
     }
 }
 
@@ -379,7 +459,16 @@ private fun StatePanel(
 private val PAYLOAD_KEYS_EXCLUDED_FROM_ROW = setOf("proposedActions")
 
 private fun eventColor(type: String): Color = when {
+    // Intent evolution phase (MQP) — purple family
     type == EventTypes.INTENT_SUBMITTED ||
+    type == EventTypes.INTENT_UPDATED          -> Color(0xFF7B61FF)
+    type == EventTypes.INTENT_FINALIZED        -> Color(0xFF9C27B0)
+    // Execution authority separation (MQP) — teal family
+    type == EventTypes.EXECUTION_AUTHORIZED    -> Color(0xFF00BCD4)
+    type == EventTypes.EXECUTION_IN_PROGRESS   -> Color(0xFF0097A7)
+    // Execution abort / recovery — red / orange
+    type == EventTypes.EXECUTION_ABORTED       -> Color(0xFFD32F2F)
+    type == EventTypes.RETURN_TO_INTENT_STATE  -> Color(0xFFFFA726)
     type == EventTypes.CONTRACTS_GENERATED ||
     type == EventTypes.CONTRACTS_READY ||
     type == EventTypes.CONTRACTS_APPROVED  -> EventApproval
@@ -492,15 +581,56 @@ private fun CommitResultBanner(approved: Boolean) {
     Divider(color = Surface, thickness = 1.dp)
 }
 
+// ── INTENT EVOLUTION BANNER ───────────────────────────────────────────────────
+
+@Composable
+private fun IntentEvolutionBanner(
+    message:     String,
+    color:       Color,
+    onAction:    () -> Unit,
+    actionLabel: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(color.copy(alpha = 0.12f))
+            .border(1.dp, color.copy(alpha = 0.5f))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text     = message,
+            color    = color,
+            style    = MonoStyle,
+            fontSize = 11.sp,
+            modifier = Modifier.weight(1f)
+        )
+        Button(
+            onClick = onAction,
+            colors  = ButtonDefaults.buttonColors(containerColor = color)
+        ) {
+            Text(actionLabel, color = Color.White, fontSize = 11.sp)
+        }
+    }
+    Divider(color = Surface, thickness = 1.dp)
+}
+
 // ── ACTION BAR ───────────────────────────────────────────────────────────────
 
 @Composable
 private fun ActionBar(
-    showApprove: Boolean,
-    showRunStep: Boolean,
-    onRunStep:   () -> Unit,
-    onApprove:   () -> Unit
+    showApprove:        Boolean,
+    showAuthorize:      Boolean,
+    showFinalizeIntent: Boolean,
+    showRunStep:        Boolean,
+    onRunStep:          () -> Unit,
+    onApprove:          () -> Unit,
+    onAuthorize:        () -> Unit,
+    onFinalizeIntent:   () -> Unit
 ) {
+    val anyVisible = showRunStep || showApprove || showAuthorize || showFinalizeIntent
+    if (!anyVisible) return
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -508,6 +638,16 @@ private fun ActionBar(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        if (showFinalizeIntent) {
+            Button(
+                onClick  = onFinalizeIntent,
+                modifier = Modifier.weight(1f),
+                colors   = ButtonDefaults.buttonColors(containerColor = Color(0xFF7B61FF))
+            ) {
+                Text("FINALIZE INTENT", color = Color.White, fontSize = 13.sp)
+            }
+        }
+
         if (showRunStep) {
             Button(
                 onClick  = onRunStep,
@@ -521,10 +661,20 @@ private fun ActionBar(
         if (showApprove) {
             Button(
                 onClick  = onApprove,
-                modifier = if (showRunStep) Modifier.weight(1f) else Modifier.fillMaxWidth(),
+                modifier = Modifier.weight(1f),
                 colors   = ButtonDefaults.buttonColors(containerColor = EventApproval)
             ) {
                 Text("APPROVE", color = Color.White, fontSize = 13.sp)
+            }
+        }
+
+        if (showAuthorize) {
+            Button(
+                onClick  = onAuthorize,
+                modifier = Modifier.weight(1f),
+                colors   = ButtonDefaults.buttonColors(containerColor = EventApproval)
+            ) {
+                Text("AUTHORIZE EXECUTION", color = Color.White, fontSize = 12.sp)
             }
         }
     }
@@ -535,6 +685,7 @@ private fun ActionBar(
 @Composable
 private fun InputBar(
     text:         String,
+    placeholder:  String,
     onTextChange: (String) -> Unit,
     onSend:       () -> Unit
 ) {
@@ -549,7 +700,7 @@ private fun InputBar(
         OutlinedTextField(
             value         = text,
             onValueChange = onTextChange,
-            placeholder   = { Text("Enter objective…", color = OnSurface.copy(alpha = 0.4f), fontSize = 13.sp) },
+            placeholder   = { Text(placeholder, color = OnSurface.copy(alpha = 0.4f), fontSize = 13.sp) },
             modifier      = Modifier.weight(1f),
             singleLine    = true,
             colors        = OutlinedTextFieldDefaults.colors(
