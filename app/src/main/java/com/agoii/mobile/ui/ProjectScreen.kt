@@ -173,6 +173,8 @@ fun ProjectScreen(projectId: String) {
         }
 
         // ── ACTION BAR ──────────────────────────────────────────────────────
+        // showApprove: contracts exist but execution hasn't started yet →
+        // user must approve contracts (CONTRACTS_APPROVED gate) to begin execution
         val showApprove = replayState?.contracts?.valid == true &&
                           replayState?.execution?.assignedTasks == 0
 
@@ -433,8 +435,8 @@ private fun CommitPanel(
             fontSize = 12.sp
         )
         Spacer(modifier = Modifier.height(4.dp))
-        Text("report_reference=$reportReference", color = OnSurface.copy(alpha = 0.7f), style = MonoStyle, fontSize = 10.sp)
-        Text("finalArtifact=$finalArtifactReference",    color = OnSurface.copy(alpha = 0.7f), style = MonoStyle, fontSize = 10.sp)
+        Text("report_reference=$reportReference",            color = OnSurface.copy(alpha = 0.7f), style = MonoStyle, fontSize = 10.sp)
+        Text("finalArtifactReference=$finalArtifactReference", color = OnSurface.copy(alpha = 0.7f), style = MonoStyle, fontSize = 10.sp)
         Spacer(modifier = Modifier.height(4.dp))
         Text("PROPOSED ACTIONS:", color = OnSurface.copy(alpha = 0.6f), style = MonoStyle, fontSize = 10.sp)
         proposedActions.forEachIndexed { i, action ->

@@ -145,6 +145,9 @@ class Replay(private val eventStore: EventRepository) {
                 assemblyStarted = assemblyStarted,
                 assemblyValidated = assemblyValidated,
                 assemblyCompleted = assemblyCompleted,
+                // This field uses the legacy fullyExecuted gate for backward compatibility
+                // with tests and existing consumers of AssemblyStructuralState.assemblyValid.
+                // The canonical truth-layer assemblyValid is the top-level field below.
                 assemblyValid = legacyAssemblyValid
             ),
             icsStarted = icsStarted,
