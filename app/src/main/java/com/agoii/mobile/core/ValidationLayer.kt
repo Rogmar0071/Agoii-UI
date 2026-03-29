@@ -853,6 +853,7 @@ class ValidationLayer {
     }
 
     private fun checkCommitContract(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.COMMIT_CONTRACT, payload, COMMIT_CONTRACT_KEYS)
         payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw LedgerValidationException(
                 "COMMIT_CONTRACT missing or blank 'report_reference' in '$projectId'"
