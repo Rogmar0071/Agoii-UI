@@ -18,14 +18,15 @@ import com.agoii.mobile.observability.ExecutionTrace
 /**
  * CoreBridge — mobile runtime adapter.
  *
- * GOVERNANCE RULE (LOCKED):
- * Intent MUST be certified by IRS BEFORE entering the ledger.
+ * GOVERNANCE RULE (LOCKED — CR-01-FINAL):
+ * INTENT_SUBMITTED is ALWAYS written on intent receipt.
+ * IRS runs informational-only; its result NEVER blocks ledger entry.
  *
- * Architecture:
- *   RAW INPUT → IRS (off-ledger) → CERTIFIED → INTENT_SUBMITTED → EXECUTION
+ * Architecture (MASTER-ALIGNED):
+ *   RAW INPUT → INTENT_SUBMITTED (always) → ExecutionEntryPoint → ExecutionAuthority → CONTRACTS_GENERATED
  *
- * IRS is NOT part of the ledger lifecycle.
- * Ledger remains the execution authority only.
+ * IRS is informational context included in the INTENT_SUBMITTED payload.
+ * Ledger remains the sole execution authority.
  */
 class CoreBridge(context: Context) {
 
@@ -46,12 +47,12 @@ class CoreBridge(context: Context) {
     private val observability       = ExecutionObservability(ledger)
 
     /**
-     * 🔴 INTENT GATE
+     * INTENT ENTRY POINT (CR-01-FINAL — UNCONDITIONAL)
      *
-     * Runs IRS lifecycle OFF-LEDGER.
-     * Only writes INTENT_SUBMITTED if [OrchestratorResult.Certified].
+     * INTENT_SUBMITTED is ALWAYS written. IRS runs informational-only.
+     * The IRS result is included as metadata in the payload; it NEVER blocks entry.
      *
-     * @return true if intent entered ledger, false if IRS blocked it
+     * @return true always — intent entry is unconditional per AGOII MASTER alignment.
      */
     fun submitIntent(
         projectId:         String,
@@ -76,19 +77,21 @@ class CoreBridge(context: Context) {
             stepResult = irsOrchestrator.step(sessionId)
         } while (!stepResult.terminal)
 
-        // ❌ Block if not certified
-        if (stepResult.orchestratorResult !is OrchestratorResult.Certified) {
-            return false
+        // IRS result is informational context — it NEVER blocks ledger entry (CR-01-FINAL / FS-1).
+        val irsStatus = when (stepResult.orchestratorResult) {
+            is OrchestratorResult.Certified -> "CERTIFIED"
+            else                            -> "PENDING"
         }
 
-        // ✅ Minimal certification trace (non-invasive)
+        // ✅ INTENT_SUBMITTED is ALWAYS written (no gate, no block)
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
             mapOf(
                 "objective"       to objective,
                 "certificationId" to sessionId,
-                "certifiedAt"     to System.currentTimeMillis()
+                "certifiedAt"     to System.currentTimeMillis(),
+                "irsStatus"       to irsStatus
             )
         )
 
@@ -273,37 +276,98 @@ class CoreBridge(context: Context) {
     // ─── Private helpers ──────────────────────────────────────────────────────
 
     /**
-     * FS-1 / V5: Build a verified ContractorRegistry with the system contractor.
+     * Build a verified ContractorRegistry with all required system contractors (CR-01-FINAL / FIX 5).
      *
-     * DETERMINISM GUARANTEE (V5): [ContractorVerificationEngine.verify] is a pure function
-     * with no external dependencies. [DEFAULT_CONTRACTOR_CLAIMS] is a compile-time constant.
-     * Same input → same output on every run; no environment dependency, no discovery variance.
+     * Required contractors (MASTER-ALIGNED):
+     *  1. Communication Contractor (LLM)
+     *  2. Knowledge Scout Contractor
+     *  3. Validation Contractor
+     *  4. Simulation Contractor
+     *
+     * All contractors use all-high capability claims which score 3 on every dimension,
+     * well above [ContractorVerificationEngine.MINIMUM_SCORE] = 1. Verification failure
+     * is not expected; if it occurs for a candidate, that contractor is skipped and the
+     * remaining ones are still registered.
+     *
+     * BLOCK condition: If the registry remains empty after all registration attempts,
+     * execution will be blocked with NO_CONTRACTOR_REGISTRY by
+     * [ExecutionAuthority.executeFromLedger].
+     *
+     * DETERMINISM GUARANTEE: [ContractorVerificationEngine.verify] is a pure function.
+     * Same input → same output on every run; no environment dependency.
      */
     private fun buildContractorRegistry(): ContractorRegistry {
-        val registry = ContractorRegistry()
-        val engine   = ContractorVerificationEngine()
+        val registry  = ContractorRegistry()
+        val engine    = ContractorVerificationEngine()
 
-        val candidate = ContractorCandidate(
-            id               = DEFAULT_CONTRACTOR_ID,
-            source           = DEFAULT_CONTRACTOR_SOURCE,
-            capabilityClaims = DEFAULT_CONTRACTOR_CLAIMS
-        )
-
-        val result = engine.verify(candidate)
-        result.assignedProfile?.let { registry.registerVerified(it) }
+        REQUIRED_CONTRACTORS.forEach { (id, source, claims) ->
+            val candidate = ContractorCandidate(
+                id               = id,
+                source           = source,
+                capabilityClaims = claims
+            )
+            val result = engine.verify(candidate)
+            result.assignedProfile?.let { registry.registerVerified(it) }
+        }
 
         return registry
     }
 
     companion object {
-        private const val DEFAULT_CONTRACTOR_ID     = "system-contractor-001"
-        private const val DEFAULT_CONTRACTOR_SOURCE = "system"
-        private val DEFAULT_CONTRACTOR_CLAIMS = mapOf(
-            "constraintObedience" to "high",
-            "structuralAccuracy"  to "high",
-            "driftScore"          to "low",
-            "complexityCapacity"  to "high",
-            "reliability"         to "high"
+        /**
+         * Required contractors per CR-01-FINAL / FIX 5.
+         * Each triple: (contractorId, source, capabilityClaims).
+         * All capability dimensions use "high"/"low" as required by [ContractorVerificationEngine].
+         */
+        private val REQUIRED_CONTRACTORS: List<Triple<String, String, Map<String, String>>> = listOf(
+            // 1. Communication Contractor (LLM) — drives user interaction contracts
+            Triple(
+                "communication-contractor-001",
+                "llm",
+                mapOf(
+                    "constraintObedience" to "high",
+                    "structuralAccuracy"  to "high",
+                    "driftScore"          to "low",
+                    "complexityCapacity"  to "high",
+                    "reliability"         to "high"
+                )
+            ),
+            // 2. Knowledge Scout Contractor — scouting and discovery contracts
+            Triple(
+                "knowledge-scout-001",
+                "scout",
+                mapOf(
+                    "constraintObedience" to "high",
+                    "structuralAccuracy"  to "high",
+                    "driftScore"          to "low",
+                    "complexityCapacity"  to "high",
+                    "reliability"         to "high"
+                )
+            ),
+            // 3. Validation Contractor — validation contracts (AERP-1)
+            Triple(
+                "validation-contractor-001",
+                "system",
+                mapOf(
+                    "constraintObedience" to "high",
+                    "structuralAccuracy"  to "high",
+                    "driftScore"          to "low",
+                    "complexityCapacity"  to "high",
+                    "reliability"         to "high"
+                )
+            ),
+            // 4. Simulation Contractor — simulation and projection contracts
+            Triple(
+                "simulation-contractor-001",
+                "simulation",
+                mapOf(
+                    "constraintObedience" to "high",
+                    "structuralAccuracy"  to "high",
+                    "driftScore"          to "low",
+                    "complexityCapacity"  to "high",
+                    "reliability"         to "high"
+                )
+            )
         )
     }
 }
