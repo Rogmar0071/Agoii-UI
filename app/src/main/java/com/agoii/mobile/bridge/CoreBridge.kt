@@ -2,7 +2,6 @@ package com.agoii.mobile.bridge
 
 import android.content.Context
 import com.agoii.mobile.commit.ApprovalStatus
-import com.agoii.mobile.commit.CommitContract
 import com.agoii.mobile.contractor.ContractorCandidate
 import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.contractor.ContractorVerificationEngine
@@ -211,41 +210,23 @@ class CoreBridge(context: Context) {
     }
 
     /**
-     * FS-3: Approve the pending commit contract → emits COMMIT_EXECUTED.
+     * Signal user approval of the pending COMMIT_CONTRACT.
      *
-     * Real-world execution is triggered ONLY after this call.
+     * GOVERNANCE RULE (V1/V4): CoreBridge is a signal router only.
+     * ExecutionAuthority is the sole writer of COMMIT_EXECUTED.
      */
-    fun approveCommit(projectId: String) {
-        val events = ledger.loadEvents(projectId)
-        val commitEvent = events.lastOrNull { it.type == EventTypes.COMMIT_CONTRACT }
-            ?: return
-        val reportReference = commitEvent.payload["report_reference"]?.toString() ?: ""
-        ledger.appendEvent(
-            projectId,
-            EventTypes.COMMIT_EXECUTED,
-            mapOf(
-                "report_reference" to reportReference,
-                "approvalStatus"   to ApprovalStatus.APPROVED.name
-            )
-        )
+    fun signalCommitApproval(projectId: String) {
+        executionAuthority.resolveCommitDecision(projectId, ledger, approved = true)
     }
 
     /**
-     * FS-3: Reject the pending commit contract → emits COMMIT_ABORTED.
+     * Signal user rejection of the pending COMMIT_CONTRACT.
+     *
+     * GOVERNANCE RULE (V1/V4): CoreBridge is a signal router only.
+     * ExecutionAuthority is the sole writer of COMMIT_ABORTED.
      */
-    fun rejectCommit(projectId: String) {
-        val events = ledger.loadEvents(projectId)
-        val commitEvent = events.lastOrNull { it.type == EventTypes.COMMIT_CONTRACT }
-            ?: return
-        val reportReference = commitEvent.payload["report_reference"]?.toString() ?: ""
-        ledger.appendEvent(
-            projectId,
-            EventTypes.COMMIT_ABORTED,
-            mapOf(
-                "report_reference" to reportReference,
-                "approvalStatus"   to ApprovalStatus.REJECTED.name
-            )
-        )
+    fun signalCommitRejection(projectId: String) {
+        executionAuthority.resolveCommitDecision(projectId, ledger, approved = false)
     }
 
     /** Load all events from the ledger (read-only). */
@@ -292,11 +273,11 @@ class CoreBridge(context: Context) {
     // ─── Private helpers ──────────────────────────────────────────────────────
 
     /**
-     * FS-1: Build a verified ContractorRegistry with a default system contractor.
+     * FS-1 / V5: Build a verified ContractorRegistry with the system contractor.
      *
-     * Uses the standard [ContractorVerificationEngine] pipeline to produce a VERIFIED
-     * contractor profile. Only registered contractors are used — no hardcoded IDs bypass
-     * the verification gate.
+     * DETERMINISM GUARANTEE (V5): [ContractorVerificationEngine.verify] is a pure function
+     * with no external dependencies. [DEFAULT_CONTRACTOR_CLAIMS] is a compile-time constant.
+     * Same input → same output on every run; no environment dependency, no discovery variance.
      */
     private fun buildContractorRegistry(): ContractorRegistry {
         val registry = ContractorRegistry()
