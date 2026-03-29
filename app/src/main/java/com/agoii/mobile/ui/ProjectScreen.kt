@@ -108,13 +108,15 @@ fun ProjectScreen(projectId: String) {
         // ── HEADER ──────────────────────────────────────────────────────────
         Header(projectId = projectId, auditResult = auditResult)
 
-        // ── STATE PANEL ─────────────────────────────────────────────────────
-        StatePanel(
-            verification      = verification,
-            replayState       = replayState,
-            interactionResult = interactionResult,
-            events            = events
-        )
+        // ── STATE PANEL — only rendered when ledger has events (truth guard) ──
+        if (events.isNotEmpty()) {
+            StatePanel(
+                verification      = verification,
+                replayState       = replayState,
+                interactionResult = interactionResult,
+                events            = events
+            )
+        }
 
         // ── EVENT LIST ──────────────────────────────────────────────────────
         LazyColumn(
