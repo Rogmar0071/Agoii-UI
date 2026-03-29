@@ -4,7 +4,8 @@ data class ReplayStructuralState(
     val intent: IntentStructuralState,
     val contracts: ContractStructuralState,
     val execution: ExecutionStructuralState,
-    val assembly: AssemblyStructuralState
+    val assembly: AssemblyStructuralState,
+    val ics: IcsStructuralState
 )
 
 data class IntentStructuralState(
@@ -21,7 +22,8 @@ data class ExecutionStructuralState(
     val assignedTasks: Int,
     val completedTasks: Int,
     val validatedTasks: Int,
-    val fullyExecuted: Boolean
+    val fullyExecuted: Boolean,
+    val executionValid: Boolean
 )
 
 data class AssemblyStructuralState(
@@ -29,6 +31,12 @@ data class AssemblyStructuralState(
     val assemblyValidated: Boolean,
     val assemblyCompleted: Boolean,
     val assemblyValid: Boolean
+)
+
+data class IcsStructuralState(
+    val icsStarted: Boolean,
+    val icsCompleted: Boolean,
+    val icsValid: Boolean
 )
 
 class Replay(private val eventStore: EventRepository) {
@@ -44,10 +52,13 @@ class Replay(private val eventStore: EventRepository) {
         var assemblyStarted = false
         var assemblyValidated = false
         var assemblyCompleted = false
+        var icsStarted = false
+        var icsCompleted = false
 
         var assignedTasks = 0
         var completedTasks = 0
         var validatedTasks = 0
+        var executedSuccessCount = 0
 
         for (event in events) {
             when (event.type) {
@@ -56,18 +67,28 @@ class Replay(private val eventStore: EventRepository) {
                 EventTypes.TASK_ASSIGNED       -> assignedTasks++
                 EventTypes.TASK_COMPLETED      -> completedTasks++
                 EventTypes.TASK_VALIDATED      -> validatedTasks++
+                EventTypes.TASK_EXECUTED       -> {
+                    if (event.payload["executionStatus"]?.toString() == "SUCCESS") {
+                        executedSuccessCount++
+                    }
+                }
                 EventTypes.ASSEMBLY_STARTED    -> assemblyStarted = true
                 EventTypes.ASSEMBLY_VALIDATED  -> assemblyValidated = true
                 EventTypes.ASSEMBLY_COMPLETED  -> assemblyCompleted = true
+                EventTypes.ICS_STARTED         -> icsStarted = true
+                EventTypes.ICS_COMPLETED       -> icsCompleted = true
             }
         }
 
         val totalTasks = assignedTasks
-        val fullyExecuted = totalTasks > 0 && validatedTasks == totalTasks
+        val fullyExecuted = totalTasks > 0 && executedSuccessCount == totalTasks
+        val executionValid = fullyExecuted
 
         val assemblyValid = assemblyStarted &&
             assemblyCompleted &&
-            fullyExecuted
+            executionValid
+
+        val icsValid = icsStarted && icsCompleted && assemblyValid
 
         return ReplayStructuralState(
             intent = IntentStructuralState(
@@ -82,13 +103,19 @@ class Replay(private val eventStore: EventRepository) {
                 assignedTasks = assignedTasks,
                 completedTasks = completedTasks,
                 validatedTasks = validatedTasks,
-                fullyExecuted = fullyExecuted
+                fullyExecuted = fullyExecuted,
+                executionValid = executionValid
             ),
             assembly = AssemblyStructuralState(
                 assemblyStarted = assemblyStarted,
                 assemblyValidated = assemblyValidated,
                 assemblyCompleted = assemblyCompleted,
                 assemblyValid = assemblyValid
+            ),
+            ics = IcsStructuralState(
+                icsStarted = icsStarted,
+                icsCompleted = icsCompleted,
+                icsValid = icsValid
             )
         )
     }

@@ -163,11 +163,11 @@ class ExecutionEntryPoint(
             )
         }
         val payload: Map<String, Any> = mapOf(
-            "intentId"      to intentId,
-            "contractSetId" to contractSetId,
-            "report_id"     to reportId,
-            "contracts"     to enrichedContracts,
-            "total"         to total
+            "intentId"         to intentId,
+            "contractSetId"    to contractSetId,
+            "report_reference" to reportId,
+            "contracts"        to enrichedContracts,
+            "total"            to total
         )
 
         val currentEvents = ledger.loadEvents(projectId)

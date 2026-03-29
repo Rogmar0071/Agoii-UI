@@ -6,6 +6,11 @@ import com.agoii.mobile.execution.BuildExecutor
 import com.agoii.mobile.execution.ExecutionAuthority
 import com.agoii.mobile.execution.ExecutionEntryPoint
 import com.agoii.mobile.governor.Governor
+import com.agoii.mobile.contractor.ContractorCapabilityVector
+import com.agoii.mobile.contractor.ContractorEventEmitter
+import com.agoii.mobile.contractor.ContractorProfile
+import com.agoii.mobile.contractor.ContractorRegistry
+import com.agoii.mobile.contractor.VerificationStatus
 import com.agoii.mobile.irs.*
 import com.agoii.mobile.observability.ExecutionObservability
 import com.agoii.mobile.observability.ExecutionTimeline
@@ -34,7 +39,7 @@ class CoreBridge(context: Context) {
     private val buildExecutor       = BuildExecutor()
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
-    private val executionAuthority  = ExecutionAuthority()   // no registry wired — execution attempts produce TASK_EXECUTED(FAILURE)+RCF-1
+    private val executionAuthority  = ExecutionAuthority(buildDefaultContractorRegistry())
 
     private val observability       = ExecutionObservability(ledger)
 
@@ -204,4 +209,27 @@ class CoreBridge(context: Context) {
 
     fun replayIrs(sessionId: String): List<IrsSnapshot> =
         irsOrchestrator.replayHistory(sessionId)
+
+    // ─── Default contractor registry (DELTA-1: registry injection) ──────────
+
+    private fun buildDefaultContractorRegistry(): ContractorRegistry {
+        val registry = ContractorRegistry(ContractorEventEmitter())
+        val profile = ContractorProfile(
+            id           = "default-contractor",
+            capabilities = ContractorCapabilityVector(
+                constraintObedience = 3,
+                structuralAccuracy  = 3,
+                driftScore          = 1,
+                complexityCapacity  = 3,
+                reliability         = 3
+            ),
+            verificationCount = 1,
+            successCount      = 0,
+            failureCount      = 0,
+            status            = VerificationStatus.VERIFIED,
+            source            = "core-bridge-default"
+        )
+        registry.registerVerified(profile)
+        return registry
+    }
 }

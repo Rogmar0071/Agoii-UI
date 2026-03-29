@@ -434,6 +434,10 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "RECOVERY_CONTRACT missing or blank 'violationSurface' in '$projectId'"
             )
+        payload["constraintLock"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "RECOVERY_CONTRACT missing or blank 'constraintLock' in '$projectId'"
+            )
         payload["artifactReference"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw LedgerValidationException(
                 "RECOVERY_CONTRACT missing or blank 'artifactReference' in '$projectId'"
@@ -797,7 +801,7 @@ class ValidationLayer {
         )
         private val CONTRACTS_GENERATED_KEYS = setOf(
             "intentId", "contractSetId", "contracts", "total",
-            "report_id"   // RRIL-1: report reference field propagated from CONTRACTS_GENERATED into downstream events
+            "report_reference"   // RRIL-1: single canonical report reference field (RRIL-1 normalized)
         )
         private val CONTRACT_STARTED_KEYS   = setOf("position", "total", "contract_id")
         private val TASK_ASSIGNED_KEYS      = setOf(
@@ -814,7 +818,7 @@ class ValidationLayer {
             "contractId", "taskId", "contractType", "executionPosition",
             "report_reference",
             "failureClass", "violationSurface", "correctionDirective",
-            "successCondition", "artifactReference"
+            "constraintLock", "successCondition", "artifactReference"
         )
         private val TASK_ID_ONLY            = setOf("taskId")
         private val TASK_WITH_POSITION_KEYS = setOf("taskId", "position", "total")

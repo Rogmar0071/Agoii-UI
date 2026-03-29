@@ -1065,6 +1065,7 @@ class ExecutionAuthority(
                     "failureClass"        to recovery.failureClass,
                     "violationSurface"    to recovery.violationSurface,
                     "correctionDirective" to recovery.correctionDirective,
+                    "constraintLock"      to recovery.constraintLock,
                     "successCondition"    to recovery.successCondition,
                     "artifactReference"   to artifactRef
                 )

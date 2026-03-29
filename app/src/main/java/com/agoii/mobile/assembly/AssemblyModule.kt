@@ -86,8 +86,7 @@ class AssemblyModule {
         val contractsGenEvent = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
             ?: return AssemblyExecutionResult.NotTriggered
 
-        val reportReference = contractsGenEvent.payload["report_id"]?.toString()
-            ?: contractsGenEvent.payload["report_reference"]?.toString()
+        val reportReference = contractsGenEvent.payload["report_reference"]?.toString()
             ?: ""
 
         if (reportReference.isBlank()) return AssemblyExecutionResult.NotTriggered

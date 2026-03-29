@@ -291,14 +291,13 @@ class Governor(
      * Derives the report reference (RRID) from the first [EventTypes.CONTRACTS_GENERATED]
      * event in the ledger for RRIL-1 propagation into TASK_ASSIGNED payload.
      *
-     * Reads "report_id" (written by ExecutionEntryPoint) with "report_reference" as fallback.
+     * Reads "report_reference" (RRIL-1 canonical field) from the CONTRACTS_GENERATED event.
      * Returns empty string when no CONTRACTS_GENERATED event or field is found.
      */
     private fun deriveReportReference(events: List<Event>): String {
         val contractsGen = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
             ?: return ""
-        return contractsGen.payload["report_id"]?.toString()
-            ?: contractsGen.payload["report_reference"]?.toString()
+        return contractsGen.payload["report_reference"]?.toString()
             ?: ""
     }
 
