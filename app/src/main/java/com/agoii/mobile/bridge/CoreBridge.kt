@@ -24,19 +24,23 @@ class CoreBridge(context: Context) {
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
 
-    // ✅ DRIVER REGISTRY (NOW REAL)
-    private val driverRegistry      = DriverRegistry()
+    // ─────────────────────────────────────────────────────────────
+    // DRIVER REGISTRY (REAL EXECUTION LAYER)
+    // ─────────────────────────────────────────────────────────────
+    private val driverRegistry = DriverRegistry()
 
-    private val contractorRegistry  = buildContractorRegistry()
+    private val contractorRegistry = buildContractorRegistry()
 
-    // ✅ REGISTER DRIVER AT BOOT (CLOSED SYSTEM)
     init {
+        val apiKey = System.getenv("OPENAI_API_KEY")
+            ?: throw LedgerValidationException("ICS BLOCKED: Missing OPENAI_API_KEY")
+
         driverRegistry.register(
             "llm",
             LLMDriver(
                 LLMDriverConfig(
-                    apiKey    = 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
-                    endpoint  =, "https://api.openai.com/v1/chat/completions",
+                    apiKey    = apiKey,
+                    endpoint  = "https://api.openai.com/v1/chat/completions",
                     model     = "gpt-4o-mini",
                     timeoutMs = 30000
                 )
@@ -44,16 +48,20 @@ class CoreBridge(context: Context) {
         )
     }
 
-    // ✅ EXECUTION AUTHORITY + SYSTEM NOW SHARE REGISTRY
-    private val executionAuthority  = ExecutionAuthority(contractorRegistry)
-    private val contractorSystem    = ContractorSystem(
+    // ─────────────────────────────────────────────────────────────
+    // SYSTEM WIRING
+    // ─────────────────────────────────────────────────────────────
+    private val executionAuthority = ExecutionAuthority(contractorRegistry)
+
+    private val contractorSystem = ContractorSystem(
         driverRegistry = driverRegistry
     )
 
-    private val observability       = ExecutionObservability(ledger)
+    private val observability = ExecutionObservability(ledger)
 
-    // ─────────────────────────────────────────────────────────────────────────
-
+    // ─────────────────────────────────────────────────────────────
+    // ICS ENTRY
+    // ─────────────────────────────────────────────────────────────
     fun processInteraction(projectId: String, input: String): String {
 
         contractorRegistry.allVerified()
@@ -98,10 +106,10 @@ class CoreBridge(context: Context) {
                 val artifact = result.executionOutput.resultArtifact
 
                 val text = artifact.entries
-                    .filterNot { entry: Map.Entry<String, Any> ->
+                    .filterNot { entry ->
                         entry.key in ARTIFACT_METADATA_KEYS
                     }
-                    .mapNotNull { entry: Map.Entry<String, Any> ->
+                    .mapNotNull { entry ->
                         entry.value?.toString()?.takeIf { it.isNotBlank() }
                     }
                     .firstOrNull()
@@ -119,10 +127,9 @@ class CoreBridge(context: Context) {
         return output
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // UI + GOVERNANCE SURFACE (UNCHANGED)
-    // ─────────────────────────────────────────────────────────────────────────
-
+    // ─────────────────────────────────────────────────────────────
+    // UI + GOVERNANCE SURFACE
+    // ─────────────────────────────────────────────────────────────
     fun loadEvents(projectId: String): List<Event> =
         ledger.loadEvents(projectId)
 
@@ -147,8 +154,9 @@ class CoreBridge(context: Context) {
         executionAuthority.resolveCommitDecision(projectId, ledger, false)
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-
+    // ─────────────────────────────────────────────────────────────
+    // CONTRACTOR REGISTRY
+    // ─────────────────────────────────────────────────────────────
     private fun buildContractorRegistry(): ContractorRegistry {
         val registry = ContractorRegistry()
         val engine = ContractorVerificationEngine()
