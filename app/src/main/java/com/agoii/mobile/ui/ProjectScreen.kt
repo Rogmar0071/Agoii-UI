@@ -68,6 +68,7 @@ fun ProjectScreen(projectId: String) {
     var interactionResult by remember { mutableStateOf<InteractionResult?>(null) }
     var inputText         by remember { mutableStateOf("") }
     var sendMessage       by remember { mutableStateOf<String?>(null) }
+    var responseMessage   by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
 
@@ -96,23 +97,27 @@ fun ProjectScreen(projectId: String) {
     }
 
     /**
-     * Single ICS interaction entry point (AGOII-MQP-ICS-INTERACTION-LOOP-ENFORCEMENT-01).
+     * Single ICS interaction entry point (AGOII-RCF-ICS-STRUCTURAL-RECOVERY-01).
      *
-     * Forwards user input to CoreBridge; UI never decides lifecycle or triggers execution.
+     * Forwards user input to CoreBridge; displays the raw contractor response.
+     * Errors display the EXACT exception message — no generic masking.
      */
     fun handleUserInput(input: String) {
         val trimmed = input.trim()
         if (trimmed.isEmpty()) return
 
         try {
-            bridge.processInteraction(projectId, trimmed)
+            val response = bridge.processInteraction(projectId, trimmed)
             inputText = ""
             sendMessage = null
+            responseMessage = response
             reload()
         } catch (e: LedgerValidationException) {
-            sendMessage = "Operation not allowed in current state"
+            sendMessage = e.message ?: "Unknown error"
+            responseMessage = null
         } catch (e: Exception) {
-            sendMessage = "An error occurred. Please try again."
+            sendMessage = e.message ?: "Unknown error"
+            responseMessage = null
         }
     }
 
@@ -221,6 +226,16 @@ fun ProjectScreen(projectId: String) {
         )
 
         // ── INPUT BAR ───────────────────────────────────────────────────────
+        responseMessage?.let { msg ->
+            Text(
+                text     = msg,
+                color    = OnSurface,
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+            )
+        }
         sendMessage?.let { msg ->
             Text(
                 text     = msg,
@@ -233,7 +248,7 @@ fun ProjectScreen(projectId: String) {
         }
         InputBar(
             text         = inputText,
-            onTextChange = { inputText = it; sendMessage = null },
+            onTextChange = { inputText = it; sendMessage = null; responseMessage = null },
             onSend       = { handleUserInput(inputText) }
         )
     }
