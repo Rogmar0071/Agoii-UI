@@ -1,7 +1,5 @@
 package com.agoii.mobile.contractor
 
-// AGOII CONTRACT — CONTRACTOR SYSTEM (AGOII-CONTRACTOR-SYSTEM-FULL-001)
-
 import com.agoii.mobile.contractors.DeterministicMatchingEngine
 import com.agoii.mobile.contractors.ExecutionContract as MatchingContract
 import com.agoii.mobile.contractors.ResolutionTrace
@@ -36,9 +34,11 @@ sealed class ContractorSystemResult {
 
 class ContractorSystem(
     private val matchingEngine: DeterministicMatchingEngine = DeterministicMatchingEngine(),
-    private val driverRegistry: DriverRegistry              = DriverRegistry(),
-    private val executor:       ContractorExecutor          = ContractorExecutor(driverRegistry)
+    private val driverRegistry: DriverRegistry
 ) {
+
+    // ✅ SINGLE SOURCE OF TRUTH
+    private val executor = ContractorExecutor(driverRegistry)
 
     fun execute(
         taskId:                String,
@@ -54,7 +54,6 @@ class ContractorSystem(
         registry:              ContractorRegistry
     ): ContractorSystemResult {
 
-        // ── Step 1: Deterministic matching ───────────────────────────────────
         val matchContract = MatchingContract(
             contractId      = contractId,
             reportReference = reportReference,
@@ -84,7 +83,6 @@ class ContractorSystem(
             )
         }
 
-        // ── Step 4: Resolve profiles ─────────────────────────────────────────
         val profiles = contractorIds.mapNotNull { id ->
             registry.allVerified().find { it.id == id }
         }
@@ -96,7 +94,6 @@ class ContractorSystem(
             )
         }
 
-        // ── Step 5: Execute via driver ───────────────────────────────────────
         val primaryProfile = profiles.first()
 
         val input = ContractorExecutionInput(
@@ -109,15 +106,6 @@ class ContractorSystem(
 
         val rawOutput = executor.execute(input, primaryProfile)
 
-        // ── Step 6: Failure propagation ──────────────────────────────────────
-        if (rawOutput.status == ExecutionStatus.FAILURE) {
-            return ContractorSystemResult.Blocked(
-                reason = "CONTRACTOR_EXECUTION_FAILED:${rawOutput.error ?: "unknown"}",
-                trace  = assigned.trace
-            )
-        }
-
-        // ── Step 7: Return resolved ──────────────────────────────────────────
         return ContractorSystemResult.Resolved(
             contractorIds   = contractorIds,
             executionOutput = rawOutput,
