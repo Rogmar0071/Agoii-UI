@@ -31,20 +31,8 @@ class CoreBridge(context: Context) {
     private val contractorRegistry = buildContractorRegistry()
 
     init {
-        val apiKey = System.getenv("OPENAI_API_KEY")
-            ?: throw LedgerValidationException("ICS BLOCKED: Missing OPENAI_API_KEY")
-
-        driverRegistry.register(
-            "llm",
-            LLMDriver(
-                LLMDriverConfig(
-                    apiKey    = apiKey,
-                    endpoint  = "https://api.openai.com/v1/chat/completions",
-                    model     = "gpt-4o-mini",
-                    timeoutMs = 30000
-                )
-            )
-        )
+        // SAFE BOOT MODE — NO DRIVER REGISTRATION
+        // Used to isolate startup crashes
     }
 
     // ─────────────────────────────────────────────────────────────
