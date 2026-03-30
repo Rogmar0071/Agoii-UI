@@ -10,6 +10,7 @@ import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.interaction.*
 import com.agoii.mobile.irs.*
 import com.agoii.mobile.observability.*
+import com.agoii.mobile.BuildConfig
 import java.util.UUID
 
 class CoreBridge(context: Context) {
@@ -24,31 +25,33 @@ class CoreBridge(context: Context) {
     private val irsOrchestrator     = IrsOrchestrator()
 
     // ─────────────────────────────────────────────────────────────
-    // DRIVER REGISTRY (REAL EXECUTION LAYER)
+    // DRIVER REGISTRY (SINGLE SOURCE OF EXECUTION DRIVERS)
     // ─────────────────────────────────────────────────────────────
     private val driverRegistry = DriverRegistry()
 
     private val contractorRegistry = buildContractorRegistry()
 
+    // SAFE DRIVER REGISTRATION (NO CRASH)
     init {
-        val apiKey = System.getenv("OPENAI_API_KEY")
-            ?: throw LedgerValidationException("ICS BLOCKED: Missing OPENAI_API_KEY")
+        val apiKey = BuildConfig.OPENAI_API_KEY
 
-        driverRegistry.register(
-            "llm",
-            LLMDriver(
-                LLMDriverConfig(
-                    apiKey    = apiKey,
-                    endpoint  = "https://api.openai.com/v1/chat/completions",
-                    model     = "gpt-4o-mini",
-                    timeoutMs = 30000
+        if (!apiKey.isNullOrBlank()) {
+            driverRegistry.register(
+                "llm",
+                LLMDriver(
+                    LLMDriverConfig(
+                        apiKey    = apiKey,
+                        endpoint  = "https://api.openai.com/v1/chat/completions",
+                        model     = "gpt-4o-mini",
+                        timeoutMs = 30000
+                    )
                 )
             )
-        )
+        }
     }
 
     // ─────────────────────────────────────────────────────────────
-    // SYSTEM WIRING
+    // EXECUTION SPINE (LOCKED ORDER)
     // ─────────────────────────────────────────────────────────────
     private val executionAuthority = ExecutionAuthority(contractorRegistry, driverRegistry)
     private val executionEntryPoint = ExecutionEntryPoint(ledger, executionAuthority)
