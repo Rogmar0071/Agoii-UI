@@ -312,11 +312,11 @@ sealed class UniversalIngestionResult {
  * Phase 6 — [ingestUniversalContract]: UCS-1 ingestion pipeline; writes lifecycle events to the
  *            ledger (NO execution triggered; contract is a governance input only).
  *
- * @param contractorRegistry Optional contractor registry for deterministic matching.
- *                           When null, all execution attempts are BLOCKED (RCF-1 issued).
+ * @param contractorRegistry Contractor registry for deterministic matching.
+ * @param driverRegistry     Driver registry providing execution backends.
  */
 class ExecutionAuthority(
-    private val contractorRegistry: ContractorRegistry? = null,
+    private val contractorRegistry: ContractorRegistry,
     private val driverRegistry: DriverRegistry
 ) {
 
@@ -513,10 +513,6 @@ class ExecutionAuthority(
 
         // ── Step 2: Registry check ───────────────────────────────────────────
         val registry = contractorRegistry
-            ?: return blockWithRecovery(
-                projectId, ledger, executionTask, "NO_CONTRACTOR_REGISTRY",
-                "No ContractorRegistry available — matching is impossible"
-            )
 
         // ── Step 2a: Domain context lookup (from CONTRACT_CREATED, if present) ─
         val domainContext = lookupDomainContext(executionTask.contractId, events)

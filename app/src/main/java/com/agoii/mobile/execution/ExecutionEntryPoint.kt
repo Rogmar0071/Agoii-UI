@@ -3,6 +3,7 @@ package com.agoii.mobile.execution
 import com.agoii.mobile.contracts.AgentProfile
 import com.agoii.mobile.contracts.ContractIntent
 import com.agoii.mobile.contracts.ContractSystemOrchestrator
+import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
@@ -52,10 +53,12 @@ data class AuthorizationResult(
  *  - [ExecutionAuthority] is private and not reachable from any other class.
  */
 class ExecutionEntryPoint(
-    private val ledger: EventLedger
+    private val ledger:              EventLedger,
+    private val contractorRegistry:  ContractorRegistry,
+    private val driverRegistry:      DriverRegistry
 ) {
 
-    private val executionAuthority         = ExecutionAuthority()
+    private val executionAuthority         = ExecutionAuthority(contractorRegistry, driverRegistry)
     private val contractSystemOrchestrator = ContractSystemOrchestrator()
     private val validationLayer            = ValidationLayer()
 

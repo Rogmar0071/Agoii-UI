@@ -22,7 +22,6 @@ class CoreBridge(context: Context) {
     private val replayTest          = ReplayTest(ledger)
     private val buildExecutor       = BuildExecutor()
     private val irsOrchestrator     = IrsOrchestrator()
-    private val executionEntryPoint = ExecutionEntryPoint(ledger)
 
     // ─────────────────────────────────────────────────────────────
     // DRIVER REGISTRY (REAL EXECUTION LAYER)
@@ -52,6 +51,7 @@ class CoreBridge(context: Context) {
     // SYSTEM WIRING
     // ─────────────────────────────────────────────────────────────
     private val executionAuthority = ExecutionAuthority(contractorRegistry, driverRegistry)
+    private val executionEntryPoint = ExecutionEntryPoint(ledger, contractorRegistry, driverRegistry)
 
     private val contractorSystem = ContractorSystem(
         driverRegistry = driverRegistry
