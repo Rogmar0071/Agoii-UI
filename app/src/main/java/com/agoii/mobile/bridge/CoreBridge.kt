@@ -51,7 +51,7 @@ class CoreBridge(context: Context) {
     // SYSTEM WIRING
     // ─────────────────────────────────────────────────────────────
     private val executionAuthority = ExecutionAuthority(contractorRegistry, driverRegistry)
-    private val executionEntryPoint = ExecutionEntryPoint(ledger, contractorRegistry, driverRegistry)
+    private val executionEntryPoint = ExecutionEntryPoint(ledger, executionAuthority)
 
     private val contractorSystem = ContractorSystem(
         driverRegistry = driverRegistry
