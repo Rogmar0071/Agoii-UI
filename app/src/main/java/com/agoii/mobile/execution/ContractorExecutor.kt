@@ -12,12 +12,6 @@ data class ContractorExecutionInput(
     val contractConstraints:  List<String>,
     val expectedOutputSchema: String
 ) {
-    /**
-     * Canonical execution payload.
-     *
-     * This is the ONLY structure allowed to leave the system toward drivers.
-     * No interpretation, no enrichment, no transformation beyond this mapping.
-     */
     fun toExecutionPayload(): Map<String, Any> {
         return mapOf(
             "taskId"               to taskId,
@@ -38,8 +32,10 @@ data class ContractorExecutionOutput(
 
 enum class ExecutionStatus { SUCCESS, FAILURE }
 
+// ─── ContractorExecutor ─────────────────────────────────────────────────────
+
 class ContractorExecutor(
-    private val driverRegistry: DriverRegistry = DriverRegistry()
+    private val driverRegistry: DriverRegistry
 ) {
 
     fun execute(
