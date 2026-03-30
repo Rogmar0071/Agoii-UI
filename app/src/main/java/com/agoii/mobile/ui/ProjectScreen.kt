@@ -31,9 +31,6 @@ import com.agoii.mobile.interaction.InteractionEngine
 import com.agoii.mobile.interaction.InteractionInput
 import com.agoii.mobile.interaction.InteractionResult
 import com.agoii.mobile.interaction.OutputType
-import com.agoii.mobile.irs.ConsensusRule
-import com.agoii.mobile.irs.EvidenceRef
-import com.agoii.mobile.irs.SwarmConfig
 import com.agoii.mobile.ui.theme.*
 
 /**
@@ -44,7 +41,7 @@ import com.agoii.mobile.ui.theme.*
  *   STATE PANEL     — derived from replay only (executionValid/assemblyValid/icsValid)
  *   EVENT LIST      — raw ledger events (scrollable, coloured by phase)
  *   COMMIT PANEL    — shown when COMMIT_CONTRACT is PENDING (propose actions + approve/reject)
- *   ACTION BAR      — RUN STEP + conditional APPROVE (contracts gate)
+ *   ACTION BAR      — conditional APPROVE (contracts gate)
  *   INPUT BAR       — text field + SEND
  *
  * UI Rules:
@@ -99,48 +96,21 @@ fun ProjectScreen(projectId: String) {
     }
 
     /**
-     * Single emission gate for all UI send actions (R1).
+     * Single ICS interaction entry point (AGOII-MQP-ICS-INTERACTION-LOOP-ENFORCEMENT-01).
      *
-     * - Trims input; returns immediately if empty.
-     * - Allows submitIntent() ONLY when no events exist (null lastEventType).
-     * - Blocks and shows a message when an intent is already present.
-     * - Wraps ALL bridge calls in try/catch so no exception escapes the UI (R3).
+     * Forwards user input to CoreBridge; UI never decides lifecycle or triggers execution.
      */
-    fun handleSend() {
-        val objective = inputText.trim()
-        if (objective.isEmpty()) return
-
-        val lastEventType = events.lastOrNull()?.type
+    fun handleUserInput(input: String) {
+        val trimmed = input.trim()
+        if (trimmed.isEmpty()) return
 
         try {
-            if (lastEventType == null) {
-                bridge.submitIntent(
-                    projectId         = projectId,
-                    rawFields         = mapOf(
-                        "objective"   to objective,
-                        "constraints" to "",
-                        "environment" to "",
-                        "resources"   to ""
-                    ),
-                    evidence          = mapOf(
-                        "objective"   to listOf(EvidenceRef(id = "ev-obj",  source = "user-input")),
-                        "constraints" to listOf(EvidenceRef(id = "ev-cst",  source = "user-input")),
-                        "environment" to listOf(EvidenceRef(id = "ev-env",  source = "user-input")),
-                        "resources"   to listOf(EvidenceRef(id = "ev-res",  source = "user-input"))
-                    ),
-                    swarmConfig       = SwarmConfig(
-                        agentCount    = 2,
-                        consensusRule = ConsensusRule.MAJORITY
-                    ),
-                    objective         = objective
-                )
-                reload()
-                inputText = ""
-            } else {
-                sendMessage = "Intent already submitted"
-            }
+            bridge.processInteraction(projectId, trimmed)
+            inputText = ""
+            sendMessage = null
+            reload()
         } catch (e: LedgerValidationException) {
-            sendMessage = "Unable to submit intent. Please try again."
+            sendMessage = "Operation not allowed in current state"
         } catch (e: Exception) {
             sendMessage = "An error occurred. Please try again."
         }
@@ -237,39 +207,8 @@ fun ProjectScreen(projectId: String) {
         val showApprove = replayState?.contracts?.valid == true &&
                           replayState?.execution?.assignedTasks == 0
 
-        val lastEventType = events.lastOrNull()?.type
-        val canRunStep = lastEventType in RUN_STEP_ALLOWED_EVENTS
-
-        // Hide RUN STEP once commit is pending (user must decide on commit first)
-        val showRunStep = canRunStep && replayState?.commitPending != true
-
         ActionBar(
             showApprove   = showApprove,
-            showRunStep   = showRunStep,
-            onRunStep     = {
-                // Hard containment: re-evaluate state at click time as defense in depth.
-                // showRunStep already guards visibility, but state may change between
-                // render and interaction (e.g., background reload).
-                val currentLastType = events.lastOrNull()?.type
-
-                if (currentLastType in RUN_STEP_ALLOWED_EVENTS) {
-                    try {
-                        // Returns null when ExecutionAuthority finds no further actions.
-                        val result = bridge.runGovernorStep(projectId)
-                        if (result != null) {
-                            reload()
-                        } else {
-                            sendMessage = "No further actions available"
-                        }
-                    } catch (e: LedgerValidationException) {
-                        sendMessage = "Operation not allowed in current state"
-                    } catch (e: Exception) {
-                        sendMessage = "Execution failed. Please try again."
-                    }
-                } else {
-                    sendMessage = "Action not allowed in current state"
-                }
-            },
             onApprove     = {
                 bridge.approveContracts(projectId)
                 reload()
@@ -290,7 +229,7 @@ fun ProjectScreen(projectId: String) {
         InputBar(
             text         = inputText,
             onTextChange = { inputText = it; sendMessage = null },
-            onSend       = { handleSend() }
+            onSend       = { handleUserInput(inputText) }
         )
     }
 }
@@ -435,18 +374,6 @@ private fun StatePanel(
 /** Payload keys that are rendered in dedicated panels rather than the generic event row. */
 private val PAYLOAD_KEYS_EXCLUDED_FROM_ROW = setOf("proposedActions")
 
-/**
- * Event types from which RUN STEP may be invoked.
- * ExecutionAuthority.evaluate() is the authoritative execution gate; this set
- * only prevents bridge calls in obviously invalid lifecycle positions.
- */
-private val RUN_STEP_ALLOWED_EVENTS = setOf(
-    EventTypes.INTENT_SUBMITTED,
-    EventTypes.CONTRACTS_READY,
-    EventTypes.CONTRACT_STARTED,
-    EventTypes.TASK_COMPLETED
-)
-
 private fun eventColor(type: String): Color = when {
     type == EventTypes.INTENT_SUBMITTED ||
     type == EventTypes.CONTRACTS_GENERATED ||
@@ -566,8 +493,6 @@ private fun CommitResultBanner(approved: Boolean) {
 @Composable
 private fun ActionBar(
     showApprove: Boolean,
-    showRunStep: Boolean,
-    onRunStep:   () -> Unit,
     onApprove:   () -> Unit
 ) {
     Row(
@@ -577,20 +502,10 @@ private fun ActionBar(
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        if (showRunStep) {
-            Button(
-                onClick  = onRunStep,
-                modifier = Modifier.weight(1f),
-                colors   = ButtonDefaults.buttonColors(containerColor = Primary)
-            ) {
-                Text("RUN STEP", color = Color.Black, fontSize = 13.sp)
-            }
-        }
-
         if (showApprove) {
             Button(
                 onClick  = onApprove,
-                modifier = if (showRunStep) Modifier.weight(1f) else Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth(),
                 colors   = ButtonDefaults.buttonColors(containerColor = EventApproval)
             ) {
                 Text("APPROVE", color = Color.White, fontSize = 13.sp)

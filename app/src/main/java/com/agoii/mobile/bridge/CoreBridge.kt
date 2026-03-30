@@ -207,6 +207,67 @@ class CoreBridge(context: Context) {
         return match?.get("name")?.toString() ?: contractId
     }
 
+    /**
+     * ICS Interaction Loop entry point (AGOII-MQP-ICS-INTERACTION-LOOP-ENFORCEMENT-01).
+     *
+     * Single unified routing entry for all user input:
+     *  - Empty ledger: submit [input] as the intent objective.
+     *  - Intent present: advance the execution pipeline one step.
+     *
+     * UI MUST NOT call any other execution method directly.
+     *
+     * @throws LedgerValidationException if the operation is not permitted in the current state.
+     */
+    fun processInteraction(projectId: String, input: String) {
+        val events = ledger.loadEvents(projectId)
+
+        if (events.isEmpty()) {
+            val sessionId = "$projectId-${java.util.UUID.randomUUID()}"
+
+            irsOrchestrator.createSession(
+                sessionId,
+                mapOf(
+                    "objective"   to input,
+                    "constraints" to "",
+                    "environment" to "",
+                    "resources"   to ""
+                ),
+                mapOf(
+                    "objective"   to listOf(EvidenceRef(id = "ev-obj", source = "user-input")),
+                    "constraints" to listOf(EvidenceRef(id = "ev-cst", source = "user-input")),
+                    "environment" to listOf(EvidenceRef(id = "ev-env", source = "user-input")),
+                    "resources"   to listOf(EvidenceRef(id = "ev-res", source = "user-input"))
+                ),
+                SwarmConfig(agentCount = 2, consensusRule = ConsensusRule.MAJORITY),
+                emptyMap()
+            )
+
+            var stepResult: StepResult
+            do {
+                stepResult = irsOrchestrator.step(sessionId)
+            } while (!stepResult.terminal)
+
+            val irsStatus = when (stepResult.orchestratorResult) {
+                is OrchestratorResult.Certified -> "CERTIFIED"
+                else                            -> "PENDING"
+            }
+
+            ledger.appendEvent(
+                projectId,
+                EventTypes.INTENT_SUBMITTED,
+                mapOf(
+                    "objective"       to input,
+                    "certificationId" to sessionId,
+                    "certifiedAt"     to System.currentTimeMillis(),
+                    "irsStatus"       to irsStatus
+                )
+            )
+        } else {
+            runGovernorStep(projectId)
+                ?: throw LedgerValidationException("No further actions available in current state")
+        }
+    }
+
     /** Append a contracts_approved event directly to the ledger (explicit governance gate). */
     fun approveContracts(projectId: String) {
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
