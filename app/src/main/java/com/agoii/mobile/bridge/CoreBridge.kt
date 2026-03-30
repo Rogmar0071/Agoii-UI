@@ -217,35 +217,33 @@ class CoreBridge(context: Context) {
     }
 
     /**
-     * ICS Interaction entry point (AGOII-MQP-ICS-ACTIVATION-CLOSURE-04).
+     * ICS Interaction entry point (AGOII-RCF-ICS-ENFORCEMENT-LOCK-01).
      *
      * Routes every user interaction through the ContractorSystem for deterministic,
      * contract-driven execution. Never calls Governor or triggers execution.
      *
      * Lifecycle:
-     *  - Empty ledger        → IRS certification + INTENT_SUBMITTED.
+     *  - Empty ledger        → IRS certification + INTENT_SUBMITTED, then ContractorSystem.
      *  - Non-empty ledger    → Build [InteractionContract], route through [ContractorSystem].
-     *                          Resolved → CONTRACTS_GENERATED (type="interaction") — loop continues.
+     *                          Resolved → CONTRACTS_GENERATED (type="interaction") + return response.
      *                          Blocked  → BLOCK (LedgerValidationException).
      *
-     * The ICS loop remains alive by re-issuing CONTRACTS_GENERATED each turn.
-     * Governor is NEVER called from here; it activates separately on true execution contracts.
-     *
      * BLOCK CONDITIONS (throws [LedgerValidationException]):
-     *  - No contractor in registry.
+     *  - No COMMUNICATION contractor in registry.
      *  - ContractorSystem matching or execution fails.
+     *  - Contractor output is null, empty, blank, or non-human-readable.
      *
      * @throws LedgerValidationException on every block condition.
+     * @return Validated communication text from the selected contractor.
      */
-    fun processInteraction(projectId: String, input: String) {
-        val events = ledger.loadEvents(projectId)
+    fun processInteraction(projectId: String, input: String): String {
 
-        // Early guard: verify the registry has at least one candidate before invoking
-        // ContractorSystem (which would produce a less descriptive Blocked result).
-        // ContractorSystem performs its own deterministic matching internally.
+        // ── Enforce COMMUNICATION contractor exists BEFORE any execution ───────
         contractorRegistry.findBestMatch(
-            mapOf("constraintObedience" to 1, "reliability" to 1)
-        ) ?: throw LedgerValidationException("ICS BLOCKED: No contractor available in registry")
+            mapOf(ContractCapability.COMMUNICATION.dimensionName to ContractCapability.COMMUNICATION.requiredLevel)
+        ) ?: throw LedgerValidationException("ICS BLOCKED: No communication contractor available")
+
+        val events = ledger.loadEvents(projectId)
 
         if (events.isEmpty()) {
             // Initial intent capture: IRS certification + INTENT_SUBMITTED.
@@ -289,11 +287,9 @@ class CoreBridge(context: Context) {
                     "irsStatus"       to irsStatus
                 )
             )
-            return
         }
 
-        // Non-empty ledger: build InteractionContract and route through ContractorSystem.
-        // No hardcoded questions; no predefined rounds; contractor drives execution.
+        // ── Route through ContractorSystem (COMMUNICATION only) ───────────────
         val icsTaskId = "$projectId-ics-${UUID.randomUUID()}"
         val interactionContract = InteractionContract(
             contractId = icsTaskId,
@@ -309,46 +305,50 @@ class CoreBridge(context: Context) {
             constraints          = emptyList(),
             expectedOutput       = "Clarify and qualify the intent for project '$projectId'",
             taskPayload          = mapOf("userInput" to input),
-            requiredCapabilities = listOf(
-                ContractCapability.RELIABILITY,
-                ContractCapability.CONSTRAINT_OBEDIENCE
-            ),
+            requiredCapabilities = listOf(ContractCapability.COMMUNICATION),
             executionType        = ExecutionType.COMMUNICATION,
             targetDomain         = TargetDomain.CONTRACTOR,
             registry             = contractorRegistry
         )
 
-        when (systemResult) {
+        // ── Extract and validate output ───────────────────────────────────────
+        val communicationText: String = when (systemResult) {
             is ContractorSystemResult.Blocked  ->
                 throw LedgerValidationException(
-                    "ICS BLOCKED: Contractor matching failed — ${systemResult.reason}"
+                    "ICS BLOCKED: Contractor execution failed — ${systemResult.reason}"
                 )
             is ContractorSystemResult.Resolved -> {
-                // Contractor executed: re-issue contract via CONTRACTS_GENERATED (CLOSURE-04).
-                // "type": "interaction" marks this as an ICS loop contract so the UI and
-                // Governor can distinguish it from a true execution contract set.
-                val intentId = events.firstOrNull { it.type == EventTypes.INTENT_SUBMITTED }
-                    ?.payload?.get("objective")?.toString() ?: projectId
-
-                ledger.appendEvent(
-                    projectId,
-                    EventTypes.CONTRACTS_GENERATED,
-                    mapOf(
-                        "intentId"        to intentId,
-                        "contractSetId"   to icsTaskId,
-                        "total"           to 1,
-                        "contracts"       to listOf(
-                            mapOf(
-                                "contractId" to icsTaskId,
-                                "position"   to 1
-                            )
-                        ),
-                        "type"            to "interaction",
-                        "report_reference" to icsTaskId
-                    )
-                )
+                val communicationPayload =
+                    systemResult.executionOutput.resultArtifact["communicationPayload"] as? Map<*, *>
+                communicationPayload?.get("outputSchema")?.toString()?.takeIf { it.isNotBlank() }
+                    ?: throw LedgerValidationException("ICS BLOCKED: Invalid communication output")
             }
         }
+
+        // ── Ledger write: CONTRACTS_GENERATED (type="interaction") ────────────
+        val currentEvents = ledger.loadEvents(projectId)
+        val intentId = currentEvents.firstOrNull { it.type == EventTypes.INTENT_SUBMITTED }
+            ?.payload?.get("objective")?.toString() ?: projectId
+
+        ledger.appendEvent(
+            projectId,
+            EventTypes.CONTRACTS_GENERATED,
+            mapOf(
+                "intentId"         to intentId,
+                "contractSetId"    to icsTaskId,
+                "total"            to 1,
+                "contracts"        to listOf(
+                    mapOf(
+                        "contractId" to icsTaskId,
+                        "position"   to 1
+                    )
+                ),
+                "type"             to "interaction",
+                "report_reference" to icsTaskId
+            )
+        )
+
+        return communicationText
     }
 
     /** Append a contracts_approved event directly to the ledger (explicit governance gate). */
@@ -464,7 +464,8 @@ class CoreBridge(context: Context) {
          * All capability dimensions use "high"/"low" as required by [ContractorVerificationEngine].
          */
         private val REQUIRED_CONTRACTORS: List<Triple<String, String, Map<String, String>>> = listOf(
-            // 1. Communication Contractor (LLM) — drives user interaction contracts
+            // 1. Communication Contractor (LLM) — drives user interaction contracts.
+            //    communication = "high": the sole COMMUNICATION-capable contractor.
             Triple(
                 "communication-contractor-001",
                 "llm",
@@ -473,10 +474,12 @@ class CoreBridge(context: Context) {
                     "structuralAccuracy"  to "high",
                     "driftScore"          to "low",
                     "complexityCapacity"  to "high",
-                    "reliability"         to "high"
+                    "reliability"         to "high",
+                    "communication"       to "high"
                 )
             ),
-            // 2. Knowledge Scout Contractor — scouting and discovery contracts
+            // 2. Knowledge Scout Contractor — scouting and discovery contracts.
+            //    communication = "none": does not handle ICS interaction.
             Triple(
                 "knowledge-scout-001",
                 "scout",
@@ -485,10 +488,12 @@ class CoreBridge(context: Context) {
                     "structuralAccuracy"  to "high",
                     "driftScore"          to "low",
                     "complexityCapacity"  to "high",
-                    "reliability"         to "high"
+                    "reliability"         to "high",
+                    "communication"       to "none"
                 )
             ),
-            // 3. Validation Contractor — validation contracts (AERP-1)
+            // 3. Validation Contractor — validation contracts (AERP-1).
+            //    communication = "none": does not handle ICS interaction.
             Triple(
                 "validation-contractor-001",
                 "system",
@@ -497,10 +502,12 @@ class CoreBridge(context: Context) {
                     "structuralAccuracy"  to "high",
                     "driftScore"          to "low",
                     "complexityCapacity"  to "high",
-                    "reliability"         to "high"
+                    "reliability"         to "high",
+                    "communication"       to "none"
                 )
             ),
-            // 4. Simulation Contractor — simulation and projection contracts
+            // 4. Simulation Contractor — simulation and projection contracts.
+            //    communication = "none": does not handle ICS interaction.
             Triple(
                 "simulation-contractor-001",
                 "simulation",
@@ -509,7 +516,8 @@ class CoreBridge(context: Context) {
                     "structuralAccuracy"  to "high",
                     "driftScore"          to "low",
                     "complexityCapacity"  to "high",
-                    "reliability"         to "high"
+                    "reliability"         to "high",
+                    "communication"       to "none"
                 )
             )
         )

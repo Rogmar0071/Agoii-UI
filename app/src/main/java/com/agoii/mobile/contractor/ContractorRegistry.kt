@@ -109,6 +109,7 @@ class ContractorRegistry(
                 "structuralAccuracy"  -> cap.structuralAccuracy  >= score
                 "complexityCapacity"  -> cap.complexityCapacity  >= score
                 "reliability"         -> cap.reliability         >= score
+                "communication"       -> cap.communication       >= score
                 // driftScore: score is a maximum ceiling (lower drift = more reliable).
                 // A requirement of driftScore=1 means "drift must be at most 1".
                 "driftScore"          -> cap.driftScore          <= score

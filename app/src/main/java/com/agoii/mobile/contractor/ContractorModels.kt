@@ -20,7 +20,8 @@ data class ContractorCapabilityVector(
     val structuralAccuracy:  Int,
     val driftScore:          Int,
     val complexityCapacity:  Int,
-    val reliability:         Int
+    val reliability:         Int,
+    val communication:       Int = 0
 ) {
     init {
         require(constraintObedience in 0..3) { "constraintObedience must be in [0, 3]" }
@@ -28,6 +29,7 @@ data class ContractorCapabilityVector(
         require(driftScore          in 0..3) { "driftScore must be in [0, 3]" }
         require(complexityCapacity  in 0..3) { "complexityCapacity must be in [0, 3]" }
         require(reliability         in 0..3) { "reliability must be in [0, 3]" }
+        require(communication       in 0..3) { "communication must be in [0, 3]" }
     }
 
     /**
