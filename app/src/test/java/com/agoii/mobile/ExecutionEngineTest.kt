@@ -4,13 +4,8 @@ import com.agoii.mobile.contractor.ContractorCapabilityVector
 import com.agoii.mobile.contractor.ContractorProfile
 import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.contractor.VerificationStatus
-import com.agoii.mobile.core.Event
-import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
-import com.agoii.mobile.execution.ContractorExecutionInput
-import com.agoii.mobile.execution.ContractorExecutor
-import com.agoii.mobile.execution.ExecutionOrchestrator
-import com.agoii.mobile.execution.ExecutionResult
+import com.agoii.mobile.execution.ContractorExecutionOutput
 import com.agoii.mobile.execution.ExecutionStatus
 import com.agoii.mobile.execution.ResultValidator
 import com.agoii.mobile.execution.RetryDecision
@@ -20,10 +15,8 @@ import com.agoii.mobile.execution.TaskLifecycleState
 import com.agoii.mobile.execution.ValidationVerdict
 import com.agoii.mobile.tasks.Task
 import com.agoii.mobile.tasks.TaskAssignmentStatus
-import com.agoii.mobile.tasks.TaskGraph
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -34,28 +27,15 @@ import org.junit.Test
  *
  * Covers:
  *  - TaskLifecycleManager  (valid transitions, terminal states)
- *  - ContractorExecutor    (success / failure outputs)
  *  - ResultValidator       (VALIDATED / FAILED verdicts, rule evaluation)
  *  - RetryEngine           (RETRY → REASSIGN → ESCALATE chain)
- *  - ExecutionOrchestrator (full step-by-step lifecycle, failure handling)
  *
  * All tests run on the JVM without an Android device.
+ *
+ * GOVERNANCE: ExecutionAuthority is the ONLY execution entry point (AGOII-RCF-EXECUTION-AUTHORITY-LOCK-01).
+ * ContractorExecutor and ExecutionOrchestrator MUST NOT be used directly in tests.
  */
 class ExecutionEngineTest {
-
-    // ── In-memory EventRepository ─────────────────────────────────────────────
-
-    private class InMemoryEventStore : EventRepository {
-        private val ledger: MutableMap<String, MutableList<Event>> = mutableMapOf()
-
-        override fun appendEvent(projectId: String, type: String, payload: Map<String, Any>) {
-            ledger.getOrPut(projectId) { mutableListOf() }
-                .add(Event(type, payload))
-        }
-
-        override fun loadEvents(projectId: String): List<Event> =
-            ledger[projectId] ?: emptyList()
-    }
 
     // ── Test fixtures ─────────────────────────────────────────────────────────
 
@@ -101,12 +81,10 @@ class ExecutionEngineTest {
         assignmentStatus     = TaskAssignmentStatus.BLOCKED
     )
 
-    private lateinit var store: InMemoryEventStore
     private lateinit var registry: ContractorRegistry
 
     @Before
     fun setUp() {
-        store    = InMemoryEventStore()
         registry = ContractorRegistry()
     }
 
@@ -166,67 +144,17 @@ class ExecutionEngineTest {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // ContractorExecutor
-    // ══════════════════════════════════════════════════════════════════════════
-
-    @Test
-    fun `executor - success produces non-empty artifact with taskId`() {
-        val ex = ContractorExecutor()
-        val input = ContractorExecutionInput(
-            taskId               = "task-1",
-            taskDescription      = "Do something",
-            taskPayload          = mapOf("module" to "CORE"),
-            contractConstraints  = listOf("no-mutation"),
-            expectedOutputSchema = "structured artifact"
-        )
-        val output = ex.execute(input, verifiedProfile())
-        assertEquals(ExecutionStatus.SUCCESS, output.status)
-        assertNull(output.error)
-        assertEquals("task-1", output.resultArtifact["taskId"])
-    }
-
-    @Test
-    fun `executor - zero capability score produces failure`() {
-        val ex = ContractorExecutor()
-        val zeroCap = ContractorProfile(
-            id           = "zero",
-            capabilities = ContractorCapabilityVector(
-                constraintObedience = 0,
-                structuralAccuracy  = 0,
-                driftScore          = 3,
-                complexityCapacity  = 0,
-                reliability         = 0
-            ),
-            status = VerificationStatus.VERIFIED
-        )
-        val input = ContractorExecutionInput(
-            taskId               = "task-z",
-            taskDescription      = "test",
-            taskPayload          = emptyMap(),
-            contractConstraints  = emptyList(),
-            expectedOutputSchema = "any"
-        )
-        val output = ex.execute(input, zeroCap)
-        assertEquals(ExecutionStatus.FAILURE, output.status)
-        assertNotNull(output.error)
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
     // ResultValidator
     // ══════════════════════════════════════════════════════════════════════════
 
     @Test
     fun `validator - VALIDATED when all rules pass`() {
-        val task = simpleTask(taskId = "task-1")
-        val ex   = ContractorExecutor()
-        val input = ContractorExecutionInput(
-            taskId               = "task-1",
-            taskDescription      = task.description,
-            taskPayload          = mapOf("module" to task.module),
-            contractConstraints  = task.constraints,
-            expectedOutputSchema = task.expectedOutput
+        val task   = simpleTask(taskId = "task-1")
+        val output = ContractorExecutionOutput(
+            taskId         = "task-1",
+            resultArtifact = mapOf("taskId" to "task-1"),
+            status         = ExecutionStatus.SUCCESS
         )
-        val output = ex.execute(input, verifiedProfile())
         val result = ResultValidator().validate(task, output)
         assertEquals(ValidationVerdict.VALIDATED, result.verdict)
         assertTrue(result.failureReasons.isEmpty())
@@ -235,7 +163,7 @@ class ExecutionEngineTest {
     @Test
     fun `validator - FAILED when taskId mismatch`() {
         val task   = simpleTask(taskId = "task-1")
-        val output = com.agoii.mobile.execution.ContractorExecutionOutput(
+        val output = ContractorExecutionOutput(
             taskId         = "task-WRONG",
             resultArtifact = mapOf("taskId" to "task-WRONG"),
             status         = ExecutionStatus.SUCCESS
@@ -248,7 +176,7 @@ class ExecutionEngineTest {
     @Test
     fun `validator - FAILED when execution status is FAILURE`() {
         val task   = simpleTask(taskId = "task-1")
-        val output = com.agoii.mobile.execution.ContractorExecutionOutput(
+        val output = ContractorExecutionOutput(
             taskId         = "task-1",
             resultArtifact = mapOf("taskId" to "task-1"),
             status         = ExecutionStatus.FAILURE,
@@ -261,7 +189,7 @@ class ExecutionEngineTest {
     @Test
     fun `validator - FAILED when constraint missing from artifact`() {
         val task   = simpleTask(taskId = "task-1", constraints = listOf("no-mutation"))
-        val output = com.agoii.mobile.execution.ContractorExecutionOutput(
+        val output = ContractorExecutionOutput(
             taskId         = "task-1",
             resultArtifact = mapOf(
                 "taskId"         to "task-1",
@@ -312,90 +240,6 @@ class ExecutionEngineTest {
         val outcome = engine.evaluate(task, primary, attemptCount = 3)
         assertEquals(RetryDecision.REASSIGN, outcome.decision)
         assertEquals("replacement", outcome.assignedContractor?.id)
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // ExecutionOrchestrator — pure worker (no events, no lifecycle state)
-    // ══════════════════════════════════════════════════════════════════════════
-
-    private fun buildOrchestrator(): ExecutionOrchestrator = ExecutionOrchestrator()
-
-    private fun taskGraphWith(vararg tasks: Task) =
-        TaskGraph(contractReference = "contract-1", tasks = tasks.toList())
-
-    @Test
-    fun `orchestrator - execute returns success for capable contractor`() {
-        val contractor = verifiedProfile()
-        val orch       = buildOrchestrator()
-        val task       = simpleTask(taskId = "task-1")
-
-        val result = orch.execute(task, contractor)
-
-        assertTrue("Expected execution success", result.success)
-        assertFalse("Expected non-empty artifact", result.artifact.isEmpty())
-        assertEquals("Expected VALIDATED verdict",
-            ValidationVerdict.VALIDATED, result.validationResult.verdict)
-        assertNull("Expected no error on success", result.error)
-    }
-
-    @Test
-    fun `orchestrator - execute returns failure for zero-capability contractor`() {
-        val zeroCapContractor = ContractorProfile(
-            id            = "zero-cap",
-            capabilities  = ContractorCapabilityVector(0, 0, 0, 0, 0),
-            status        = VerificationStatus.VERIFIED,
-            source        = "test"
-        )
-        val orch   = buildOrchestrator()
-        val task   = simpleTask(taskId = "task-zero")
-
-        val result = orch.execute(task, zeroCapContractor)
-
-        assertFalse("Expected execution failure", result.success)
-        assertNotNull("Expected error message on failure", result.error)
-    }
-
-    @Test
-    fun `orchestrator - execute is deterministic (same input same result)`() {
-        val contractor = verifiedProfile()
-        val orch       = buildOrchestrator()
-        val task       = simpleTask(taskId = "task-det")
-
-        val result1 = orch.execute(task, contractor)
-        val result2 = orch.execute(task, contractor)
-
-        assertEquals("Determinism violated: success differs",
-            result1.success, result2.success)
-        assertEquals("Determinism violated: artifact differs",
-            result1.artifact, result2.artifact)
-        assertEquals("Determinism violated: verdict differs",
-            result1.validationResult.verdict, result2.validationResult.verdict)
-    }
-
-    @Test
-    fun `orchestrator - execute produces artifact with task id`() {
-        val contractor = verifiedProfile()
-        val orch       = buildOrchestrator()
-        val task       = simpleTask(taskId = "task-artifact")
-
-        val result = orch.execute(task, contractor)
-
-        assertTrue("Artifact must contain taskId", result.artifact.containsKey("taskId"))
-        assertEquals("Artifact taskId must match task", "task-artifact", result.artifact["taskId"])
-    }
-
-    @Test
-    fun `orchestrator - no events emitted during execute (pure worker)`() {
-        val contractor = verifiedProfile()
-        val orch       = buildOrchestrator()
-        val task       = simpleTask(taskId = "task-silent")
-
-        // Execute — no event store interaction expected
-        orch.execute(task, contractor)
-
-        // The shared store must remain empty since orchestrator does not emit events
-        val events = store.loadEvents("proj")
-        assertEquals("ExecutionOrchestrator must not emit any events", 0, events.size)
     }
 
     // ══════════════════════════════════════════════════════════════════════════
