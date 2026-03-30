@@ -2,25 +2,14 @@ package com.agoii.mobile.bridge
 
 import android.content.Context
 import com.agoii.mobile.commit.ApprovalStatus
-import com.agoii.mobile.contractor.ContractorCandidate
-import com.agoii.mobile.contractor.ContractorRegistry
-import com.agoii.mobile.contractor.ContractorSystem
-import com.agoii.mobile.contractor.ContractorSystemResult
-import com.agoii.mobile.contractor.ContractorVerificationEngine
-import com.agoii.mobile.contracts.ContractCapability
-import com.agoii.mobile.contracts.ExecutionType
-import com.agoii.mobile.contracts.TargetDomain
+import com.agoii.mobile.contractor.*
+import com.agoii.mobile.contracts.*
 import com.agoii.mobile.core.*
-import com.agoii.mobile.execution.BuildExecutor
-import com.agoii.mobile.execution.ExecutionAuthority
-import com.agoii.mobile.execution.ExecutionEntryPoint
+import com.agoii.mobile.execution.*
 import com.agoii.mobile.governor.Governor
-import com.agoii.mobile.interaction.InteractionContract
-import com.agoii.mobile.interaction.OutputType
+import com.agoii.mobile.interaction.*
 import com.agoii.mobile.irs.*
-import com.agoii.mobile.observability.ExecutionObservability
-import com.agoii.mobile.observability.ExecutionTimeline
-import com.agoii.mobile.observability.ExecutionTrace
+import com.agoii.mobile.observability.*
 import java.util.UUID
 
 class CoreBridge(context: Context) {
@@ -41,14 +30,19 @@ class CoreBridge(context: Context) {
 
     private val observability       = ExecutionObservability(ledger)
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // INTENT
+    // ─────────────────────────────────────────────────────────────────────────
+
     fun submitIntent(
-        projectId:         String,
-        rawFields:         Map<String, String>,
-        evidence:          Map<String, List<EvidenceRef>>,
-        swarmConfig:       SwarmConfig,
+        projectId: String,
+        rawFields: Map<String, String>,
+        evidence: Map<String, List<EvidenceRef>>,
+        swarmConfig: SwarmConfig,
         availableEvidence: Map<String, List<EvidenceRef>> = emptyMap(),
-        objective:         String
+        objective: String
     ): Boolean {
+
         val sessionId = "$projectId-${UUID.randomUUID()}"
 
         irsOrchestrator.createSession(
@@ -66,22 +60,26 @@ class CoreBridge(context: Context) {
 
         val irsStatus = when (stepResult.orchestratorResult) {
             is OrchestratorResult.Certified -> "CERTIFIED"
-            else                            -> "PENDING"
+            else -> "PENDING"
         }
 
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
             mapOf(
-                "objective"       to objective,
+                "objective" to objective,
                 "certificationId" to sessionId,
-                "certifiedAt"     to System.currentTimeMillis(),
-                "irsStatus"       to irsStatus
+                "certifiedAt" to System.currentTimeMillis(),
+                "irsStatus" to irsStatus
             )
         )
 
         return true
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ICS INTERACTION
+    // ─────────────────────────────────────────────────────────────────────────
 
     fun processInteraction(projectId: String, input: String): String {
 
@@ -107,86 +105,83 @@ class CoreBridge(context: Context) {
                 stepResult = irsOrchestrator.step(sessionId)
             } while (!stepResult.terminal)
 
-            val irsStatus = when (stepResult.orchestratorResult) {
-                is OrchestratorResult.Certified -> "CERTIFIED"
-                else                            -> "PENDING"
-            }
-
             ledger.appendEvent(
                 projectId,
                 EventTypes.INTENT_SUBMITTED,
-                mapOf(
-                    "objective"       to input,
-                    "certificationId" to sessionId,
-                    "certifiedAt"     to System.currentTimeMillis(),
-                    "irsStatus"       to irsStatus
-                )
+                mapOf("objective" to input)
             )
         }
 
         val icsTaskId = "$projectId-ics-${UUID.randomUUID()}"
 
-        val systemResult = contractorSystem.execute(
-            taskId               = icsTaskId,
-            contractId           = icsTaskId,
-            reportReference      = icsTaskId,
-            position             = 1,
-            constraints          = emptyList(),
-            expectedOutput       = "Clarify intent",
-            taskPayload          = mapOf("userInput" to input),
+        val result = contractorSystem.execute(
+            taskId = icsTaskId,
+            contractId = icsTaskId,
+            reportReference = icsTaskId,
+            position = 1,
+            constraints = emptyList(),
+            expectedOutput = "Clarify intent",
+            taskPayload = mapOf("userInput" to input),
             requiredCapabilities = listOf(
                 ContractCapability.RELIABILITY,
                 ContractCapability.CONSTRAINT_OBEDIENCE
             ),
-            executionType        = ExecutionType.COMMUNICATION,
-            targetDomain         = TargetDomain.CONTRACTOR,
-            registry             = contractorRegistry
+            executionType = ExecutionType.COMMUNICATION,
+            targetDomain = TargetDomain.CONTRACTOR,
+            registry = contractorRegistry
         )
 
-        val rawOutput: String = when (systemResult) {
+        val output = when (result) {
 
             is ContractorSystemResult.Blocked ->
-                throw LedgerValidationException(
-                    "ICS BLOCKED: Contractor execution failed — ${systemResult.reason}"
-                )
+                throw LedgerValidationException("ICS BLOCKED: ${result.reason}")
 
             is ContractorSystemResult.Resolved -> {
-                val artifact = systemResult.executionOutput.resultArtifact
+                val artifact = result.executionOutput.resultArtifact
 
                 val text = artifact.entries
                     .filterNot { entry: Map.Entry<String, Any> ->
                         entry.key in ARTIFACT_METADATA_KEYS
                     }
                     .mapNotNull { entry: Map.Entry<String, Any> ->
-                        entry.value?.toString()?.takeIf { value -> value.isNotBlank() }
+                        entry.value?.toString()?.takeIf { it.isNotBlank() }
                     }
                     .firstOrNull()
 
-                if (text.isNullOrBlank()) {
-                    throw LedgerValidationException(
-                        "ICS BLOCKED: Contractor returned no human-readable output"
-                    )
-                }
-
-                text
+                text ?: throw LedgerValidationException("ICS BLOCKED: Empty output")
             }
         }
 
         ledger.appendEvent(
             projectId,
             EventTypes.CONTRACTS_GENERATED,
-            mapOf(
-                "contractSetId" to icsTaskId,
-                "total" to 1
-            )
+            mapOf("contractSetId" to icsTaskId)
         )
 
-        return rawOutput
+        return output
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // ✅ RESTORED FUNCTIONS (UI DEPENDENCIES)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fun approveContracts(projectId: String) {
+        ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
+    }
+
+    fun signalCommitApproval(projectId: String) {
+        executionAuthority.resolveCommitDecision(projectId, ledger, approved = true)
+    }
+
+    fun signalCommitRejection(projectId: String) {
+        executionAuthority.resolveCommitDecision(projectId, ledger, approved = false)
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     private fun buildContractorRegistry(): ContractorRegistry {
-        val registry  = ContractorRegistry()
-        val engine    = ContractorVerificationEngine()
+        val registry = ContractorRegistry()
+        val engine = ContractorVerificationEngine()
 
         REQUIRED_CONTRACTORS.forEach { (id, source, claims) ->
             val candidate = ContractorCandidate(id, source, claims)
@@ -199,20 +194,20 @@ class CoreBridge(context: Context) {
 
     companion object {
 
-        private val ARTIFACT_METADATA_KEYS: Set<String> = setOf(
+        private val ARTIFACT_METADATA_KEYS = setOf(
             "taskId", "constraintsMet", "executionType", "targetDomain"
         )
 
-        private val REQUIRED_CONTRACTORS: List<Triple<String, String, Map<String, String>>> = listOf(
+        private val REQUIRED_CONTRACTORS = listOf(
             Triple(
                 "communication-contractor-001",
                 "llm",
                 mapOf(
                     "constraintObedience" to "high",
-                    "structuralAccuracy"  to "high",
-                    "driftScore"          to "low",
-                    "complexityCapacity"  to "high",
-                    "reliability"         to "high"
+                    "structuralAccuracy" to "high",
+                    "driftScore" to "low",
+                    "complexityCapacity" to "high",
+                    "reliability" to "high"
                 )
             )
         )
