@@ -144,6 +144,8 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.COMMIT_CONTRACT && to == EventTypes.COMMIT_EXECUTED) return true
             // Commit layer: user rejects → execution aborted
             if (from == EventTypes.COMMIT_CONTRACT && to == EventTypes.COMMIT_ABORTED) return true
+            // ICS loop: re-issued interaction contract (CLOSURE-04)
+            if (from == EventTypes.CONTRACTS_GENERATED && to == EventTypes.CONTRACTS_GENERATED) return true
             return false
         }
     }

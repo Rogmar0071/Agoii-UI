@@ -217,27 +217,33 @@ class CoreBridge(context: Context) {
     }
 
     /**
-     * ICS Interaction entry point (AGOII-MQP-ICS-CORRECTION-VALIDATION-03).
+     * ICS Interaction entry point (AGOII-MQP-ICS-ACTIVATION-CLOSURE-04).
      *
      * Routes every user interaction through the ContractorSystem for deterministic,
      * contract-driven execution. Never calls Governor or triggers execution.
      *
-     * - Empty ledger  → IRS certification + INTENT_SUBMITTED.
-     * - Non-empty     → Build [InteractionContract], route through [ContractorSystem].
-     *                   If no legal existing event type can record the output → BLOCKED.
+     * Lifecycle:
+     *  - Empty ledger        → IRS certification + INTENT_SUBMITTED.
+     *  - Non-empty ledger    → Build [InteractionContract], route through [ContractorSystem].
+     *                          Resolved → CONTRACTS_GENERATED (type="interaction") — loop continues.
+     *                          Blocked  → BLOCK (LedgerValidationException).
+     *
+     * The ICS loop remains alive by re-issuing CONTRACTS_GENERATED each turn.
+     * Governor is NEVER called from here; it activates separately on true execution contracts.
      *
      * BLOCK CONDITIONS (throws [LedgerValidationException]):
-     *   - No contractor available in registry.
-     *   - ContractorSystem matching fails.
-     *   - No legal event type exists to persist the interaction output.
+     *  - No contractor in registry.
+     *  - ContractorSystem matching or execution fails.
      *
      * @throws LedgerValidationException on every block condition.
      */
     fun processInteraction(projectId: String, input: String) {
         val events = ledger.loadEvents(projectId)
 
-        // Block condition: contractor required for every interaction step.
-        val contractor = contractorRegistry.findBestMatch(
+        // Early guard: verify the registry has at least one candidate before invoking
+        // ContractorSystem (which would produce a less descriptive Blocked result).
+        // ContractorSystem performs its own deterministic matching internally.
+        contractorRegistry.findBestMatch(
             mapOf("constraintObedience" to 1, "reliability" to 1)
         ) ?: throw LedgerValidationException("ICS BLOCKED: No contractor available in registry")
 
@@ -301,7 +307,7 @@ class CoreBridge(context: Context) {
             reportReference      = icsTaskId,
             position             = 1,
             constraints          = emptyList(),
-            expectedOutput       = input,
+            expectedOutput       = "Clarify and qualify the intent for project '$projectId'",
             taskPayload          = mapOf("userInput" to input),
             requiredCapabilities = listOf(
                 ContractCapability.RELIABILITY,
@@ -317,13 +323,31 @@ class CoreBridge(context: Context) {
                 throw LedgerValidationException(
                     "ICS BLOCKED: Contractor matching failed — ${systemResult.reason}"
                 )
-            is ContractorSystemResult.Resolved ->
-                // No existing event type can legally record ICS interaction output
-                // in the current ledger state. Per contract law: BLOCK.
-                throw LedgerValidationException(
-                    "ICS BLOCKED: No legal event type exists to record interaction output " +
-                    "in current state '${events.last().type}'"
+            is ContractorSystemResult.Resolved -> {
+                // Contractor executed: re-issue contract via CONTRACTS_GENERATED (CLOSURE-04).
+                // "type": "interaction" marks this as an ICS loop contract so the UI and
+                // Governor can distinguish it from a true execution contract set.
+                val intentId = events.firstOrNull { it.type == EventTypes.INTENT_SUBMITTED }
+                    ?.payload?.get("objective")?.toString() ?: projectId
+
+                ledger.appendEvent(
+                    projectId,
+                    EventTypes.CONTRACTS_GENERATED,
+                    mapOf(
+                        "intentId"        to intentId,
+                        "contractSetId"   to icsTaskId,
+                        "total"           to 1,
+                        "contracts"       to listOf(
+                            mapOf(
+                                "contractId" to icsTaskId,
+                                "position"   to 1
+                            )
+                        ),
+                        "type"            to "interaction",
+                        "report_reference" to icsTaskId
+                    )
                 )
+            }
         }
     }
 
