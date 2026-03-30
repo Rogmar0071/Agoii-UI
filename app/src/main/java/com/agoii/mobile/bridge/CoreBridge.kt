@@ -1,6 +1,7 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
+import com.agoii.mobile.BuildConfig
 import com.agoii.mobile.commit.ApprovalStatus
 import com.agoii.mobile.contractor.*
 import com.agoii.mobile.contracts.*
@@ -31,8 +32,21 @@ class CoreBridge(context: Context) {
     private val contractorRegistry = buildContractorRegistry()
 
     init {
-        // SAFE BOOT MODE — NO DRIVER REGISTRATION
-        // Used to isolate startup crashes
+        val apiKey = BuildConfig.OPENAI_API_KEY
+
+        if (apiKey.isNotBlank()) {
+            driverRegistry.register(
+                "llm",
+                LLMDriver(
+                    LLMDriverConfig(
+                        apiKey    = apiKey,
+                        endpoint  = "https://api.openai.com/v1/chat/completions",
+                        model     = "gpt-4o-mini",
+                        timeoutMs = 30000
+                    )
+                )
+            )
+        }
     }
 
     // ─────────────────────────────────────────────────────────────

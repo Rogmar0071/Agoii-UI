@@ -17,6 +17,7 @@ android {
         vectorDrawables {
             useSupportLibrary true
         }
+        buildConfigField "String", "OPENAI_API_KEY", "\"\""
     }
 
     buildTypes {
@@ -37,6 +38,7 @@ android {
 
     buildFeatures {
         compose true
+        buildConfig true
     }
 
     composeOptions {
