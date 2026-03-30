@@ -217,31 +217,33 @@ class CoreBridge(context: Context) {
     }
 
     /**
-     * ICS Interaction entry point (AGOII-RCF-ICS-ENFORCEMENT-LOCK-01).
+     * ICS Interaction entry point (AGOII-RCF-ICS-STRUCTURAL-RECOVERY-01).
      *
      * Routes every user interaction through the ContractorSystem for deterministic,
-     * contract-driven execution. Never calls Governor or triggers execution.
+     * contract-driven execution. COMMUNICATION is an execution type, not a capability.
+     * Contractor selection uses the canonical 4-dimension capability model.
      *
      * Lifecycle:
-     *  - Empty ledger        → IRS certification + INTENT_SUBMITTED, then ContractorSystem.
-     *  - Non-empty ledger    → Build [InteractionContract], route through [ContractorSystem].
-     *                          Resolved → CONTRACTS_GENERATED (type="interaction") + return response.
-     *                          Blocked  → BLOCK (LedgerValidationException).
+     *  - Empty ledger     → IRS certification + INTENT_SUBMITTED, then ContractorSystem.
+     *  - Non-empty ledger → ContractorSystem.execute(executionType=COMMUNICATION).
+     *                       Resolved → CONTRACTS_GENERATED (type="interaction") + return raw output.
+     *                       Blocked  → throw LedgerValidationException (exact message).
      *
      * BLOCK CONDITIONS (throws [LedgerValidationException]):
-     *  - No COMMUNICATION contractor in registry.
-     *  - ContractorSystem matching or execution fails.
-     *  - Contractor output is null, empty, blank, or non-human-readable.
+     *  - No contractor with source="llm" in registry.
+     *  - ContractorSystem returns Blocked.
+     *  - Execution artifact is empty, blank, or contains only structured metadata
+     *    with no human-readable output.
      *
      * @throws LedgerValidationException on every block condition.
-     * @return Validated communication text from the selected contractor.
+     * @return Raw execution output from the selected contractor.
      */
     fun processInteraction(projectId: String, input: String): String {
 
-        // ── Enforce COMMUNICATION contractor exists BEFORE any execution ───────
-        contractorRegistry.findBestMatch(
-            mapOf(ContractCapability.COMMUNICATION.dimensionName to ContractCapability.COMMUNICATION.requiredLevel)
-        ) ?: throw LedgerValidationException("ICS BLOCKED: No communication contractor available")
+        // ── Guard: registry must contain at least one contractor with source="llm" ──
+        contractorRegistry.allVerified()
+            .firstOrNull { it.source == "llm" }
+            ?: throw LedgerValidationException("ICS BLOCKED: No real communication contractor available")
 
         val events = ledger.loadEvents(projectId)
 
@@ -289,7 +291,7 @@ class CoreBridge(context: Context) {
             )
         }
 
-        // ── Route through ContractorSystem (COMMUNICATION only) ───────────────
+        // ── Route through ContractorSystem with canonical capabilities ─────────
         val icsTaskId = "$projectId-ics-${UUID.randomUUID()}"
         val interactionContract = InteractionContract(
             contractId = icsTaskId,
@@ -305,23 +307,32 @@ class CoreBridge(context: Context) {
             constraints          = emptyList(),
             expectedOutput       = "Clarify and qualify the intent for project '$projectId'",
             taskPayload          = mapOf("userInput" to input),
-            requiredCapabilities = listOf(ContractCapability.COMMUNICATION),
+            requiredCapabilities = listOf(
+                ContractCapability.RELIABILITY,
+                ContractCapability.CONSTRAINT_OBEDIENCE
+            ),
             executionType        = ExecutionType.COMMUNICATION,
             targetDomain         = TargetDomain.CONTRACTOR,
             registry             = contractorRegistry
         )
 
         // ── Extract and validate output ───────────────────────────────────────
-        val communicationText: String = when (systemResult) {
-            is ContractorSystemResult.Blocked  ->
+        val rawOutput: String = when (systemResult) {
+            is ContractorSystemResult.Blocked ->
                 throw LedgerValidationException(
                     "ICS BLOCKED: Contractor execution failed — ${systemResult.reason}"
                 )
             is ContractorSystemResult.Resolved -> {
-                val communicationPayload =
-                    systemResult.executionOutput.resultArtifact["communicationPayload"] as? Map<*, *>
-                communicationPayload?.get("outputSchema")?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw LedgerValidationException("ICS BLOCKED: Invalid communication output")
+                // Return the raw artifact as-is; do NOT assume schema or fabricate structure.
+                val artifact = systemResult.executionOutput.resultArtifact
+                val text = artifact.entries
+                    .filterNot { (k, _) -> k in ARTIFACT_METADATA_KEYS }
+                    .mapNotNull { (_, v) -> v?.toString()?.takeIf { it.isNotBlank() } }
+                    .firstOrNull()
+                if (text.isNullOrBlank()) {
+                    throw LedgerValidationException("ICS BLOCKED: Contractor returned no human-readable output")
+                }
+                text
             }
         }
 
@@ -348,7 +359,7 @@ class CoreBridge(context: Context) {
             )
         )
 
-        return communicationText
+        return rawOutput
     }
 
     /** Append a contracts_approved event directly to the ledger (explicit governance gate). */
@@ -459,13 +470,26 @@ class CoreBridge(context: Context) {
 
     companion object {
         /**
-         * Required contractors per CR-01-FINAL / FIX 5.
+         * Artifact keys that carry only structural metadata, not human-readable content.
+         * Defined alongside the artifact model so changes to artifact shape are visible here.
+         */
+        private val ARTIFACT_METADATA_KEYS: Set<String> = setOf(
+            "taskId", "constraintsMet", "executionType", "targetDomain",
+            "contractId", "contractorId", "communicationRef", "promptCycle",
+            "reliabilityRatio", "communicationPayload"
+        )
+
+        /**
+         * Required contractors (AGOII-RCF-ICS-STRUCTURAL-RECOVERY-01 / canonical model).
          * Each triple: (contractorId, source, capabilityClaims).
-         * All capability dimensions use "high"/"low" as required by [ContractorVerificationEngine].
+         * Capability dimensions: constraintObedience, structuralAccuracy, driftScore,
+         * complexityCapacity, reliability. COMMUNICATION is an ExecutionType, not a capability.
+         *
+         * The LLM contractor (source="llm") is the real communication executor for ICS.
+         * If it is absent or fails verification, processInteraction() will block truthfully.
          */
         private val REQUIRED_CONTRACTORS: List<Triple<String, String, Map<String, String>>> = listOf(
-            // 1. Communication Contractor (LLM) — drives user interaction contracts.
-            //    communication = "high": the sole COMMUNICATION-capable contractor.
+            // 1. LLM Contractor — the only contractor eligible for COMMUNICATION execution.
             Triple(
                 "communication-contractor-001",
                 "llm",
@@ -474,12 +498,10 @@ class CoreBridge(context: Context) {
                     "structuralAccuracy"  to "high",
                     "driftScore"          to "low",
                     "complexityCapacity"  to "high",
-                    "reliability"         to "high",
-                    "communication"       to "high"
+                    "reliability"         to "high"
                 )
             ),
             // 2. Knowledge Scout Contractor — scouting and discovery contracts.
-            //    communication = "none": does not handle ICS interaction.
             Triple(
                 "knowledge-scout-001",
                 "scout",
@@ -488,12 +510,10 @@ class CoreBridge(context: Context) {
                     "structuralAccuracy"  to "high",
                     "driftScore"          to "low",
                     "complexityCapacity"  to "high",
-                    "reliability"         to "high",
-                    "communication"       to "none"
+                    "reliability"         to "high"
                 )
             ),
             // 3. Validation Contractor — validation contracts (AERP-1).
-            //    communication = "none": does not handle ICS interaction.
             Triple(
                 "validation-contractor-001",
                 "system",
@@ -502,12 +522,10 @@ class CoreBridge(context: Context) {
                     "structuralAccuracy"  to "high",
                     "driftScore"          to "low",
                     "complexityCapacity"  to "high",
-                    "reliability"         to "high",
-                    "communication"       to "none"
+                    "reliability"         to "high"
                 )
             ),
             // 4. Simulation Contractor — simulation and projection contracts.
-            //    communication = "none": does not handle ICS interaction.
             Triple(
                 "simulation-contractor-001",
                 "simulation",
@@ -516,8 +534,7 @@ class CoreBridge(context: Context) {
                     "structuralAccuracy"  to "high",
                     "driftScore"          to "low",
                     "complexityCapacity"  to "high",
-                    "reliability"         to "high",
-                    "communication"       to "none"
+                    "reliability"         to "high"
                 )
             )
         )

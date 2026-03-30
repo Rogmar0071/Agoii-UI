@@ -136,8 +136,7 @@ class DeterministicMatchingEngine {
                         Capability(com.agoii.mobile.contracts.ContractCapability.CONSTRAINT_OBEDIENCE.dimensionName, p.capabilities.constraintObedience),
                         Capability(com.agoii.mobile.contracts.ContractCapability.STRUCTURAL_ACCURACY.dimensionName,  p.capabilities.structuralAccuracy),
                         Capability(com.agoii.mobile.contracts.ContractCapability.COMPLEXITY_CAPACITY.dimensionName,  p.capabilities.complexityCapacity),
-                        Capability(com.agoii.mobile.contracts.ContractCapability.RELIABILITY.dimensionName,          p.capabilities.reliability),
-                        Capability(com.agoii.mobile.contracts.ContractCapability.COMMUNICATION.dimensionName,        p.capabilities.communication)
+                        Capability(com.agoii.mobile.contracts.ContractCapability.RELIABILITY.dimensionName,          p.capabilities.reliability)
                     ),
                     reliabilityScore  = p.reliabilityRatio,
                     costScore         = 0.0,

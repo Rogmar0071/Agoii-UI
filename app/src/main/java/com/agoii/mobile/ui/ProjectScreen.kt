@@ -97,9 +97,9 @@ fun ProjectScreen(projectId: String) {
     }
 
     /**
-     * Single ICS interaction entry point (AGOII-RCF-ICS-ENFORCEMENT-LOCK-01).
+     * Single ICS interaction entry point (AGOII-RCF-ICS-STRUCTURAL-RECOVERY-01).
      *
-     * Forwards user input to CoreBridge; displays the validated response.
+     * Forwards user input to CoreBridge; displays the raw contractor response.
      * Errors display the EXACT exception message — no generic masking.
      */
     fun handleUserInput(input: String) {

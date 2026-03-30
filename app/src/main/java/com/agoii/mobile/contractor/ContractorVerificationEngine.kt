@@ -46,7 +46,6 @@ class ContractorVerificationEngine {
         val driftScore          = extractScore(claims["driftScore"]           ?: claims["drift"])
         val complexityCapacity  = extractScore(claims["complexityCapacity"]   ?: claims["complexity"])
         val reliability         = extractScore(claims["reliability"])
-        val communication       = extractScore(claims["communication"])
 
         val trace = mutableListOf<String>()
         trace += "constraintObedience → $constraintObedience"
@@ -54,7 +53,6 @@ class ContractorVerificationEngine {
         trace += "driftScore          → $driftScore"
         trace += "complexityCapacity  → $complexityCapacity"
         trace += "reliability         → $reliability"
-        trace += "communication       → $communication"
 
         val passing = listOf(
             constraintObedience, structuralAccuracy, driftScore,
@@ -69,8 +67,7 @@ class ContractorVerificationEngine {
                     structuralAccuracy  = structuralAccuracy,
                     driftScore          = driftScore,
                     complexityCapacity  = complexityCapacity,
-                    reliability         = reliability,
-                    communication       = communication
+                    reliability         = reliability
                 ),
                 verificationCount = 1,
                 status            = VerificationStatus.VERIFIED,

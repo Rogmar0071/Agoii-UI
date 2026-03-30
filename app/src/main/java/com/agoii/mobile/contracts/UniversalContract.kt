@@ -101,9 +101,7 @@ enum class ContractCapability(val dimensionName: String, val requiredLevel: Int)
     /** Contractor must handle complex, multi-step work. */
     COMPLEXITY_CAPACITY("complexityCapacity", 1),
     /** Contractor must produce consistent, deterministic output. */
-    RELIABILITY("reliability", 1),
-    /** Contractor must support user-facing communication / interaction cycles. */
-    COMMUNICATION("communication", 1)
+    RELIABILITY("reliability", 1)
 }
 
 // ─── Output Definition ────────────────────────────────────────────────────────

@@ -149,16 +149,6 @@ class ContractorSystem(
         registry:              ContractorRegistry
     ): ContractorSystemResult {
 
-        // ── Enforcement: COMMUNICATION execution requires COMMUNICATION capability ──
-        //   No fallback matching; no heuristic substitution (G1).
-        if (executionType == ExecutionType.COMMUNICATION &&
-            ContractCapability.COMMUNICATION !in requiredCapabilities) {
-            return ContractorSystemResult.Blocked(
-                reason = "COMMUNICATION_CAPABILITY_REQUIRED_BUT_NOT_DECLARED",
-                trace  = com.agoii.mobile.contractors.ResolutionTrace(emptyList(), emptyList(), emptyList())
-            )
-        }
-
         // ── Step 1: Deterministic matching via new overload (G1) ─────────────
         //   DeterministicMatchingEngine.resolve() receives the capability list directly
         //   (no transformation in the caller).
@@ -193,18 +183,6 @@ class ContractorSystem(
                 reason = "CONTRACTOR_PROFILES_NOT_FOUND",
                 trace  = assigned.trace
             )
-        }
-
-        // ── Enforcement: verify selected contractor supports COMMUNICATION ────
-        //   Guards against capability mismatch after matching (no silent failures).
-        if (executionType == ExecutionType.COMMUNICATION) {
-            val primary = profiles.first()
-            if (primary.capabilities.communication < ContractCapability.COMMUNICATION.requiredLevel) {
-                return ContractorSystemResult.Blocked(
-                    reason = "CONTRACTOR_LACKS_COMMUNICATION_CAPABILITY:${profiles.first().id}",
-                    trace  = assigned.trace
-                )
-            }
         }
 
         // ── Step 5: Execute via ContractorExecutor (G2) ───────────────────────
