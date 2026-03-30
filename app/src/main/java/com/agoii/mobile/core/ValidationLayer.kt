@@ -830,7 +830,8 @@ class ValidationLayer {
         )
         private val CONTRACTS_GENERATED_KEYS = setOf(
             "intentId", "contractSetId", "contracts", "total",
-            "report_reference"   // RRIL-1: canonical RRID key (standardized from report_id)
+            "report_reference",  // RRIL-1: canonical RRID key (standardized from report_id)
+            "type"               // CLOSURE-04: "interaction" marks ICS loop contracts
         )
         private val CONTRACT_STARTED_KEYS   = setOf("position", "total", "contract_id")
         private val TASK_ASSIGNED_KEYS      = setOf(

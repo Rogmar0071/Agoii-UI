@@ -4,16 +4,24 @@ import android.content.Context
 import com.agoii.mobile.commit.ApprovalStatus
 import com.agoii.mobile.contractor.ContractorCandidate
 import com.agoii.mobile.contractor.ContractorRegistry
+import com.agoii.mobile.contractor.ContractorSystem
+import com.agoii.mobile.contractor.ContractorSystemResult
 import com.agoii.mobile.contractor.ContractorVerificationEngine
+import com.agoii.mobile.contracts.ContractCapability
+import com.agoii.mobile.contracts.ExecutionType
+import com.agoii.mobile.contracts.TargetDomain
 import com.agoii.mobile.core.*
 import com.agoii.mobile.execution.BuildExecutor
 import com.agoii.mobile.execution.ExecutionAuthority
 import com.agoii.mobile.execution.ExecutionEntryPoint
 import com.agoii.mobile.governor.Governor
+import com.agoii.mobile.interaction.InteractionContract
+import com.agoii.mobile.interaction.OutputType
 import com.agoii.mobile.irs.*
 import com.agoii.mobile.observability.ExecutionObservability
 import com.agoii.mobile.observability.ExecutionTimeline
 import com.agoii.mobile.observability.ExecutionTrace
+import java.util.UUID
 
 /**
  * CoreBridge — mobile runtime adapter.
@@ -43,6 +51,7 @@ class CoreBridge(context: Context) {
     // FS-1: Build a verified ContractorRegistry so ExecutionAuthority can succeed
     private val contractorRegistry  = buildContractorRegistry()
     private val executionAuthority  = ExecutionAuthority(contractorRegistry)
+    private val contractorSystem    = ContractorSystem()
 
     private val observability       = ExecutionObservability(ledger)
 
@@ -62,7 +71,7 @@ class CoreBridge(context: Context) {
         availableEvidence: Map<String, List<EvidenceRef>> = emptyMap(),
         objective:         String
     ): Boolean {
-        val sessionId = "$projectId-${java.util.UUID.randomUUID()}"
+        val sessionId = "$projectId-${UUID.randomUUID()}"
 
         irsOrchestrator.createSession(
             sessionId,
@@ -205,6 +214,141 @@ class CoreBridge(context: Context) {
             ?.firstOrNull { it["contractId"] == contractId }
 
         return match?.get("name")?.toString() ?: contractId
+    }
+
+    /**
+     * ICS Interaction entry point (AGOII-MQP-ICS-ACTIVATION-CLOSURE-04).
+     *
+     * Routes every user interaction through the ContractorSystem for deterministic,
+     * contract-driven execution. Never calls Governor or triggers execution.
+     *
+     * Lifecycle:
+     *  - Empty ledger        → IRS certification + INTENT_SUBMITTED.
+     *  - Non-empty ledger    → Build [InteractionContract], route through [ContractorSystem].
+     *                          Resolved → CONTRACTS_GENERATED (type="interaction") — loop continues.
+     *                          Blocked  → BLOCK (LedgerValidationException).
+     *
+     * The ICS loop remains alive by re-issuing CONTRACTS_GENERATED each turn.
+     * Governor is NEVER called from here; it activates separately on true execution contracts.
+     *
+     * BLOCK CONDITIONS (throws [LedgerValidationException]):
+     *  - No contractor in registry.
+     *  - ContractorSystem matching or execution fails.
+     *
+     * @throws LedgerValidationException on every block condition.
+     */
+    fun processInteraction(projectId: String, input: String) {
+        val events = ledger.loadEvents(projectId)
+
+        // Early guard: verify the registry has at least one candidate before invoking
+        // ContractorSystem (which would produce a less descriptive Blocked result).
+        // ContractorSystem performs its own deterministic matching internally.
+        contractorRegistry.findBestMatch(
+            mapOf("constraintObedience" to 1, "reliability" to 1)
+        ) ?: throw LedgerValidationException("ICS BLOCKED: No contractor available in registry")
+
+        if (events.isEmpty()) {
+            // Initial intent capture: IRS certification + INTENT_SUBMITTED.
+            val sessionId = "$projectId-${UUID.randomUUID()}"
+
+            irsOrchestrator.createSession(
+                sessionId,
+                mapOf(
+                    "objective"   to input,
+                    "constraints" to "",
+                    "environment" to "",
+                    "resources"   to ""
+                ),
+                mapOf(
+                    "objective"   to listOf(EvidenceRef(id = "ev-obj", source = "user-input")),
+                    "constraints" to listOf(EvidenceRef(id = "ev-cst", source = "user-input")),
+                    "environment" to listOf(EvidenceRef(id = "ev-env", source = "user-input")),
+                    "resources"   to listOf(EvidenceRef(id = "ev-res", source = "user-input"))
+                ),
+                SwarmConfig(agentCount = 2, consensusRule = ConsensusRule.MAJORITY),
+                emptyMap()
+            )
+
+            var stepResult: StepResult
+            do {
+                stepResult = irsOrchestrator.step(sessionId)
+            } while (!stepResult.terminal)
+
+            val irsStatus = when (stepResult.orchestratorResult) {
+                is OrchestratorResult.Certified -> "CERTIFIED"
+                else                            -> "PENDING"
+            }
+
+            ledger.appendEvent(
+                projectId,
+                EventTypes.INTENT_SUBMITTED,
+                mapOf(
+                    "objective"       to input,
+                    "certificationId" to sessionId,
+                    "certifiedAt"     to System.currentTimeMillis(),
+                    "irsStatus"       to irsStatus
+                )
+            )
+            return
+        }
+
+        // Non-empty ledger: build InteractionContract and route through ContractorSystem.
+        // No hardcoded questions; no predefined rounds; contractor drives execution.
+        val icsTaskId = "$projectId-ics-${UUID.randomUUID()}"
+        val interactionContract = InteractionContract(
+            contractId = icsTaskId,
+            query      = input,
+            outputType = OutputType.DETAILED
+        )
+
+        val systemResult = contractorSystem.execute(
+            taskId               = icsTaskId,
+            contractId           = interactionContract.contractId,
+            reportReference      = icsTaskId,
+            position             = 1,
+            constraints          = emptyList(),
+            expectedOutput       = "Clarify and qualify the intent for project '$projectId'",
+            taskPayload          = mapOf("userInput" to input),
+            requiredCapabilities = listOf(
+                ContractCapability.RELIABILITY,
+                ContractCapability.CONSTRAINT_OBEDIENCE
+            ),
+            executionType        = ExecutionType.COMMUNICATION,
+            targetDomain         = TargetDomain.CONTRACTOR,
+            registry             = contractorRegistry
+        )
+
+        when (systemResult) {
+            is ContractorSystemResult.Blocked  ->
+                throw LedgerValidationException(
+                    "ICS BLOCKED: Contractor matching failed — ${systemResult.reason}"
+                )
+            is ContractorSystemResult.Resolved -> {
+                // Contractor executed: re-issue contract via CONTRACTS_GENERATED (CLOSURE-04).
+                // "type": "interaction" marks this as an ICS loop contract so the UI and
+                // Governor can distinguish it from a true execution contract set.
+                val intentId = events.firstOrNull { it.type == EventTypes.INTENT_SUBMITTED }
+                    ?.payload?.get("objective")?.toString() ?: projectId
+
+                ledger.appendEvent(
+                    projectId,
+                    EventTypes.CONTRACTS_GENERATED,
+                    mapOf(
+                        "intentId"        to intentId,
+                        "contractSetId"   to icsTaskId,
+                        "total"           to 1,
+                        "contracts"       to listOf(
+                            mapOf(
+                                "contractId" to icsTaskId,
+                                "position"   to 1
+                            )
+                        ),
+                        "type"            to "interaction",
+                        "report_reference" to icsTaskId
+                    )
+                )
+            }
+        }
     }
 
     /** Append a contracts_approved event directly to the ledger (explicit governance gate). */
