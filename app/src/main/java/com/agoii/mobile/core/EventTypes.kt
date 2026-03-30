@@ -44,6 +44,15 @@ object EventTypes {
     const val CONTRACT_VALIDATED = "contract_validated"
     const val CONTRACT_APPROVED  = "contract_approved"
 
+    // ── ICS Interaction loop events (AGOII-MQP-ICS-ACTIVATION-CORRECTION-02) ─
+    // Emitted during the pre-execution intent clarification loop.
+    // INTERACTION_CONTRACT — ICS issues a clarifying question via a contractor.
+    // INTERACTION_RESPONSE — User's answer is recorded by the ICS.
+    // INTENT_UPDATED       — ICS determines the intent is sufficiently qualified.
+    const val INTERACTION_CONTRACT = "interaction_contract"
+    const val INTERACTION_RESPONSE = "interaction_response"
+    const val INTENT_UPDATED       = "intent_updated"
+
     val ALL: Set<String> = setOf(
         INTENT_SUBMITTED,
         CONTRACTS_GENERATED,
@@ -73,7 +82,10 @@ object EventTypes {
         CONTRACT_APPROVED,
         COMMIT_CONTRACT,
         COMMIT_EXECUTED,
-        COMMIT_ABORTED
+        COMMIT_ABORTED,
+        INTERACTION_CONTRACT,
+        INTERACTION_RESPONSE,
+        INTENT_UPDATED
     )
 
     /** Default number of contracts generated per intent. */
