@@ -203,9 +203,14 @@ fun ProjectScreen(projectId: String) {
 
         // ── ACTION BAR ──────────────────────────────────────────────────────
         // showApprove: contracts exist but execution hasn't started yet →
-        // user must approve contracts (CONTRACTS_APPROVED gate) to begin execution
+        // user must approve contracts (CONTRACTS_APPROVED gate) to begin execution.
+        // Interaction contracts (type="interaction") are conversational — no approval.
+        val lastContractType = events
+            .lastOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
+            ?.payload?.get("type")?.toString()
         val showApprove = replayState?.contracts?.valid == true &&
-                          replayState?.execution?.assignedTasks == 0
+                          replayState?.execution?.assignedTasks == 0 &&
+                          lastContractType != "interaction"
 
         ActionBar(
             showApprove   = showApprove,
