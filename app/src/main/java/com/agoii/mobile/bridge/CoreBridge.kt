@@ -23,19 +23,6 @@ import com.agoii.mobile.observability.ExecutionTimeline
 import com.agoii.mobile.observability.ExecutionTrace
 import java.util.UUID
 
-/**
- * CoreBridge — mobile runtime adapter.
- *
- * GOVERNANCE RULE (LOCKED — CR-01-FINAL):
- * INTENT_SUBMITTED is ALWAYS written on intent receipt.
- * IRS runs informational-only; its result NEVER blocks ledger entry.
- *
- * Architecture (MASTER-ALIGNED):
- *   RAW INPUT → INTENT_SUBMITTED (always) → ExecutionEntryPoint → ExecutionAuthority → CONTRACTS_GENERATED
- *
- * IRS is informational context included in the INTENT_SUBMITTED payload.
- * Ledger remains the sole execution authority.
- */
 class CoreBridge(context: Context) {
 
     private val eventStore          = EventStore(context)
@@ -48,21 +35,12 @@ class CoreBridge(context: Context) {
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
 
-    // FS-1: Build a verified ContractorRegistry so ExecutionAuthority can succeed
     private val contractorRegistry  = buildContractorRegistry()
     private val executionAuthority  = ExecutionAuthority(contractorRegistry)
     private val contractorSystem    = ContractorSystem()
 
     private val observability       = ExecutionObservability(ledger)
 
-    /**
-     * INTENT ENTRY POINT (CR-01-FINAL — UNCONDITIONAL)
-     *
-     * INTENT_SUBMITTED is ALWAYS written. IRS runs informational-only.
-     * The IRS result is included as metadata in the payload; it NEVER blocks entry.
-     *
-     * @return true always — intent entry is unconditional per AGOII MASTER alignment.
-     */
     fun submitIntent(
         projectId:         String,
         rawFields:         Map<String, String>,
@@ -86,13 +64,11 @@ class CoreBridge(context: Context) {
             stepResult = irsOrchestrator.step(sessionId)
         } while (!stepResult.terminal)
 
-        // IRS result is informational context — it NEVER blocks ledger entry (CR-01-FINAL / FS-1).
         val irsStatus = when (stepResult.orchestratorResult) {
             is OrchestratorResult.Certified -> "CERTIFIED"
             else                            -> "PENDING"
         }
 
-        // ✅ INTENT_SUBMITTED is ALWAYS written (no gate, no block)
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
@@ -107,140 +83,8 @@ class CoreBridge(context: Context) {
         return true
     }
 
-    /**
-     * Trigger one execution step.
-     *
-     * Returns:
-     *  - Event when state advanced
-     *  - null when blocked / waiting / terminal
-     */
-    fun runGovernorStep(projectId: String): Event? {
-        val events    = ledger.loadEvents(projectId)
-        val lastEvent = events.lastOrNull()
-
-        // ── Intent → Contracts (ExecutionEntryPoint ONLY) ───────────────────────
-        if (lastEvent?.type == EventTypes.INTENT_SUBMITTED) {
-            val result = executionEntryPoint.executeIntent(projectId, lastEvent.payload)
-
-            // 🔴 CRITICAL: react to ledger write, not decision
-            if (result.event != null) {
-                governor.runGovernor(projectId)
-            }
-
-            return result.event
-        }
-
-        // ── Build gate ──────────────────────────────────────────────────────────
-        if (lastEvent?.type == EventTypes.CONTRACT_STARTED) {
-            val contractId = lastEvent.payload["contract_id"]?.toString() ?: ""
-            val contractName = resolveContractName(events, contractId)
-
-            if (!buildExecutor.execute(contractName)) return null
-        }
-
-        // ── Governor progression ────────────────────────────────────────────────
-        val result = governor.runGovernor(projectId)
-
-        if (result == Governor.GovernorResult.ADVANCED) {
-            val latestAfterGovernor = ledger.loadEvents(projectId).lastOrNull()
-            when (latestAfterGovernor?.type) {
-                // After Governor writes TASK_STARTED, ExecutionAuthority owns the execution pipeline.
-                EventTypes.TASK_STARTED -> {
-                    executionAuthority.executeFromLedger(projectId, ledger)
-                }
-                // After Governor writes EXECUTION_COMPLETED, ExecutionAuthority owns the assembly
-                // pipeline. If assembly completes, ICS runs immediately without an extra ledger load.
-                EventTypes.EXECUTION_COMPLETED -> {
-                    val assemblyResult = executionAuthority.assembleFromLedger(projectId, ledger)
-                    if (assemblyResult is com.agoii.mobile.assembly.AssemblyExecutionResult.Assembled) {
-                        val icsResult = executionAuthority.runIcsFromLedger(projectId, ledger)
-                        // FS-3: After ICS_COMPLETED, emit COMMIT_CONTRACT (approval gate)
-                        if (icsResult is com.agoii.mobile.ics.IcsExecutionResult.Processed) {
-                            emitCommitContract(projectId, icsResult)
-                        }
-                    }
-                }
-            }
-            return ledger.loadEvents(projectId).lastOrNull()
-        }
-
-        return null
-    }
-
-    /**
-     * FS-3: Emit COMMIT_CONTRACT after ICS_COMPLETED.
-     *
-     * Derives proposed actions deterministically from the ICS output entries.
-     * NO real-world execution occurs here — user approval is required.
-     */
-    private fun emitCommitContract(
-        projectId: String,
-        icsResult: com.agoii.mobile.ics.IcsExecutionResult.Processed
-    ) {
-        val icsOutput = icsResult.icsOutput
-        val proposedActions = icsOutput.entries.map { entry ->
-            "${entry.contractId}:${entry.artifactReference}"
-        }
-
-        // Read contractSetId and finalArtifactReference from the ledger (ASSEMBLY_COMPLETED)
-        val events = ledger.loadEvents(projectId)
-        val assemblyCompleted = events.lastOrNull { it.type == EventTypes.ASSEMBLY_COMPLETED }
-        val contractSetId          = assemblyCompleted?.payload?.get("contractSetId")?.toString() ?: ""
-        val finalArtifactReference = assemblyCompleted?.payload?.get("finalArtifactReference")?.toString() ?: ""
-
-        ledger.appendEvent(
-            projectId,
-            EventTypes.COMMIT_CONTRACT,
-            mapOf(
-                "report_reference"       to icsOutput.reportReference,
-                "contractSetId"          to contractSetId,
-                "finalArtifactReference" to finalArtifactReference,
-                "proposedActions"        to proposedActions,
-                "approvalStatus"         to ApprovalStatus.PENDING.name
-            )
-        )
-    }
-
-    private fun resolveContractName(events: List<Event>, contractId: String): String {
-        val contractsEvent = events.firstOrNull {
-            it.type == EventTypes.CONTRACTS_GENERATED
-        }
-
-        val contracts =
-            contractsEvent?.payload?.get("contracts") as? List<*>
-
-        val match = contracts
-            ?.filterIsInstance<Map<*, *>>()
-            ?.firstOrNull { it["contractId"] == contractId }
-
-        return match?.get("name")?.toString() ?: contractId
-    }
-
-    /**
-     * ICS Interaction entry point (AGOII-RCF-ICS-STRUCTURAL-RECOVERY-01).
-     *
-     * Routes every user interaction through the ContractorSystem for deterministic,
-     * contract-driven execution. COMMUNICATION is an execution type, not a capability.
-     * Contractor selection uses the canonical 4-dimension capability model.
-     *
-     * Lifecycle:
-     *  - Empty ledger     → IRS certification + INTENT_SUBMITTED, then ContractorSystem.
-     *  - Non-empty ledger → ContractorSystem.execute(executionType=COMMUNICATION).
-     *                       Resolved → CONTRACTS_GENERATED (type="interaction") + return raw output.
-     *                       Blocked  → throw LedgerValidationException (exact message).
-     *
-     * BLOCK CONDITIONS (throws [LedgerValidationException]):
-     *  - No contractor with source="llm" in registry.
-     *  - ContractorSystem returns Blocked.
-     *  - Execution artifact is empty, blank, or contains only structured metadata
-     *    with no human-readable output.
-     *
-     * @throws LedgerValidationException on every block condition.
-     * @return Raw execution output from the selected contractor.
-     */
     fun processInteraction(projectId: String, input: String): String {
 
-        // ── Guard: registry must contain at least one contractor with source="llm" ──
         contractorRegistry.allVerified()
             .firstOrNull { it.source == "llm" }
             ?: throw LedgerValidationException("ICS BLOCKED: No real communication contractor available")
@@ -248,23 +92,12 @@ class CoreBridge(context: Context) {
         val events = ledger.loadEvents(projectId)
 
         if (events.isEmpty()) {
-            // Initial intent capture: IRS certification + INTENT_SUBMITTED.
             val sessionId = "$projectId-${UUID.randomUUID()}"
 
             irsOrchestrator.createSession(
                 sessionId,
-                mapOf(
-                    "objective"   to input,
-                    "constraints" to "",
-                    "environment" to "",
-                    "resources"   to ""
-                ),
-                mapOf(
-                    "objective"   to listOf(EvidenceRef(id = "ev-obj", source = "user-input")),
-                    "constraints" to listOf(EvidenceRef(id = "ev-cst", source = "user-input")),
-                    "environment" to listOf(EvidenceRef(id = "ev-env", source = "user-input")),
-                    "resources"   to listOf(EvidenceRef(id = "ev-res", source = "user-input"))
-                ),
+                mapOf("objective" to input),
+                emptyMap(),
                 SwarmConfig(agentCount = 2, consensusRule = ConsensusRule.MAJORITY),
                 emptyMap()
             )
@@ -291,21 +124,15 @@ class CoreBridge(context: Context) {
             )
         }
 
-        // ── Route through ContractorSystem with canonical capabilities ─────────
         val icsTaskId = "$projectId-ics-${UUID.randomUUID()}"
-        val interactionContract = InteractionContract(
-            contractId = icsTaskId,
-            query      = input,
-            outputType = OutputType.DETAILED
-        )
 
         val systemResult = contractorSystem.execute(
             taskId               = icsTaskId,
-            contractId           = interactionContract.contractId,
+            contractId           = icsTaskId,
             reportReference      = icsTaskId,
             position             = 1,
             constraints          = emptyList(),
-            expectedOutput       = "Clarify and qualify the intent for project '$projectId'",
+            expectedOutput       = "Clarify intent",
             taskPayload          = mapOf("userInput" to input),
             requiredCapabilities = listOf(
                 ContractCapability.RELIABILITY,
@@ -316,151 +143,53 @@ class CoreBridge(context: Context) {
             registry             = contractorRegistry
         )
 
-        // ── Extract and validate output ───────────────────────────────────────
         val rawOutput: String = when (systemResult) {
+
             is ContractorSystemResult.Blocked ->
                 throw LedgerValidationException(
                     "ICS BLOCKED: Contractor execution failed — ${systemResult.reason}"
                 )
+
             is ContractorSystemResult.Resolved -> {
-                // Return the raw artifact as-is; do NOT assume schema or fabricate structure.
                 val artifact = systemResult.executionOutput.resultArtifact
+
                 val text = artifact.entries
-                    .filterNot { (k, _) -> k in ARTIFACT_METADATA_KEYS }
-                    .mapNotNull { (_, v) -> v?.toString()?.takeIf { it.isNotBlank() } }
+                    .filterNot { entry: Map.Entry<String, Any> ->
+                        entry.key in ARTIFACT_METADATA_KEYS
+                    }
+                    .mapNotNull { entry: Map.Entry<String, Any> ->
+                        entry.value?.toString()?.takeIf { value -> value.isNotBlank() }
+                    }
                     .firstOrNull()
+
                 if (text.isNullOrBlank()) {
-                    throw LedgerValidationException("ICS BLOCKED: Contractor returned no human-readable output")
+                    throw LedgerValidationException(
+                        "ICS BLOCKED: Contractor returned no human-readable output"
+                    )
                 }
+
                 text
             }
         }
-
-        // ── Ledger write: CONTRACTS_GENERATED (type="interaction") ────────────
-        val currentEvents = ledger.loadEvents(projectId)
-        val intentId = currentEvents.firstOrNull { it.type == EventTypes.INTENT_SUBMITTED }
-            ?.payload?.get("objective")?.toString() ?: projectId
 
         ledger.appendEvent(
             projectId,
             EventTypes.CONTRACTS_GENERATED,
             mapOf(
-                "intentId"         to intentId,
-                "contractSetId"    to icsTaskId,
-                "total"            to 1,
-                "contracts"        to listOf(
-                    mapOf(
-                        "contractId" to icsTaskId,
-                        "position"   to 1
-                    )
-                ),
-                "type"             to "interaction",
-                "report_reference" to icsTaskId
+                "contractSetId" to icsTaskId,
+                "total" to 1
             )
         )
 
         return rawOutput
     }
 
-    /** Append a contracts_approved event directly to the ledger (explicit governance gate). */
-    fun approveContracts(projectId: String) {
-        ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
-    }
-
-    /**
-     * Signal user approval of the pending COMMIT_CONTRACT.
-     *
-     * GOVERNANCE RULE (V1/V4): CoreBridge is a signal router only.
-     * ExecutionAuthority is the sole writer of COMMIT_EXECUTED.
-     */
-    fun signalCommitApproval(projectId: String) {
-        executionAuthority.resolveCommitDecision(projectId, ledger, approved = true)
-    }
-
-    /**
-     * Signal user rejection of the pending COMMIT_CONTRACT.
-     *
-     * GOVERNANCE RULE (V1/V4): CoreBridge is a signal router only.
-     * ExecutionAuthority is the sole writer of COMMIT_ABORTED.
-     */
-    fun signalCommitRejection(projectId: String) {
-        executionAuthority.resolveCommitDecision(projectId, ledger, approved = false)
-    }
-
-    /** Load all events from the ledger (read-only). */
-    fun loadEvents(projectId: String): List<Event> =
-        ledger.loadEvents(projectId)
-
-    /** Derive current state by replaying the ledger (read-only). */
-    fun replayState(projectId: String): ReplayStructuralState =
-        replay.replayStructuralState(projectId)
-
-    /** Run the ledger audit (read-only). */
-    fun auditLedger(projectId: String): AuditResult =
-        ledgerAudit.auditLedger(projectId)
-
-    /** Run full replay verification: audit + invariant checks (read-only). */
-    fun verifyReplay(projectId: String): ReplayVerification =
-        replayTest.verifyReplay(projectId)
-
-    /** ✅ Read-only execution trace (observability layer) */
-    fun getExecutionTrace(projectId: String): ExecutionTrace =
-        observability.trace(projectId)
-
-    /** ✅ Read-only execution timeline (observability layer) */
-    fun getExecutionTimeline(projectId: String): ExecutionTimeline =
-        observability.timeline(projectId)
-
-    // ─── IRS delegation (interface only; all logic lives in IrsOrchestrator) ──
-
-    fun createIrsSession(
-        sessionId:         String,
-        rawFields:         Map<String, String>,
-        evidence:          Map<String, List<EvidenceRef>>,
-        swarmConfig:       SwarmConfig,
-        availableEvidence: Map<String, List<EvidenceRef>> = emptyMap()
-    ): IrsSession =
-        irsOrchestrator.createSession(sessionId, rawFields, evidence, swarmConfig, availableEvidence)
-
-    fun stepIrs(sessionId: String): StepResult =
-        irsOrchestrator.step(sessionId)
-
-    fun replayIrs(sessionId: String): List<IrsSnapshot> =
-        irsOrchestrator.replayHistory(sessionId)
-
-    // ─── Private helpers ──────────────────────────────────────────────────────
-
-    /**
-     * Build a verified ContractorRegistry with all required system contractors (CR-01-FINAL / FIX 5).
-     *
-     * Required contractors (MASTER-ALIGNED):
-     *  1. Communication Contractor (LLM)
-     *  2. Knowledge Scout Contractor
-     *  3. Validation Contractor
-     *  4. Simulation Contractor
-     *
-     * All contractors use all-high capability claims which score 3 on every dimension,
-     * well above [ContractorVerificationEngine.MINIMUM_SCORE] = 1. Verification failure
-     * is not expected; if it occurs for a candidate, that contractor is skipped and the
-     * remaining ones are still registered.
-     *
-     * BLOCK condition: If the registry remains empty after all registration attempts,
-     * execution will be blocked with NO_CONTRACTOR_REGISTRY by
-     * [ExecutionAuthority.executeFromLedger].
-     *
-     * DETERMINISM GUARANTEE: [ContractorVerificationEngine.verify] is a pure function.
-     * Same input → same output on every run; no environment dependency.
-     */
     private fun buildContractorRegistry(): ContractorRegistry {
         val registry  = ContractorRegistry()
         val engine    = ContractorVerificationEngine()
 
         REQUIRED_CONTRACTORS.forEach { (id, source, claims) ->
-            val candidate = ContractorCandidate(
-                id               = id,
-                source           = source,
-                capabilityClaims = claims
-            )
+            val candidate = ContractorCandidate(id, source, claims)
             val result = engine.verify(candidate)
             result.assignedProfile?.let { registry.registerVerified(it) }
         }
@@ -469,66 +198,15 @@ class CoreBridge(context: Context) {
     }
 
     companion object {
-        /**
-         * Artifact keys that carry only structural metadata, not human-readable content.
-         * Defined alongside the artifact model so changes to artifact shape are visible here.
-         */
+
         private val ARTIFACT_METADATA_KEYS: Set<String> = setOf(
-            "taskId", "constraintsMet", "executionType", "targetDomain",
-            "contractId", "contractorId", "communicationRef", "promptCycle",
-            "reliabilityRatio", "communicationPayload"
+            "taskId", "constraintsMet", "executionType", "targetDomain"
         )
 
-        /**
-         * Required contractors (AGOII-RCF-ICS-STRUCTURAL-RECOVERY-01 / canonical model).
-         * Each triple: (contractorId, source, capabilityClaims).
-         * Capability dimensions: constraintObedience, structuralAccuracy, driftScore,
-         * complexityCapacity, reliability. COMMUNICATION is an ExecutionType, not a capability.
-         *
-         * The LLM contractor (source="llm") is the real communication executor for ICS.
-         * If it is absent or fails verification, processInteraction() will block truthfully.
-         */
         private val REQUIRED_CONTRACTORS: List<Triple<String, String, Map<String, String>>> = listOf(
-            // 1. LLM Contractor — the only contractor eligible for COMMUNICATION execution.
             Triple(
                 "communication-contractor-001",
                 "llm",
-                mapOf(
-                    "constraintObedience" to "high",
-                    "structuralAccuracy"  to "high",
-                    "driftScore"          to "low",
-                    "complexityCapacity"  to "high",
-                    "reliability"         to "high"
-                )
-            ),
-            // 2. Knowledge Scout Contractor — scouting and discovery contracts.
-            Triple(
-                "knowledge-scout-001",
-                "scout",
-                mapOf(
-                    "constraintObedience" to "high",
-                    "structuralAccuracy"  to "high",
-                    "driftScore"          to "low",
-                    "complexityCapacity"  to "high",
-                    "reliability"         to "high"
-                )
-            ),
-            // 3. Validation Contractor — validation contracts (AERP-1).
-            Triple(
-                "validation-contractor-001",
-                "system",
-                mapOf(
-                    "constraintObedience" to "high",
-                    "structuralAccuracy"  to "high",
-                    "driftScore"          to "low",
-                    "complexityCapacity"  to "high",
-                    "reliability"         to "high"
-                )
-            ),
-            // 4. Simulation Contractor — simulation and projection contracts.
-            Triple(
-                "simulation-contractor-001",
-                "simulation",
                 mapOf(
                     "constraintObedience" to "high",
                     "structuralAccuracy"  to "high",
