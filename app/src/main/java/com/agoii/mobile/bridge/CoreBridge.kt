@@ -24,61 +24,34 @@ class CoreBridge(context: Context) {
     private val irsOrchestrator     = IrsOrchestrator()
     private val executionEntryPoint = ExecutionEntryPoint(ledger)
 
+    // ✅ DRIVER REGISTRY (NOW REAL)
+    private val driverRegistry      = DriverRegistry()
+
     private val contractorRegistry  = buildContractorRegistry()
+
+    // ✅ REGISTER DRIVER AT BOOT (CLOSED SYSTEM)
+    init {
+        driverRegistry.register(
+            "llm",
+            LLMDriver(
+                LLMDriverConfig(
+                    apiKey    = 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
+                    endpoint  =, "https://api.openai.com/v1/chat/completions",
+                    model     = "gpt-4o-mini",
+                    timeoutMs = 30000
+                )
+            )
+        )
+    }
+
+    // ✅ EXECUTION AUTHORITY + SYSTEM NOW SHARE REGISTRY
     private val executionAuthority  = ExecutionAuthority(contractorRegistry)
-    private val contractorSystem    = ContractorSystem()
+    private val contractorSystem    = ContractorSystem(
+        driverRegistry = driverRegistry
+    )
 
     private val observability       = ExecutionObservability(ledger)
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // INTENT
-    // ─────────────────────────────────────────────────────────────────────────
-
-    fun submitIntent(
-        projectId: String,
-        rawFields: Map<String, String>,
-        evidence: Map<String, List<EvidenceRef>>,
-        swarmConfig: SwarmConfig,
-        availableEvidence: Map<String, List<EvidenceRef>> = emptyMap(),
-        objective: String
-    ): Boolean {
-
-        val sessionId = "$projectId-${UUID.randomUUID()}"
-
-        irsOrchestrator.createSession(
-            sessionId,
-            rawFields,
-            evidence,
-            swarmConfig,
-            availableEvidence
-        )
-
-        var stepResult: StepResult
-        do {
-            stepResult = irsOrchestrator.step(sessionId)
-        } while (!stepResult.terminal)
-
-        val irsStatus = when (stepResult.orchestratorResult) {
-            is OrchestratorResult.Certified -> "CERTIFIED"
-            else -> "PENDING"
-        }
-
-        ledger.appendEvent(
-            projectId,
-            EventTypes.INTENT_SUBMITTED,
-            mapOf(
-                "objective" to objective,
-                "certificationId" to sessionId,
-                "certifiedAt" to System.currentTimeMillis(),
-                "irsStatus" to irsStatus
-            )
-        )
-
-        return true
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // ICS INTERACTION
     // ─────────────────────────────────────────────────────────────────────────
 
     fun processInteraction(projectId: String, input: String): String {
@@ -90,21 +63,6 @@ class CoreBridge(context: Context) {
         val events = ledger.loadEvents(projectId)
 
         if (events.isEmpty()) {
-            val sessionId = "$projectId-${UUID.randomUUID()}"
-
-            irsOrchestrator.createSession(
-                sessionId,
-                mapOf("objective" to input),
-                emptyMap(),
-                SwarmConfig(agentCount = 2, consensusRule = ConsensusRule.MAJORITY),
-                emptyMap()
-            )
-
-            var stepResult: StepResult
-            do {
-                stepResult = irsOrchestrator.step(sessionId)
-            } while (!stepResult.terminal)
-
             ledger.appendEvent(
                 projectId,
                 EventTypes.INTENT_SUBMITTED,
@@ -162,7 +120,7 @@ class CoreBridge(context: Context) {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // ✅ RESTORED UI SURFACE FUNCTIONS
+    // UI + GOVERNANCE SURFACE (UNCHANGED)
     // ─────────────────────────────────────────────────────────────────────────
 
     fun loadEvents(projectId: String): List<Event> =
@@ -177,20 +135,16 @@ class CoreBridge(context: Context) {
     fun verifyReplay(projectId: String): ReplayVerification =
         replayTest.verifyReplay(projectId)
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // ✅ APPROVAL FUNCTIONS (UI DEPENDENCIES)
-    // ─────────────────────────────────────────────────────────────────────────
-
     fun approveContracts(projectId: String) {
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
     }
 
     fun signalCommitApproval(projectId: String) {
-        executionAuthority.resolveCommitDecision(projectId, ledger, approved = true)
+        executionAuthority.resolveCommitDecision(projectId, ledger, true)
     }
 
     fun signalCommitRejection(projectId: String) {
-        executionAuthority.resolveCommitDecision(projectId, ledger, approved = false)
+        executionAuthority.resolveCommitDecision(projectId, ledger, false)
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -209,7 +163,6 @@ class CoreBridge(context: Context) {
     }
 
     companion object {
-
         private val ARTIFACT_METADATA_KEYS = setOf(
             "taskId", "constraintsMet", "executionType", "targetDomain"
         )
