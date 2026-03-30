@@ -162,7 +162,23 @@ class CoreBridge(context: Context) {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // ✅ RESTORED FUNCTIONS (UI DEPENDENCIES)
+    // ✅ RESTORED UI SURFACE FUNCTIONS
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fun loadEvents(projectId: String): List<Event> =
+        ledger.loadEvents(projectId)
+
+    fun replayState(projectId: String): ReplayStructuralState =
+        replay.replayStructuralState(projectId)
+
+    fun auditLedger(projectId: String): AuditResult =
+        ledgerAudit.auditLedger(projectId)
+
+    fun verifyReplay(projectId: String): ReplayVerification =
+        replayTest.verifyReplay(projectId)
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // ✅ APPROVAL FUNCTIONS (UI DEPENDENCIES)
     // ─────────────────────────────────────────────────────────────────────────
 
     fun approveContracts(projectId: String) {
