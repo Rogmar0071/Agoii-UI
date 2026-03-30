@@ -316,10 +316,11 @@ sealed class UniversalIngestionResult {
  *                           When null, all execution attempts are BLOCKED (RCF-1 issued).
  */
 class ExecutionAuthority(
-    private val contractorRegistry: ContractorRegistry? = null
+    private val contractorRegistry: ContractorRegistry? = null,
+    private val driverRegistry: DriverRegistry
 ) {
 
-    private val contractorSystem = ContractorSystem()
+    private val contractorSystem = ContractorSystem(driverRegistry = driverRegistry)
     private val validator       = ResultValidator()
     private val assemblyModule  = AssemblyModule()
     private val icsModule       = IcsModule()

@@ -47,9 +47,10 @@ data class ExecutionResult(
     level = DeprecationLevel.WARNING
 )
 class ExecutionOrchestrator(
-    private val executor:  ContractorExecutor = ContractorExecutor(),
+    private val driverRegistry: DriverRegistry,
     private val validator: ResultValidator    = ResultValidator()
 ) {
+    private val executor: ContractorExecutor = ContractorExecutor(driverRegistry)
 
     /**
      * Execute [task] using [contractor] and validate the output.
