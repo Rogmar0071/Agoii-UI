@@ -237,7 +237,7 @@ class CoreBridge(context: Context) {
      *
      * @throws LedgerValidationException on every block condition.
      */
-    fun processInteraction(projectId: String, input: String) {
+    fun processInteraction(projectId: String, input: String): String {
         val events = ledger.loadEvents(projectId)
 
         // Early guard: verify the registry has at least one candidate before invoking
@@ -289,7 +289,7 @@ class CoreBridge(context: Context) {
                     "irsStatus"       to irsStatus
                 )
             )
-            return
+            return "Intent submitted: $input"
         }
 
         // Non-empty ledger: build InteractionContract and route through ContractorSystem.
@@ -318,7 +318,7 @@ class CoreBridge(context: Context) {
             registry             = contractorRegistry
         )
 
-        when (systemResult) {
+        return when (systemResult) {
             is ContractorSystemResult.Blocked  ->
                 throw LedgerValidationException(
                     "ICS BLOCKED: Contractor matching failed — ${systemResult.reason}"
@@ -347,6 +347,9 @@ class CoreBridge(context: Context) {
                         "report_reference" to icsTaskId
                     )
                 )
+
+                systemResult.executionOutput.resultArtifact
+                    .entries.joinToString("\n") { (k, v) -> "$k: $v" }
             }
         }
     }

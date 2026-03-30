@@ -68,6 +68,7 @@ fun ProjectScreen(projectId: String) {
     var interactionResult by remember { mutableStateOf<InteractionResult?>(null) }
     var inputText         by remember { mutableStateOf("") }
     var sendMessage       by remember { mutableStateOf<String?>(null) }
+    var lastResponse      by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
 
@@ -105,7 +106,7 @@ fun ProjectScreen(projectId: String) {
         if (trimmed.isEmpty()) return
 
         try {
-            bridge.processInteraction(projectId, trimmed)
+            lastResponse = bridge.processInteraction(projectId, trimmed)
             inputText = ""
             sendMessage = null
             reload()
@@ -219,6 +220,31 @@ fun ProjectScreen(projectId: String) {
                 reload()
             }
         )
+
+        // ── CONTRACTOR RESPONSE — chat-style output surface ─────────────────
+        lastResponse?.let { response ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(SurfaceVariant)
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Text(
+                    text     = "RESPONSE",
+                    color    = Primary.copy(alpha = 0.7f),
+                    fontSize = 10.sp,
+                    style    = MonoStyle
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text     = response,
+                    color    = OnBackground,
+                    fontSize = 12.sp,
+                    style    = MonoStyle
+                )
+            }
+            Divider(color = Surface, thickness = 1.dp)
+        }
 
         // ── INPUT BAR ───────────────────────────────────────────────────────
         sendMessage?.let { msg ->
