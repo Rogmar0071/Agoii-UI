@@ -144,17 +144,6 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.COMMIT_CONTRACT && to == EventTypes.COMMIT_EXECUTED) return true
             // Commit layer: user rejects → execution aborted
             if (from == EventTypes.COMMIT_CONTRACT && to == EventTypes.COMMIT_ABORTED) return true
-            // ICS Interaction loop: pre-execution intent clarification (AGOII-MQP-ICS-ACTIVATION-CORRECTION-02)
-            // Intent submitted → ICS starts clarification dialogue
-            if (from == EventTypes.INTENT_SUBMITTED && to == EventTypes.INTERACTION_CONTRACT) return true
-            // ICS question → user response
-            if (from == EventTypes.INTERACTION_CONTRACT && to == EventTypes.INTERACTION_RESPONSE) return true
-            // User response → ICS asks follow-up
-            if (from == EventTypes.INTERACTION_RESPONSE && to == EventTypes.INTERACTION_CONTRACT) return true
-            // User response → ICS finalizes intent (clarification complete)
-            if (from == EventTypes.INTERACTION_RESPONSE && to == EventTypes.INTENT_UPDATED) return true
-            // Finalized intent → Governor generates contracts
-            if (from == EventTypes.INTENT_UPDATED && to == EventTypes.CONTRACTS_GENERATED) return true
             return false
         }
     }

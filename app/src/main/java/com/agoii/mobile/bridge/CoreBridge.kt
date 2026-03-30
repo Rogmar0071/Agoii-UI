@@ -4,12 +4,19 @@ import android.content.Context
 import com.agoii.mobile.commit.ApprovalStatus
 import com.agoii.mobile.contractor.ContractorCandidate
 import com.agoii.mobile.contractor.ContractorRegistry
+import com.agoii.mobile.contractor.ContractorSystem
+import com.agoii.mobile.contractor.ContractorSystemResult
 import com.agoii.mobile.contractor.ContractorVerificationEngine
+import com.agoii.mobile.contracts.ContractCapability
+import com.agoii.mobile.contracts.ExecutionType
+import com.agoii.mobile.contracts.TargetDomain
 import com.agoii.mobile.core.*
 import com.agoii.mobile.execution.BuildExecutor
 import com.agoii.mobile.execution.ExecutionAuthority
 import com.agoii.mobile.execution.ExecutionEntryPoint
 import com.agoii.mobile.governor.Governor
+import com.agoii.mobile.interaction.InteractionContract
+import com.agoii.mobile.interaction.OutputType
 import com.agoii.mobile.irs.*
 import com.agoii.mobile.observability.ExecutionObservability
 import com.agoii.mobile.observability.ExecutionTimeline
@@ -44,6 +51,7 @@ class CoreBridge(context: Context) {
     // FS-1: Build a verified ContractorRegistry so ExecutionAuthority can succeed
     private val contractorRegistry  = buildContractorRegistry()
     private val executionAuthority  = ExecutionAuthority(contractorRegistry)
+    private val contractorSystem    = ContractorSystem()
 
     private val observability       = ExecutionObservability(ledger)
 
@@ -209,155 +217,113 @@ class CoreBridge(context: Context) {
     }
 
     /**
-     * ICS Interaction Loop (AGOII-MQP-ICS-ACTIVATION-CORRECTION-02).
+     * ICS Interaction entry point (AGOII-MQP-ICS-CORRECTION-VALIDATION-03).
      *
-     * ONLY valid entry point for all user input. NEVER triggers execution.
-     * Routes every interaction through ICS via a contractor selected from the
-     * verified [contractorRegistry].
+     * Routes every user interaction through the ContractorSystem for deterministic,
+     * contract-driven execution. Never calls Governor or triggers execution.
      *
-     * Interaction state machine:
-     *   [empty ledger]           → IRS + INTENT_SUBMITTED + INTERACTION_CONTRACT(round=1)
-     *   INTERACTION_CONTRACT     → INTERACTION_RESPONSE → INTERACTION_CONTRACT(round+1)
-     *                              OR INTERACTION_RESPONSE → INTENT_UPDATED (loop complete)
-     *   INTENT_UPDATED           → LedgerValidationException (intent locked; await authority)
-     *   [any other ledger state] → LedgerValidationException (no UI execution)
+     * - Empty ledger  → IRS certification + INTENT_SUBMITTED.
+     * - Non-empty     → Build [InteractionContract], route through [ContractorSystem].
+     *                   If no legal existing event type can record the output → BLOCKED.
      *
-     * BLOCK CONDITIONS (must throw LedgerValidationException):
-     *   - No contractor available in registry
-     *   - Matching fails
-     *   - ICS cannot derive next step
+     * BLOCK CONDITIONS (throws [LedgerValidationException]):
+     *   - No contractor available in registry.
+     *   - ContractorSystem matching fails.
+     *   - No legal event type exists to persist the interaction output.
      *
-     * @throws LedgerValidationException if the operation is not permitted,
-     *         no contractor is available, or no output can be produced.
+     * @throws LedgerValidationException on every block condition.
      */
     fun processInteraction(projectId: String, input: String) {
-        val events        = ledger.loadEvents(projectId)
-        val lastEventType = events.lastOrNull()?.type
+        val events = ledger.loadEvents(projectId)
 
         // Block condition: contractor required for every interaction step.
         val contractor = contractorRegistry.findBestMatch(
             mapOf("constraintObedience" to 1, "reliability" to 1)
-        ) ?: throw LedgerValidationException("No contractor available in registry for interaction")
+        ) ?: throw LedgerValidationException("ICS BLOCKED: No contractor available in registry")
 
-        when {
-            // ── Case 1: Empty ledger — initial intent capture ─────────────────
-            events.isEmpty() -> {
-                val sessionId = "$projectId-${UUID.randomUUID()}"
+        if (events.isEmpty()) {
+            // Initial intent capture: IRS certification + INTENT_SUBMITTED.
+            val sessionId = "$projectId-${UUID.randomUUID()}"
 
-                irsOrchestrator.createSession(
-                    sessionId,
-                    mapOf(
-                        "objective"   to input,
-                        "constraints" to "",
-                        "environment" to "",
-                        "resources"   to ""
-                    ),
-                    mapOf(
-                        "objective"   to listOf(EvidenceRef(id = "ev-obj", source = "user-input")),
-                        "constraints" to listOf(EvidenceRef(id = "ev-cst", source = "user-input")),
-                        "environment" to listOf(EvidenceRef(id = "ev-env", source = "user-input")),
-                        "resources"   to listOf(EvidenceRef(id = "ev-res", source = "user-input"))
-                    ),
-                    SwarmConfig(agentCount = 2, consensusRule = ConsensusRule.MAJORITY),
-                    emptyMap()
-                )
+            irsOrchestrator.createSession(
+                sessionId,
+                mapOf(
+                    "objective"   to input,
+                    "constraints" to "",
+                    "environment" to "",
+                    "resources"   to ""
+                ),
+                mapOf(
+                    "objective"   to listOf(EvidenceRef(id = "ev-obj", source = "user-input")),
+                    "constraints" to listOf(EvidenceRef(id = "ev-cst", source = "user-input")),
+                    "environment" to listOf(EvidenceRef(id = "ev-env", source = "user-input")),
+                    "resources"   to listOf(EvidenceRef(id = "ev-res", source = "user-input"))
+                ),
+                SwarmConfig(agentCount = 2, consensusRule = ConsensusRule.MAJORITY),
+                emptyMap()
+            )
 
-                var stepResult: StepResult
-                do {
-                    stepResult = irsOrchestrator.step(sessionId)
-                } while (!stepResult.terminal)
+            var stepResult: StepResult
+            do {
+                stepResult = irsOrchestrator.step(sessionId)
+            } while (!stepResult.terminal)
 
-                val irsStatus = when (stepResult.orchestratorResult) {
-                    is OrchestratorResult.Certified -> "CERTIFIED"
-                    else                            -> "PENDING"
-                }
-
-                // Write intent to ledger (always — CR-01-FINAL)
-                ledger.appendEvent(
-                    projectId,
-                    EventTypes.INTENT_SUBMITTED,
-                    mapOf(
-                        "objective"       to input,
-                        "certificationId" to sessionId,
-                        "certifiedAt"     to System.currentTimeMillis(),
-                        "irsStatus"       to irsStatus
-                    )
-                )
-
-                // ICS step 1: emit first interaction contract via selected contractor
-                val round = 1
-                ledger.appendEvent(
-                    projectId,
-                    EventTypes.INTERACTION_CONTRACT,
-                    mapOf(
-                        "contractId"   to "$projectId-ics-$round",
-                        "contractorId" to contractor.id,
-                        "question"     to deriveInteractionQuestion(round),
-                        "round"        to round
-                    )
-                )
+            val irsStatus = when (stepResult.orchestratorResult) {
+                is OrchestratorResult.Certified -> "CERTIFIED"
+                else                            -> "PENDING"
             }
 
-            // ── Case 2: INTERACTION_CONTRACT last — user is answering ──────────
-            lastEventType == EventTypes.INTERACTION_CONTRACT -> {
-                val round = events.lastOrNull { it.type == EventTypes.INTERACTION_CONTRACT }
-                    ?.payload?.get("round")?.toString()?.toIntOrNull() ?: 1
-                val contractId = "$projectId-ics-$round"
-
-                // Record the user's interaction response
-                ledger.appendEvent(
-                    projectId,
-                    EventTypes.INTERACTION_RESPONSE,
-                    mapOf(
-                        "contractId"   to contractId,
-                        "contractorId" to contractor.id,
-                        "response"     to input,
-                        "round"        to round
-                    )
+            ledger.appendEvent(
+                projectId,
+                EventTypes.INTENT_SUBMITTED,
+                mapOf(
+                    "objective"       to input,
+                    "certificationId" to sessionId,
+                    "certifiedAt"     to System.currentTimeMillis(),
+                    "irsStatus"       to irsStatus
                 )
+            )
+            return
+        }
 
-                if (round >= icsInteractionRounds) {
-                    // ICS: intent is sufficiently qualified — finalize with INTENT_UPDATED
-                    val objective = events.firstOrNull { it.type == EventTypes.INTENT_SUBMITTED }
-                        ?.payload?.get("objective")?.toString() ?: input
+        // Non-empty ledger: build InteractionContract and route through ContractorSystem.
+        // No hardcoded questions; no predefined rounds; contractor drives execution.
+        val icsTaskId = "$projectId-ics-${UUID.randomUUID()}"
+        val interactionContract = InteractionContract(
+            contractId = icsTaskId,
+            query      = input,
+            outputType = OutputType.DETAILED
+        )
 
-                    ledger.appendEvent(
-                        projectId,
-                        EventTypes.INTENT_UPDATED,
-                        mapOf(
-                            "objective"    to objective,
-                            "refinedInput" to input,
-                            "contractorId" to contractor.id,
-                            "finalizedAt"  to System.currentTimeMillis()
-                        )
-                    )
-                } else {
-                    // ICS: more clarification needed — emit next interaction contract
-                    val nextRound = round + 1
-                    ledger.appendEvent(
-                        projectId,
-                        EventTypes.INTERACTION_CONTRACT,
-                        mapOf(
-                            "contractId"   to "$projectId-ics-$nextRound",
-                            "contractorId" to contractor.id,
-                            "question"     to deriveInteractionQuestion(nextRound),
-                            "round"        to nextRound
-                        )
-                    )
-                }
-            }
+        val systemResult = contractorSystem.execute(
+            taskId               = icsTaskId,
+            contractId           = interactionContract.contractId,
+            reportReference      = icsTaskId,
+            position             = 1,
+            constraints          = emptyList(),
+            expectedOutput       = input,
+            taskPayload          = mapOf("userInput" to input),
+            requiredCapabilities = listOf(
+                ContractCapability.RELIABILITY,
+                ContractCapability.CONSTRAINT_OBEDIENCE
+            ),
+            executionType        = ExecutionType.COMMUNICATION,
+            targetDomain         = TargetDomain.CONTRACTOR,
+            registry             = contractorRegistry
+        )
 
-            // ── Case 3: INTENT_UPDATED — interaction loop complete ─────────────
-            lastEventType == EventTypes.INTENT_UPDATED -> {
+        when (systemResult) {
+            is ContractorSystemResult.Blocked  ->
                 throw LedgerValidationException(
-                    "Intent has been finalized. Execution proceeds via system authority."
+                    "ICS BLOCKED: Contractor matching failed — ${systemResult.reason}"
                 )
-            }
-
-            // ── Case 4: All other states — no UI interaction permitted ─────────
-            else -> {
-                throw LedgerValidationException("Operation not allowed in current state")
-            }
+            is ContractorSystemResult.Resolved ->
+                // No existing event type can legally record ICS interaction output
+                // in the current ledger state. Per contract law: BLOCK.
+                throw LedgerValidationException(
+                    "ICS BLOCKED: No legal event type exists to record interaction output " +
+                    "in current state '${events.last().type}'"
+                )
         }
     }
 
@@ -523,27 +489,5 @@ class CoreBridge(context: Context) {
                 )
             )
         )
-    }
-
-    // ─── ICS Interaction Loop helpers ─────────────────────────────────────────
-
-    /**
-     * Number of ICS interaction rounds before intent is considered sufficiently qualified.
-     * After [icsInteractionRounds] rounds of INTERACTION_CONTRACT / INTERACTION_RESPONSE,
-     * [processInteraction] writes INTENT_UPDATED and closes the clarification loop.
-     */
-    private val icsInteractionRounds = 2
-
-    /**
-     * Deterministic, contractor-bound question for each ICS interaction round.
-     *
-     * Questions are positionally fixed — the same round always produces the same
-     * question, making the interaction fully reproducible from ledger state.
-     * No heuristics; no AI generation.
-     */
-    private fun deriveInteractionQuestion(round: Int): String = when (round) {
-        1    -> "What specific outcome should this project deliver?"
-        2    -> "Are there constraints or dependencies to consider?"
-        else -> "Provide any additional context required to finalize the intent."
     }
 }
