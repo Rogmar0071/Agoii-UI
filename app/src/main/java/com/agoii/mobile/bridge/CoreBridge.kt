@@ -40,8 +40,8 @@ class CoreBridge(context: Context) {
                 LLMDriver(
                     LLMDriverConfig(
                         apiKey    = apiKey,
-                        endpoint  = "https://api.openai.com/v1/responses",
-                        model     = "gpt-5-mini",
+                        endpoint  = "https://api.openai.com/v1/chat/completions",
+                        model     = "gpt-4o-mini",
                         timeoutMs = 30000
                     )
                 )
