@@ -52,10 +52,10 @@ data class AuthorizationResult(
  *  - [ExecutionAuthority] is private and not reachable from any other class.
  */
 class ExecutionEntryPoint(
-    private val ledger: EventLedger
+    private val ledger:              EventLedger,
+    private val executionAuthority:  ExecutionAuthority
 ) {
 
-    private val executionAuthority         = ExecutionAuthority()
     private val contractSystemOrchestrator = ContractSystemOrchestrator()
     private val validationLayer            = ValidationLayer()
 
