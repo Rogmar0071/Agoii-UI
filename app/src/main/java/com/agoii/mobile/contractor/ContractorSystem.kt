@@ -106,6 +106,13 @@ class ContractorSystem(
 
         val rawOutput = executor.execute(input, primaryProfile)
 
+        if (rawOutput.status != ExecutionStatus.SUCCESS) {
+            return ContractorSystemResult.Blocked(
+                reason = rawOutput.error ?: "EXECUTION_FAILED",
+                trace  = assigned.trace
+            )
+        }
+
         return ContractorSystemResult.Resolved(
             contractorIds   = contractorIds,
             executionOutput = rawOutput,
