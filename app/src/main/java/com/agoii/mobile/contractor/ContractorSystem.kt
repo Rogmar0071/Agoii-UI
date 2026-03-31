@@ -21,7 +21,8 @@ sealed class ContractorSystemResult {
         val executionOutput: ContractorExecutionOutput,
         val trace:           ResolutionTrace,
         val executionType:   ExecutionType,
-        val targetDomain:    TargetDomain
+        val targetDomain:    TargetDomain,
+        val assignment:      com.agoii.mobile.contractors.Assignment
     ) : ContractorSystemResult()
 
     data class Blocked(
@@ -111,7 +112,8 @@ class ContractorSystem(
             executionOutput = rawOutput,
             trace           = assigned.trace,
             executionType   = executionType,
-            targetDomain    = targetDomain
+            targetDomain    = targetDomain,
+            assignment      = assigned.assignment
         )
     }
 }

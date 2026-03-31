@@ -326,6 +326,19 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "TASK_ASSIGNED missing 'taskId' in '$projectId'"
             )
+        // Validate resolution fields for enriched TASK_ASSIGNED records (AGOII-MQP-RESOLUTION-TRACE-LOCK-01)
+        if (payload.containsKey("contractorId")) {
+            val resolutionType = payload["resolutionType"]?.toString()
+                ?: throw LedgerValidationException("TASK_ASSIGNED missing 'resolutionType'")
+            val resolutionReason = payload["resolutionReason"]?.toString()
+                ?: throw LedgerValidationException("TASK_ASSIGNED missing 'resolutionReason'")
+            if (resolutionType.isBlank()) {
+                throw LedgerValidationException("resolutionType cannot be blank")
+            }
+            if (resolutionReason.isBlank()) {
+                throw LedgerValidationException("resolutionReason cannot be blank")
+            }
+        }
     }
 
     private fun checkTaskExecuted(
@@ -846,7 +859,8 @@ class ValidationLayer {
         private val TASK_ASSIGNED_KEYS      = setOf(
             "taskId",
             "position", "total",
-            "contractId", "report_reference", "requirements", "constraints"
+            "contractId", "report_reference", "requirements", "constraints",
+            "contractorId", "resolutionType", "resolutionReason"
         )
         private val TASK_EXECUTED_KEYS      = setOf(
             "taskId", "contractId", "contractorId", "artifactReference",

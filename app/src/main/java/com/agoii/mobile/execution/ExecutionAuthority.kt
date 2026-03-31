@@ -568,6 +568,25 @@ class ExecutionAuthority(
                 projectId, ledger, executionTask, "MATCHING_NO_CONTRACTOR_ID",
                 "ContractorSystem resolved but returned empty contractorIds"
             )
+
+        // ── Step 2c: Persist contractor resolution trace (AGOII-MQP-RESOLUTION-TRACE-LOCK-01) ─
+        //   Every assignment is deterministic, explainable, and persisted in the ledger.
+        //   NO silent resolution. FULL trace required.
+        ledger.appendEvent(
+            projectId,
+            EventTypes.TASK_ASSIGNED,
+            mapOf(
+                "taskId"           to executionTask.taskId,
+                "contractId"       to executionTask.contractId,
+                "contractorId"     to contractorId,
+                "resolutionType"   to resolved.assignment.resolutionType.name,
+                "resolutionReason" to resolved.assignment.reason,
+                "position"         to executionTask.position,
+                "total"            to executionTask.total,
+                "report_reference" to executionTask.reportReference
+            )
+        )
+
         val executionOutput = resolved.executionOutput
 
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────

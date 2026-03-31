@@ -46,9 +46,18 @@ data class ExecutionContract(
 
 enum class AssignmentMode { MATCHED, SWARM, BLOCKED }
 
+enum class ResolutionType {
+    DIRECT_MATCH,
+    FALLBACK,
+    SWARM,
+    BLOCKED
+}
+
 data class Assignment(
     val contractorIds: List<String>,
-    val mode: AssignmentMode
+    val mode: AssignmentMode,
+    val resolutionType: ResolutionType,
+    val reason: String
 )
 
 data class TaskAssignedContract(
@@ -159,7 +168,9 @@ class DeterministicMatchingEngine {
                 position = contract.position,
                 assignment = Assignment(
                     contractorIds = emptyList(),
-                    mode = AssignmentMode.BLOCKED
+                    mode = AssignmentMode.BLOCKED,
+                    resolutionType = ResolutionType.BLOCKED,
+                    reason = "NO_CONTRACTORS_AVAILABLE"
                 ),
                 trace = ResolutionTrace(
                     evaluated = emptyList(),
@@ -205,7 +216,9 @@ class DeterministicMatchingEngine {
                     position = contract.position,
                     assignment = Assignment(
                         contractorIds = swarmResult.contractors.map { it.contractorId },
-                        mode = AssignmentMode.SWARM
+                        mode = AssignmentMode.SWARM,
+                        resolutionType = ResolutionType.SWARM,
+                        reason = "MULTI_CONTRACTOR_COMPOSITION"
                     ),
                     trace = swarmResult.trace
                 )
@@ -225,7 +238,9 @@ class DeterministicMatchingEngine {
                         position        = contract.position,
                         assignment      = Assignment(
                             contractorIds = listOf(fallback.contractorId),
-                            mode          = AssignmentMode.MATCHED
+                            mode          = AssignmentMode.MATCHED,
+                            resolutionType = ResolutionType.FALLBACK,
+                            reason        = "NO_CAPABILITY_MATCH"
                         ),
                         trace = ResolutionTrace(
                             evaluated = evaluated,
@@ -240,7 +255,9 @@ class DeterministicMatchingEngine {
                     position = contract.position,
                     assignment = Assignment(
                         contractorIds = listOf(swarmResult.contractor.contractorId),
-                        mode = AssignmentMode.MATCHED
+                        mode = AssignmentMode.MATCHED,
+                        resolutionType = ResolutionType.DIRECT_MATCH,
+                        reason = "CAPABILITY_MATCH"
                     ),
                     trace = swarmResult.trace
                 )
@@ -275,7 +292,9 @@ class DeterministicMatchingEngine {
             position = contract.position,
             assignment = Assignment(
                 contractorIds = listOf(best.contractorId),
-                mode = AssignmentMode.MATCHED
+                mode = AssignmentMode.MATCHED,
+                resolutionType = ResolutionType.DIRECT_MATCH,
+                reason = "CAPABILITY_MATCH"
             ),
             trace = ResolutionTrace(
                 evaluated = evaluated,

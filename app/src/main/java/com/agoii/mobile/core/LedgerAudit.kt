@@ -98,6 +98,10 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.TASK_ASSIGNED && to == EventTypes.TASK_STARTED) return true
             // ExecutionAuthority: task lifecycle — execution authority writes TASK_EXECUTED after TASK_STARTED
             if (from == EventTypes.TASK_STARTED && to == EventTypes.TASK_EXECUTED) return true
+            // ExecutionAuthority: resolution trace — enriched TASK_ASSIGNED emitted after TASK_STARTED (AGOII-MQP-RESOLUTION-TRACE-LOCK-01)
+            if (from == EventTypes.TASK_STARTED && to == EventTypes.TASK_ASSIGNED) return true
+            // ExecutionAuthority: task lifecycle — TASK_EXECUTED after enriched TASK_ASSIGNED (resolution trace record)
+            if (from == EventTypes.TASK_ASSIGNED && to == EventTypes.TASK_EXECUTED) return true
             // Governor: task lifecycle — TASK_EXECUTED (success+validated) advances to completion
             if (from == EventTypes.TASK_EXECUTED && to == EventTypes.TASK_COMPLETED) return true
             // Governor: task lifecycle — TASK_EXECUTED (failure) advances to task_failed
