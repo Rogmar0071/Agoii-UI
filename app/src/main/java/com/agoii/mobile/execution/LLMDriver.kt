@@ -64,7 +64,7 @@ class LLMDriver(private val config: LLMDriverConfig) : ExecutionDriver {
                 setRequestProperty("Authorization", "Bearer ${config.apiKey}")
             }
         } catch (e: Exception) {
-            throw LedgerValidationException("ICS BLOCKED: LLM execution failed: ${e.message}")
+            throw LedgerValidationException("ICS BLOCKED: LLM connection failed:\n${e.stackTraceToString()}")
         }
 
         try {
@@ -89,7 +89,7 @@ class LLMDriver(private val config: LLMDriverConfig) : ExecutionDriver {
         } catch (e: LedgerValidationException) {
             throw e
         } catch (e: Exception) {
-            throw LedgerValidationException("ICS BLOCKED: LLM execution failed: ${e.message}")
+            throw LedgerValidationException("ICS BLOCKED: LLM IO error:\n${e.stackTraceToString()}")
         } finally {
             connection.disconnect()
         }
