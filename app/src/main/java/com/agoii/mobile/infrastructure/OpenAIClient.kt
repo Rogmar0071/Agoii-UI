@@ -9,8 +9,8 @@ class OpenAIClient {
     fun send(config: OpenAIConfig, requestBody: String): String {
         val connection = (URL(config.endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod  = "POST"
-            connectTimeout = config.timeoutMs.toInt()
-            readTimeout    = config.timeoutMs.toInt()
+            connectTimeout = config.timeoutMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+            readTimeout    = config.timeoutMs.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             doOutput       = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Authorization", "Bearer ${config.apiKey}")
@@ -24,6 +24,7 @@ class OpenAIClient {
             val code = connection.responseCode
             if (code !in 200..299) {
                 val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }
+                    ?: "<no error details available>"
                 throw Exception("LLM_HTTP_ERROR: CODE=$code BODY=$errorBody")
             }
 

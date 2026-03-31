@@ -62,6 +62,7 @@ class LLMContractor(private val client: OpenAIClient) : ExecutionDriver {
             val message = first["message"] as? Map<*, *> ?: return raw
             message["content"] as? String ?: raw
         } catch (_: Exception) {
+            // Parsing failed — return the raw response so the caller still has something to work with
             raw
         }
     }
