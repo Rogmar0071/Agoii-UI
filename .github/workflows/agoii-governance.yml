@@ -1,0 +1,61 @@
+name: Agoii Governance Enforcement
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get changed files
+        id: changes
+        run: |
+          echo "FILES=$(git diff --name-only origin/${{ github.base_ref }})" >> $GITHUB_OUTPUT
+
+      - name: Run Governance Validation
+        id: validate
+        run: |
+          python3 .github/scripts/governance_agent.py "${{ steps.changes.outputs.FILES }}" > result.txt
+
+      - name: Read Result
+        id: result
+        run: |
+          STATUS=$(grep "STATUS:" result.txt | cut -d' ' -f2)
+          echo "STATUS=$STATUS" >> $GITHUB_OUTPUT
+
+      - name: Comment Result
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('result.txt', 'utf8');
+
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: context.issue.number,
+              body
+            });
+
+      - name: Trigger Recovery (if FAIL)
+        if: steps.result.outputs.STATUS == 'FAIL'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "copilot-recovery.yml",
+              ref: "main",
+              inputs: {
+                pr: context.issue.number
+              }
+            });
+
+      - name: Fail Workflow if Needed
+        if: steps.result.outputs.STATUS == 'FAIL'
+        run: exit 1
