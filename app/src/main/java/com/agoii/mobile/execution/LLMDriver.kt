@@ -30,7 +30,8 @@ class LLMDriver(private val config: LLMDriverConfig) : ExecutionDriver {
                 )
             )
 
-            println("LLM REQUEST: $requestBody")
+            println("LLM URL: ${config.endpoint}")
+            println("LLM REQUEST BODY:\n$requestBody")
 
             val responseText = callApi(requestBody)
 
@@ -55,6 +56,7 @@ class LLMDriver(private val config: LLMDriverConfig) : ExecutionDriver {
 
     private fun callApi(requestBody: String): String {
         val connection = try {
+            println("LLM CONNECTING...")
             (URL(config.endpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod  = "POST"
                 connectTimeout = config.timeoutMs.toInt()
@@ -74,15 +76,20 @@ class LLMDriver(private val config: LLMDriverConfig) : ExecutionDriver {
 
             val code = connection.responseCode
             println("LLM STATUS: $code")
+
+            val stream = if (code in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream
+            }
+            val raw = stream?.bufferedReader()?.use { it.readText() } ?: "NO_BODY"
+            println("LLM RESPONSE RAW:\n$raw")
+
             if (code !in 200..299) {
-                val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }
                 throw LedgerValidationException(
-                    "LLM_HTTP_ERROR:\nCODE=$code\nBODY=$errorBody"
+                    "LLM_HTTP_ERROR:\nCODE=$code\nBODY=$raw"
                 )
             }
-
-            val raw = connection.inputStream.bufferedReader().readText()
-            println("LLM RESPONSE RAW: $raw")
 
             return extract(raw)
 
