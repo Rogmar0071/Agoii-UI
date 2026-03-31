@@ -48,6 +48,14 @@ class CoreBridge(context: Context) {
     // ICS ENTRY
     // ─────────────────────────────────────────────────────────────
     fun processInteraction(projectId: String, input: String): String {
+        return try {
+            processInteractionInternal(projectId, input)
+        } catch (_: Exception) {
+            "Execution failed"
+        }
+    }
+
+    private fun processInteractionInternal(projectId: String, input: String): String {
 
         contractorRegistry.allVerified()
             .firstOrNull { it.source == "llm" }

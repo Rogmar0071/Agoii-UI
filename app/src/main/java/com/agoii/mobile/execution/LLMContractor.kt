@@ -43,12 +43,12 @@ class LLMContractor(private val client: OpenAIClient) : ExecutionDriver {
                 resultArtifact = mapOf("response" to responseText),
                 status         = ExecutionStatus.SUCCESS
             )
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return ContractorExecutionOutput(
                 taskId         = input.taskId,
-                resultArtifact = mapOf("response" to "LLM_ERROR:\n${e.stackTraceToString()}"),
+                resultArtifact = emptyMap(),
                 status         = ExecutionStatus.FAILURE,
-                error          = e.stackTraceToString()
+                error          = "Execution failed"
             )
         }
     }
