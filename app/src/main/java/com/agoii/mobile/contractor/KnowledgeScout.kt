@@ -7,9 +7,11 @@ package com.agoii.mobile.contractor
  * cannot satisfy a capability requirement.
  *
  * Discovery strategy (deterministic, no external I/O):
- *  - Generates synthetic candidates from a fixed discovery template.
- *  - Each candidate's capability claims are seeded from [requiredCapabilities].
- *  - Candidate IDs are deterministically derived from the requirement key.
+ *  - Generates candidates only for capability dimensions registered in [CapabilityMap].
+ *  - Each candidate's capability claims are seeded from [requiredCapabilities]
+ *    filtered to known [CapabilityMap.definitions].
+ *  - No synthetic contractor generation: only capabilities with a registered
+ *    [CapabilityDefinition] produce candidates.
  *
  * Rules:
  *  - Pure function: no state, no side effects (events are returned, not emitted).
@@ -22,21 +24,31 @@ class KnowledgeScout {
     /**
      * Discover candidate contractors for [requiredCapabilities].
      *
+     * Only capability dimensions present in [CapabilityMap.definitions] contribute
+     * to candidate generation; unknown dimensions are silently omitted.
+     *
      * @param requiredCapabilities Map of capability dimension → minimum score string.
-     * @return List of [ContractorCandidate] ready for verification.
+     * @return List of [ContractorCandidate] ready for verification, or empty when
+     *         no required capability has a registered definition.
      */
     fun discover(requiredCapabilities: Map<String, String>): List<ContractorCandidate> {
         if (requiredCapabilities.isEmpty()) return emptyList()
 
-        // Build a deterministic candidate id from capability keys.
-        val capKey = requiredCapabilities.keys.sorted().joinToString("-")
+        // Retain only dimensions that are registered in CapabilityMap.
+        val knownClaims = requiredCapabilities
+            .filterKeys { it in CapabilityMap.definitions }
+
+        if (knownClaims.isEmpty()) return emptyList()
+
+        // Build a deterministic candidate id from known capability keys.
+        val capKey      = knownClaims.keys.sorted().joinToString("-")
         val candidateId = "scout-$capKey"
 
-        // Seed claims directly from the requirement, satisfying all dimensions.
-        val seededClaims = requiredCapabilities.toMutableMap()
+        // Seed claims from the filtered requirements.
+        val seededClaims = knownClaims.toMutableMap()
 
-        // Ensure all five standard dimensions are present with at least "medium".
-        for (dim in STANDARD_DIMENSIONS) {
+        // Ensure all standard dimensions present in CapabilityMap are included.
+        for (dim in CapabilityMap.definitions.keys) {
             seededClaims.putIfAbsent(dim, "medium")
         }
 
