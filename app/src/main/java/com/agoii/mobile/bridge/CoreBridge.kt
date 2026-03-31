@@ -1,6 +1,7 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
+import com.agoii.mobile.infrastructure.NemoClawClient
 import com.agoii.mobile.infrastructure.OpenAIClient
 import com.agoii.mobile.contractor.*
 import com.agoii.mobile.contracts.*
@@ -33,6 +34,9 @@ class CoreBridge(context: Context) {
         driverRegistry.register(
             "llm",
             LLMContractor(OpenAIClient())
+        )
+        driverRegistry.registerNemoClawContractor(
+            NemoClawContractor(NemoClawClient())
         )
     }
 
@@ -176,6 +180,17 @@ class CoreBridge(context: Context) {
             Triple(
                 "communication-contractor-001",
                 "llm",
+                mapOf(
+                    "constraintObedience" to "high",
+                    "structuralAccuracy" to "high",
+                    "driftScore" to "low",
+                    "complexityCapacity" to "high",
+                    "reliability" to "high"
+                )
+            ),
+            Triple(
+                "nemoclaw-contractor-001",
+                "nemoclaw",
                 mapOf(
                     "constraintObedience" to "high",
                     "structuralAccuracy" to "high",

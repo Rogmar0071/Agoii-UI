@@ -14,4 +14,12 @@ object ConfigProvider {
             timeoutMs = DEFAULT_TIMEOUT_MS
         )
     }
+
+    fun nemoClaw(): NemoClawConfig {
+        return NemoClawConfig(
+            apiKey    = BuildConfig.NEMOCLAW_API_KEY,
+            endpoint  = "https://api.nemoclaw.io/v1/execute",
+            timeoutMs = DEFAULT_TIMEOUT_MS
+        )
+    }
 }

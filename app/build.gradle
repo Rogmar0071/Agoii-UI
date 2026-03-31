@@ -18,6 +18,7 @@ android {
             useSupportLibrary true
         }
         buildConfigField "String", "OPENAI_API_KEY", "\"\""
+        buildConfigField "String", "NEMOCLAW_API_KEY", "\"\""
     }
 
     buildTypes {

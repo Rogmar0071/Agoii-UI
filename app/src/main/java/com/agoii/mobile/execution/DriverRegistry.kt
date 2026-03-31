@@ -52,4 +52,21 @@ class DriverRegistry {
     fun registerLLMDriver(config: LLMDriverConfig) {
         register("llm", LLMDriver(config))
     }
+
+    /**
+     * Convenience method: create a [NemoClawContractor] and register it under `"nemoclaw"`.
+     *
+     * RULES:
+     *  - No automatic registration occurs; this must be called explicitly.
+     *  - Config validation is deferred to [NemoClawContractor.execute]; providing a
+     *    contractor here does NOT guarantee execution will succeed — blank fields will
+     *    still BLOCK.
+     *
+     * CONTRACT: REGISTER_NEMOCLAW_CONTRACTOR
+     *
+     * @param contractor Fully-constructed [NemoClawContractor].
+     */
+    fun registerNemoClawContractor(contractor: NemoClawContractor) {
+        register("nemoclaw", contractor)
+    }
 }
