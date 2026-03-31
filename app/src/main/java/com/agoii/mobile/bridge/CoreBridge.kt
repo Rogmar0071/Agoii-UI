@@ -2,6 +2,8 @@ package com.agoii.mobile.bridge
 
 import android.content.Context
 import com.agoii.mobile.BuildConfig
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.agoii.mobile.commit.ApprovalStatus
 import com.agoii.mobile.contractor.*
 import com.agoii.mobile.contracts.*
@@ -128,6 +130,9 @@ class CoreBridge(context: Context) {
 
         return output
     }
+
+    suspend fun processInteractionSafe(projectId: String, input: String): String =
+        withContext(Dispatchers.IO) { processInteraction(projectId, input) }
 
     // ─────────────────────────────────────────────────────────────
     // UI + GOVERNANCE SURFACE

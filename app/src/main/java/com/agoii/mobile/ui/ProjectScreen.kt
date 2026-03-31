@@ -32,6 +32,7 @@ import com.agoii.mobile.interaction.InteractionInput
 import com.agoii.mobile.interaction.InteractionResult
 import com.agoii.mobile.interaction.OutputType
 import com.agoii.mobile.ui.theme.*
+import kotlinx.coroutines.launch
 
 /**
  * ProjectScreen — the single screen composable.
@@ -71,6 +72,7 @@ fun ProjectScreen(projectId: String) {
     var responseMessage   by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
+    val scope     = rememberCoroutineScope()
 
     /** Reload ALL data from the bridge after every action. No caching. */
     fun reload() {
@@ -106,18 +108,20 @@ fun ProjectScreen(projectId: String) {
         val trimmed = input.trim()
         if (trimmed.isEmpty()) return
 
-        try {
-            val response = bridge.processInteraction(projectId, trimmed)
-            inputText = ""
-            sendMessage = null
-            responseMessage = response
-            reload()
-        } catch (e: LedgerValidationException) {
-            sendMessage = e.message ?: "Unknown error"
-            responseMessage = null
-        } catch (e: Exception) {
-            sendMessage = e.message ?: "Unknown error"
-            responseMessage = null
+        scope.launch {
+            try {
+                val response = bridge.processInteractionSafe(projectId, trimmed)
+                inputText = ""
+                sendMessage = null
+                responseMessage = response
+                reload()
+            } catch (e: LedgerValidationException) {
+                sendMessage = e.message ?: "Unknown error"
+                responseMessage = null
+            } catch (e: Exception) {
+                sendMessage = e.message ?: "Unknown error"
+                responseMessage = null
+            }
         }
     }
 
