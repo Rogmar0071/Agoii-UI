@@ -3,6 +3,8 @@ package com.agoii.mobile.bridge
 import android.content.Context
 import com.agoii.mobile.infrastructure.OpenAIClient
 import com.agoii.mobile.contractor.*
+import com.agoii.mobile.contractors.registry.NemoclawContractorDefinition
+import com.agoii.mobile.contractors.registry.NemoclawDriver
 import com.agoii.mobile.contracts.*
 import com.agoii.mobile.core.*
 import com.agoii.mobile.execution.*
@@ -33,6 +35,10 @@ class CoreBridge(context: Context) {
         driverRegistry.register(
             "llm",
             LLMContractor(OpenAIClient())
+        )
+        driverRegistry.register(
+            NemoclawContractorDefinition.DRIVER_SOURCE,
+            NemoclawDriver()
         )
     }
 
@@ -183,6 +189,11 @@ class CoreBridge(context: Context) {
                     "complexityCapacity" to "high",
                     "reliability" to "high"
                 )
+            ),
+            Triple(
+                NemoclawContractorDefinition.CONTRACTOR_ID,
+                NemoclawContractorDefinition.DRIVER_SOURCE,
+                NemoclawContractorDefinition.CAPABILITY_CLAIMS
             )
         )
     }
