@@ -17,7 +17,7 @@ android {
         vectorDrawables {
             useSupportLibrary true
         }
-        buildConfigField "String", "OPENAI_API_KEY", "\"\""
+        buildConfigField "String", "OPENAI_API_KEY", "\"${System.getenv("OPENAI_API_KEY") ?: ""}\""
     }
 
     buildTypes {
