@@ -38,7 +38,7 @@ class CoreBridge(context: Context) {
         if (config.apiKey.isNotBlank()) {
             driverRegistry.register(
                 "llm",
-                LLMContractor(OpenAIClient(), config)
+                LLMContractor(OpenAIClient())
             )
         }
     }

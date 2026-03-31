@@ -1,8 +1,8 @@
 package com.agoii.mobile.execution
 
 import com.agoii.mobile.core.LedgerValidationException
+import com.agoii.mobile.infrastructure.ConfigProvider
 import com.agoii.mobile.infrastructure.OpenAIClient
-import com.agoii.mobile.infrastructure.OpenAIConfig
 import com.google.gson.Gson
 
 // ─── LLMContractor ───────────────────────────────────────────────────────────
@@ -26,14 +26,15 @@ import com.google.gson.Gson
  * CONTRACT: AGOII-RCF-EXTERNAL-COMMUNICATION-ISOLATION-01
  */
 class LLMContractor(
-    private val client: OpenAIClient,
-    private val config: OpenAIConfig
+    private val client: OpenAIClient
 ) : ExecutionDriver {
 
     private val gson = Gson()
 
     override fun execute(input: ContractorExecutionInput): ContractorExecutionOutput {
         try {
+            val config = ConfigProvider.openAI()
+
             if (config.apiKey.isBlank() || config.endpoint.isBlank() || config.model.isBlank()) {
                 throw LedgerValidationException("ICS BLOCKED: Missing LLM configuration")
             }

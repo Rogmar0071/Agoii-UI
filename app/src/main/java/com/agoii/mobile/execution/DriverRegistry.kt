@@ -1,7 +1,6 @@
 package com.agoii.mobile.execution
 
 import com.agoii.mobile.infrastructure.OpenAIClient
-import com.agoii.mobile.infrastructure.OpenAIConfig
 
 // ─── DriverRegistry ───────────────────────────────────────────────────────────
 
@@ -41,18 +40,15 @@ class DriverRegistry {
     fun resolve(source: String): ExecutionDriver? = store[source]
 
     /**
-     * Convenience method: create an [LLMContractor] from [config] and register it under `"llm"`.
+     * Convenience method: create an [LLMContractor] and register it under `"llm"`.
      *
      * RULES:
      *  - No automatic registration occurs; this must be called explicitly.
-     *  - Config validation is deferred to [LLMContractor.execute]; providing a config here
-     *    does NOT guarantee execution will succeed — blank fields will still BLOCK.
+     *  - Config is resolved at execution time via [ConfigProvider]; blank fields will BLOCK.
      *
      * CONTRACT: AGOII-RCF-EXTERNAL-COMMUNICATION-ISOLATION-01
-     *
-     * @param config Fully-populated [OpenAIConfig].
      */
-    fun registerLLMContractor(config: OpenAIConfig) {
-        register("llm", LLMContractor(OpenAIClient(), config))
+    fun registerLLMContractor() {
+        register("llm", LLMContractor(OpenAIClient()))
     }
 }
