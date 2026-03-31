@@ -32,6 +32,7 @@ class LLMDriver(private val config: LLMDriverConfig) : ExecutionDriver {
 
             println("LLM URL: ${config.endpoint}")
             println("LLM REQUEST BODY:\n$requestBody")
+            println(testNetwork())
 
             val responseText = callApi(requestBody)
 
@@ -99,6 +100,21 @@ class LLMDriver(private val config: LLMDriverConfig) : ExecutionDriver {
             throw LedgerValidationException("ICS BLOCKED: LLM IO error:\n${e.stackTraceToString()}")
         } finally {
             connection.disconnect()
+        }
+    }
+
+    private fun testNetwork(): String {
+        return try {
+            val url = URL("https://www.google.com")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.connectTimeout = 5000
+            connection.readTimeout = 5000
+            connection.requestMethod = "GET"
+
+            val code = connection.responseCode
+            "NETWORK_OK: $code"
+        } catch (e: Exception) {
+            "NETWORK_FAIL:\n${e.stackTraceToString()}"
         }
     }
 
