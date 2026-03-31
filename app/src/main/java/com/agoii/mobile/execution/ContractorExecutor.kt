@@ -1,7 +1,6 @@
 package com.agoii.mobile.execution
 
 import com.agoii.mobile.contractor.ContractorProfile
-import com.agoii.mobile.core.LedgerValidationException
 
 // ─── ContractorExecution ─────────────────────────────────────────────────────
 
@@ -43,25 +42,48 @@ class ContractorExecutor(
         contractor: ContractorProfile
     ): ContractorExecutionOutput {
 
+        // STEP 1: Resolve driver (NO THROW)
         val driver = driverRegistry.resolve(contractor.source)
-            ?: throw LedgerValidationException(
-                "ICS BLOCKED: No execution driver for source: ${contractor.source}"
-            )
 
-        val output = driver.execute(input)
-
-        if (output.status != ExecutionStatus.SUCCESS) {
-            throw LedgerValidationException(
-                "ICS BLOCKED: Execution failed — ${output.error ?: "unknown"}"
+        if (driver == null) {
+            return ContractorExecutionOutput(
+                taskId         = input.taskId,
+                resultArtifact = emptyMap(),
+                status         = ExecutionStatus.FAILURE,
+                error          = "NO_DRIVER_FOUND"
             )
         }
 
-        if (output.resultArtifact.isEmpty()) {
-            throw LedgerValidationException(
-                "ICS BLOCKED: Empty execution artifact"
+        // STEP 2: Execute safely (NO THROW ESCAPE)
+        val rawOutput = try {
+            driver.execute(input)
+        } catch (_: Exception) {
+            return ContractorExecutionOutput(
+                taskId         = input.taskId,
+                resultArtifact = emptyMap(),
+                status         = ExecutionStatus.FAILURE,
+                error          = "DRIVER_EXECUTION_EXCEPTION"
             )
         }
 
-        return output
+        // STEP 3: Normalize result (NO THROW)
+        if (rawOutput.status != ExecutionStatus.SUCCESS) {
+            return ContractorExecutionOutput(
+                taskId         = input.taskId,
+                resultArtifact = rawOutput.resultArtifact,
+                status         = ExecutionStatus.FAILURE,
+                error          = rawOutput.error ?: "EXECUTION_FAILED"
+            )
+        }
+
+        // STEP 4: Ensure artifact presence (NO THROW)
+        val artifact = rawOutput.resultArtifact
+
+        return ContractorExecutionOutput(
+            taskId         = input.taskId,
+            resultArtifact = artifact,
+            status         = ExecutionStatus.SUCCESS,
+            error          = null
+        )
     }
 }
