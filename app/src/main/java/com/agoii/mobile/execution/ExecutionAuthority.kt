@@ -502,14 +502,22 @@ class ExecutionAuthority(
             it.type == EventTypes.TASK_ASSIGNED && it.payload["taskId"] == taskId
         } ?: return blockWithRecovery(
             projectId, ledger, null, "NO_TASK_ASSIGNED",
-            "No TASK_ASSIGNED event found for taskId=$taskId"
+            "No TASK_ASSIGNED event found for taskId=$taskId",
+            knownTaskId = taskId
         )
 
         val executionTask = extractExecutionTask(taskId, taskAssignedEvent)
             ?: return blockWithRecovery(
                 projectId, ledger, null, "MISSING_REQUIRED_FIELD",
-                "ExecutionTask cannot be reconstructed: required field absent in TASK_ASSIGNED"
+                "ExecutionTask cannot be reconstructed: required field absent in TASK_ASSIGNED",
+                knownTaskId = taskId
             )
+
+        // ── MQP-EXECUTION-INVARIANT-LOCK-01: mandatory execution closure ────────
+        // Every path from here MUST produce TASK_EXECUTED (SUCCESS or FAILURE).
+        // This try/catch is the final safety net for any unexpected exception that
+        // escapes explicit error handling inside the pipeline.
+        return try {
 
         // ── Step 1a: Extract user input from INTENT_SUBMITTED ────────────────
         val userInput = events.firstOrNull { it.type == EventTypes.INTENT_SUBMITTED }
@@ -659,12 +667,39 @@ class ExecutionAuthority(
             )
         )
 
-        return ExecutionAuthorityExecutionResult.Executed(
+        ExecutionAuthorityExecutionResult.Executed(
             taskId            = executionTask.taskId,
             executionStatus   = executionOutput.status,
             validationVerdict = validationResult.verdict,
             report            = frozenReport
         )
+
+        } catch (e: Exception) {
+            // ── FAILURE PATH — mandatory lifecycle closure (MQP-EXECUTION-INVARIANT-LOCK-01) ──
+            // Any unexpected exception must still produce TASK_EXECUTED(FAILURE) so the
+            // Governor's convergence loop is never left in a non-terminal state.
+            try {
+                ledger.appendEvent(
+                    projectId,
+                    EventTypes.TASK_EXECUTED,
+                    mapOf(
+                        "taskId"            to executionTask.taskId,
+                        "contractId"        to executionTask.contractId,
+                        "contractorId"      to "NONE",
+                        "artifactReference" to buildArtifactReference(executionTask.reportReference, executionTask.taskId, "NO_ARTIFACT"),
+                        "executionStatus"   to "FAILURE",
+                        "validationStatus"  to "FAILED",
+                        "validationReasons" to listOf("EXECUTION_FAILED:${e.javaClass.simpleName}"),
+                        "report_reference"  to executionTask.reportReference,
+                        "position"          to executionTask.position,
+                        "total"             to executionTask.total
+                    )
+                )
+            } catch (_: Exception) {
+                // Ledger write failure does not suppress the block result
+            }
+            ExecutionAuthorityExecutionResult.BlockedWithRecovery("EXECUTION_FAILED", emptyList())
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -978,16 +1013,18 @@ class ExecutionAuthority(
         ledger:        EventLedger,
         task:          ExecutionTask?,
         failureClass:  String,
-        reason:        String
+        reason:        String,
+        knownTaskId:   String? = null
     ): ExecutionAuthorityExecutionResult.BlockedWithRecovery {
 
         // VIOLATION 4: artifactReference must always be deterministic and referenceable — never "NONE"
         val artifactRef = if (task != null)
             buildArtifactReference(task.reportReference, task.taskId, "NO_ARTIFACT")
         else
-            buildArtifactReference("UNKNOWN", "UNKNOWN", "NO_ARTIFACT")
+            buildArtifactReference("UNKNOWN", knownTaskId ?: "UNKNOWN", "NO_ARTIFACT")
 
-        // Emit TASK_EXECUTED(FAILURE) when we have enough context
+        // Emit TASK_EXECUTED(FAILURE) — mandatory lifecycle closure regardless of available context.
+        // MQP-EXECUTION-INVARIANT-LOCK-01: every TASK_STARTED must produce TASK_EXECUTED.
         if (task != null) {
             try {
                 ledger.appendEvent(
@@ -1004,6 +1041,27 @@ class ExecutionAuthority(
                         "report_reference"  to task.reportReference,
                         "position"          to task.position,
                         "total"             to task.total
+                    )
+                )
+            } catch (_: Exception) {
+                // Ledger write failure does not suppress the block result
+            }
+        } else if (knownTaskId != null) {
+            // Pre-extraction failure: task context is unavailable but taskId is known.
+            // Emit minimal TASK_EXECUTED(FAILURE) to satisfy lifecycle closure invariant.
+            try {
+                ledger.appendEvent(
+                    projectId,
+                    EventTypes.TASK_EXECUTED,
+                    mapOf(
+                        "taskId"            to knownTaskId,
+                        "contractId"        to "UNKNOWN",
+                        "contractorId"      to "NONE",
+                        "artifactReference" to artifactRef,
+                        "executionStatus"   to "FAILURE",
+                        "validationStatus"  to "FAILED",
+                        "validationReasons" to listOf(reason),
+                        "report_reference"  to "UNKNOWN"
                     )
                 )
             } catch (_: Exception) {
