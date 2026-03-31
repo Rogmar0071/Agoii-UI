@@ -342,6 +342,15 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "TASK_EXECUTED missing or blank 'contractId' in '$projectId'"
             )
+        val contractorIdValue = payload["contractorId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "TASK_EXECUTED missing or blank 'contractorId' in '$projectId'"
+            )
+        if (contractorIdValue == "NONE") {
+            throw LedgerValidationException(
+                "TASK_EXECUTED 'contractorId' must not be implicit NONE: use NO_CONTRACTOR_MATCH for resolution failures in '$projectId'"
+            )
+        }
         payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw LedgerValidationException(
                 "TASK_EXECUTED missing or blank 'report_reference' (RRIL-1) in '$projectId'"

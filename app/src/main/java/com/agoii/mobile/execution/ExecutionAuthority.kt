@@ -685,7 +685,7 @@ class ExecutionAuthority(
                     mapOf(
                         "taskId"            to executionTask.taskId,
                         "contractId"        to executionTask.contractId,
-                        "contractorId"      to "NONE",
+                        "contractorId"      to "NO_CONTRACTOR_MATCH",
                         "artifactReference" to buildArtifactReference(executionTask.reportReference, executionTask.taskId, "NO_ARTIFACT"),
                         "executionStatus"   to "FAILURE",
                         "validationStatus"  to "FAILED",
@@ -1033,7 +1033,7 @@ class ExecutionAuthority(
                     mapOf(
                         "taskId"            to task.taskId,
                         "contractId"        to task.contractId,
-                        "contractorId"      to "NONE",
+                        "contractorId"      to "NO_CONTRACTOR_MATCH",
                         "artifactReference" to artifactRef,
                         "executionStatus"   to "FAILURE",
                         "validationStatus"  to "FAILED",
@@ -1056,7 +1056,7 @@ class ExecutionAuthority(
                     mapOf(
                         "taskId"            to knownTaskId,
                         "contractId"        to "UNKNOWN",
-                        "contractorId"      to "NONE",
+                        "contractorId"      to "NO_CONTRACTOR_MATCH",
                         "artifactReference" to artifactRef,
                         "executionStatus"   to "FAILURE",
                         "validationStatus"  to "FAILED",
