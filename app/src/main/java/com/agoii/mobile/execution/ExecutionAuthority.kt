@@ -620,14 +620,22 @@ class ExecutionAuthority(
         }
 
         // ── Step 6: Hard block enforcement (AERP-1) ──────────────────────────
-        enforceHardBlocks(
-            report             = frozenReport,
-            validationExecuted = true,
-            capabilities       = requiredCapabilities,
-            registry           = registry,
-            systemResult       = systemResult,
-            authorized         = authorized
-        )
+        try {
+            enforceHardBlocks(
+                report             = frozenReport,
+                validationExecuted = true,
+                capabilities       = requiredCapabilities,
+                registry           = registry,
+                systemResult       = systemResult,
+                authorized         = authorized
+            )
+        } catch (_: Exception) {
+            return blockWithRecovery(
+                projectId, ledger, executionTask,
+                "HARD_BLOCK_VIOLATION",
+                "Execution blocked by AERP-1 hard block enforcement"
+            )
+        }
 
         // ── Step 7: TASK_EXECUTED ledger write — only after authorization ────
         val artifactRef    = buildArtifactReference(executionTask.reportReference, executionTask.taskId)
