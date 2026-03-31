@@ -80,56 +80,50 @@ class CoreBridge(context: Context) {
             throw LedgerValidationException("ICS BLOCKED: ${authResult.reason}")
         }
 
-        // ── Step 2: Governor loop until TASK_STARTED (max 30 cycles) ──────
+        // ── Unified loop: Governor advances state; ExecutionAuthority executes on TASK_STARTED ──
         var cycles = 0
+        var output: String? = null
         while (cycles < MAX_GOVERNOR_CYCLES) {
-            if (ledger.loadEvents(projectId).lastOrNull()?.type == EventTypes.TASK_STARTED) break
-            val govResult = governor.runGovernor(projectId)
-            if (govResult == Governor.GovernorResult.DRIFT) {
-                throw LedgerValidationException("ICS BLOCKED: Governor drift before TASK_STARTED (cycle $cycles)")
-            }
-            cycles++
-        }
-        if (ledger.loadEvents(projectId).lastOrNull()?.type != EventTypes.TASK_STARTED) {
-            throw LedgerValidationException(
-                "ICS BLOCKED: TASK_STARTED not reached within $MAX_GOVERNOR_CYCLES cycles"
-            )
-        }
-
-        // ── Step 3: Execute via ExecutionAuthority ─────────────────────────
-        val execResult = executionAuthority.executeFromLedger(projectId, ledger)
-        val output: String = when (execResult) {
-            is ExecutionAuthorityExecutionResult.Executed -> {
-                if (execResult.executionStatus != ExecutionStatus.SUCCESS) {
-                    throw LedgerValidationException(
-                        "ICS BLOCKED: Execution failed — status=${execResult.executionStatus}"
-                    )
+            val lastType = ledger.loadEvents(projectId).lastOrNull()?.type
+            if (lastType == EventTypes.EXECUTION_COMPLETED) break
+            if (lastType == EventTypes.TASK_STARTED) {
+                // Mandatory trigger: IF last event == TASK_STARTED → ExecutionAuthority executes
+                val execResult = executionAuthority.executeFromLedger(projectId, ledger)
+                when (execResult) {
+                    is ExecutionAuthorityExecutionResult.Executed -> {
+                        if (execResult.executionStatus != ExecutionStatus.SUCCESS) {
+                            throw LedgerValidationException(
+                                "ICS BLOCKED: Execution failed — status=${execResult.executionStatus}"
+                            )
+                        }
+                        output = execResult.report.artifactStructure["response"]?.toString()
+                            ?: throw LedgerValidationException("ICS BLOCKED: Empty output in artifact")
+                    }
+                    is ExecutionAuthorityExecutionResult.BlockedWithRecovery ->
+                        throw LedgerValidationException("ICS BLOCKED: ${execResult.reason}")
+                    else ->
+                        throw LedgerValidationException(
+                            "ICS BLOCKED: Unexpected execution result: ${execResult::class.simpleName}"
+                        )
                 }
-                execResult.report.artifactStructure["response"]?.toString()
-                    ?: throw LedgerValidationException("ICS BLOCKED: Empty output in artifact")
-            }
-            is ExecutionAuthorityExecutionResult.BlockedWithRecovery ->
-                throw LedgerValidationException("ICS BLOCKED: ${execResult.reason}")
-            else ->
-                throw LedgerValidationException(
-                    "ICS BLOCKED: Unexpected execution result: ${execResult::class.simpleName}"
-                )
-        }
-
-        // ── Step 4: Governor loop until EXECUTION_COMPLETED (max 30 cycles) ─
-        cycles = 0
-        while (cycles < MAX_GOVERNOR_CYCLES) {
-            val govResult = governor.runGovernor(projectId)
-            when (govResult) {
-                Governor.GovernorResult.COMPLETED -> break
-                Governor.GovernorResult.DRIFT ->
-                    throw LedgerValidationException("ICS BLOCKED: Governor drift after execution")
-                else -> { /* ADVANCED or NO_EVENT — continue */ }
+            } else {
+                val govResult = governor.runGovernor(projectId)
+                when (govResult) {
+                    Governor.GovernorResult.COMPLETED -> break
+                    Governor.GovernorResult.DRIFT ->
+                        throw LedgerValidationException(
+                            "ICS BLOCKED: Governor drift at state '$lastType' (cycle $cycles)"
+                        )
+                    else -> { /* ADVANCED or NO_EVENT — continue */ }
+                }
             }
             cycles++
         }
 
-        return output
+        val finalState = ledger.loadEvents(projectId).lastOrNull()?.type
+        return output ?: throw LedgerValidationException(
+            "ICS BLOCKED: No output produced — final state='$finalState' cycles=$cycles"
+        )
     }
 
     // ─────────────────────────────────────────────────────────────
