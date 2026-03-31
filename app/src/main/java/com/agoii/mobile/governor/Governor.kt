@@ -1,6 +1,5 @@
 package com.agoii.mobile.governor
 
-import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
@@ -27,8 +26,7 @@ import com.agoii.mobile.core.EventTypes
  * CSL gate: a contract at position P is only issued when EL = [CONTRACT_BASE_LOAD] + P ≤ [VC].
  */
 class Governor(
-    private val store: EventRepository,
-    private val registry: ContractorRegistry? = null
+    private val store: EventRepository
 ) {
 
     companion object {
