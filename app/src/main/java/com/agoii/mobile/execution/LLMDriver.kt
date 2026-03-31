@@ -11,36 +11,42 @@ class LLMDriver(private val config: LLMDriverConfig) : ExecutionDriver {
     private val gson = Gson()
 
     override fun execute(input: ContractorExecutionInput): ContractorExecutionOutput {
+        try {
+            if (config.apiKey.isBlank() || config.endpoint.isBlank() || config.model.isBlank()) {
+                throw LedgerValidationException("ICS BLOCKED: Missing LLM configuration")
+            }
 
-        if (config.apiKey.isBlank() || config.endpoint.isBlank() || config.model.isBlank()) {
-            throw LedgerValidationException("ICS BLOCKED: Missing LLM configuration")
-        }
+            val payload = input.toExecutionPayload()
 
-        val payload = input.toExecutionPayload()
-
-        val requestBody = gson.toJson(
-            mapOf(
-                "model" to config.model,
-                "messages" to listOf(
-                    mapOf(
-                        "role" to "user",
-                        "content" to gson.toJson(payload)
+            val requestBody = gson.toJson(
+                mapOf(
+                    "model" to config.model,
+                    "messages" to listOf(
+                        mapOf(
+                            "role" to "user",
+                            "content" to gson.toJson(payload)
+                        )
                     )
                 )
             )
-        )
 
-        val responseText = callApi(requestBody)
+            println("LLM REQUEST: $requestBody")
 
-        if (responseText.isBlank()) {
-            throw LedgerValidationException("ICS BLOCKED: Empty LLM response")
+            val responseText = callApi(requestBody)
+
+            if (responseText.isBlank()) {
+                throw LedgerValidationException("ICS BLOCKED: Empty LLM response")
+            }
+
+            return ContractorExecutionOutput(
+                taskId = input.taskId,
+                resultArtifact = mapOf("response" to responseText),
+                status = ExecutionStatus.SUCCESS
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+            throw e
         }
-
-        return ContractorExecutionOutput(
-            taskId = input.taskId,
-            resultArtifact = mapOf("response" to responseText),
-            status = ExecutionStatus.SUCCESS
-        )
     }
 
     private fun callApi(requestBody: String): String {
@@ -63,11 +69,13 @@ class LLMDriver(private val config: LLMDriverConfig) : ExecutionDriver {
             }
 
             val code = connection.responseCode
+            println("LLM STATUS: $code")
             if (code !in 200..299) {
                 throw LedgerValidationException("ICS BLOCKED: LLM execution failed: HTTP $code")
             }
 
             val raw = connection.inputStream.bufferedReader().readText()
+            println("LLM RESPONSE RAW: $raw")
 
             return extract(raw)
 
