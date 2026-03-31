@@ -32,6 +32,7 @@ package com.agoii.mobile.execution
 
 import com.agoii.mobile.assembly.AssemblyExecutionResult
 import com.agoii.mobile.assembly.AssemblyModule
+import com.agoii.mobile.contractor.ContractorInitialization
 import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.contractor.ContractorSystem
 import com.agoii.mobile.contractor.ContractorSystemResult
@@ -530,6 +531,10 @@ class ExecutionAuthority(
 
         // ── Step 2: Registry check ───────────────────────────────────────────
         val registry = contractorRegistry
+        ContractorInitialization.enforce(
+            registry       = contractorRegistry,
+            driverRegistry = driverRegistry
+        )
 
         // ── Step 2a: Domain context lookup (from CONTRACT_CREATED, if present) ─
         val domainContext = lookupDomainContext(executionTask.contractId, events)
