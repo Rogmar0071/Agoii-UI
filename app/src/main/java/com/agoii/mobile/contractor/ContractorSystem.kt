@@ -17,7 +17,7 @@ import com.agoii.mobile.execution.ExecutionStatus
 sealed class ContractorSystemResult {
 
     data class Resolved(
-        val contractorIds:   List<String>,
+        val assignment:      com.agoii.mobile.contractors.Assignment,
         val executionOutput: ContractorExecutionOutput,
         val trace:           ResolutionTrace,
         val executionType:   ExecutionType,
@@ -114,7 +114,7 @@ class ContractorSystem(
         }
 
         return ContractorSystemResult.Resolved(
-            contractorIds   = contractorIds,
+            assignment      = assigned.assignment,
             executionOutput = rawOutput,
             trace           = assigned.trace,
             executionType   = executionType,

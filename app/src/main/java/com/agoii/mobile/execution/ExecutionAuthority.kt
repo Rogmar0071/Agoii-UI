@@ -562,12 +562,16 @@ class ExecutionAuthority(
             )
             is ContractorSystemResult.Resolved -> { /* pipeline continues below */ }
         }
-        val resolved     = systemResult as ContractorSystemResult.Resolved
-        val contractorId = resolved.contractorIds.firstOrNull()
-            ?: return blockWithRecovery(
-                projectId, ledger, executionTask, "MATCHING_NO_CONTRACTOR_ID",
-                "ContractorSystem resolved but returned empty contractorIds"
+        val resolved      = systemResult as ContractorSystemResult.Resolved
+        val contractorIds = resolved.assignment.contractorIds
+        if (contractorIds.isEmpty()) {
+            return blockWithRecovery(
+                projectId, ledger, executionTask,
+                "MATCHING_FAILED",
+                "Resolved assignment returned empty contractorIds"
             )
+        }
+        val contractorId = contractorIds.first()
         val executionOutput = resolved.executionOutput
 
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
