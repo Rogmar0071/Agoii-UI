@@ -48,6 +48,7 @@ import com.agoii.mobile.contracts.UniversalContractRecovery
 import com.agoii.mobile.contracts.UniversalContractValidator
 import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.core.LedgerValidationException
 import com.agoii.mobile.ics.IcsExecutionResult
 import com.agoii.mobile.ics.IcsModule
 import com.agoii.mobile.tasks.Task
@@ -562,16 +563,21 @@ class ExecutionAuthority(
             )
             is ContractorSystemResult.Resolved -> { /* pipeline continues below */ }
         }
-        val resolved      = systemResult as ContractorSystemResult.Resolved
+        val resolved = systemResult as ContractorSystemResult.Resolved
+
         val contractorIds = resolved.assignment.contractorIds
+
+        // ── AGOII-MQP-MATCHING-INVARIANT-LOCK-01 ─────────────────────────────
+        // HARD INVARIANT: execution MUST NOT proceed without contractor
         if (contractorIds.isEmpty()) {
-            return blockWithRecovery(
-                projectId, ledger, executionTask,
-                "MATCHING_FAILED",
-                "Resolved assignment returned empty contractorIds"
+            throw LedgerValidationException(
+                "INVARIANT VIOLATION: Empty contractorIds from Assignment — Matching Engine failure"
             )
         }
+
+        // Deterministic extraction (safe after invariant enforcement)
         val contractorId = contractorIds.first()
+
         val executionOutput = resolved.executionOutput
 
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
