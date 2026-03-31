@@ -209,16 +209,31 @@ class DeterministicMatchingEngine {
                     ),
                     trace = swarmResult.trace
                 )
-                is ResolutionResult.Blocked -> TaskAssignedContract(
-                    contractId = contract.contractId,
-                    reportReference = contract.reportReference,
-                    position = contract.position,
-                    assignment = Assignment(
-                        contractorIds = swarmResult.trace.matched,
-                        mode = AssignmentMode.BLOCKED
-                    ),
-                    trace = swarmResult.trace
-                )
+                is ResolutionResult.Blocked -> {
+                    // FALLBACK (MANDATORY): system must always attempt execution when at least
+                    // one contractor exists.  Swarm composition exhausted all options, but the
+                    // registry is non-empty, so select the best available contractor
+                    // deterministically: reliabilityScore DESC, contractorId ASC as tiebreaker.
+                    val fallback = contractors
+                        .maxWithOrNull(
+                            compareBy<ContractorProfile> { it.reliabilityScore }
+                                .thenByDescending { it.contractorId }
+                        )!!
+                    TaskAssignedContract(
+                        contractId      = contract.contractId,
+                        reportReference = contract.reportReference,
+                        position        = contract.position,
+                        assignment      = Assignment(
+                            contractorIds = listOf(fallback.contractorId),
+                            mode          = AssignmentMode.MATCHED
+                        ),
+                        trace = ResolutionTrace(
+                            evaluated = evaluated,
+                            matched   = listOf(fallback.contractorId),
+                            rejected  = rejected
+                        )
+                    )
+                }
                 is ResolutionResult.Matched -> TaskAssignedContract(
                     contractId = contract.contractId,
                     reportReference = contract.reportReference,
