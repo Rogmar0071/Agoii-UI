@@ -150,8 +150,14 @@ class DeterministicMatchingEngine {
         requirements: List<ContractRequirement>,
         registry: ContractorRegistry
     ): TaskAssignedContract {
-        // Step 1 — Load
+        // ─────────────────────────────────────────────────────────────
+        // AGOII-MQP-MATCHING-MODEL-COMPLETENESS-01
+        // CLOSED RESOLUTION MODEL — NO EMPTY ASSIGNMENT POSSIBLE
+        // ─────────────────────────────────────────────────────────────
+
         val contractors = registry.getAll()
+
+        // STEP 0 — BLOCKED (no contractors exist — only valid empty path)
         if (contractors.isEmpty()) {
             return TaskAssignedContract(
                 contractId = contract.contractId,
@@ -169,12 +175,11 @@ class DeterministicMatchingEngine {
             )
         }
 
-        // Step 2 — Initialize
+        // Feasibility check
         val evaluated = contractors.map { it.contractorId }
         val rejected = mutableListOf<RejectedContractor>()
         val valid = mutableListOf<ContractorProfile>()
 
-        // Step 3 — Feasibility
         outer@ for (contractor in contractors) {
             for (requirement in requirements) {
                 val cap = contractor.capabilities.find { it.name == requirement.capability }
@@ -190,96 +195,69 @@ class DeterministicMatchingEngine {
             valid += contractor
         }
 
-        // Step 4 — No Valid
-        if (valid.isEmpty()) {
-            val swarmResult = SwarmCompositionEngine().compose(
-                requirements,
-                contractors,
-                contractors.map { it.contractorId },
-                rejected
+        // STEP 1 — DIRECT MATCH (valid capability match)
+        if (valid.isNotEmpty()) {
+            val best = valid.maxWithOrNull(
+                compareBy<ContractorProfile> { it.reliabilityScore }
+                    .thenByDescending { it.contractorId }
+            )!!
+
+            return TaskAssignedContract(
+                contractId = contract.contractId,
+                reportReference = contract.reportReference,
+                position = contract.position,
+                assignment = Assignment(
+                    contractorIds = listOf(best.contractorId),
+                    mode = AssignmentMode.MATCHED
+                ),
+                trace = ResolutionTrace(
+                    evaluated = evaluated,
+                    matched = listOf(best.contractorId),
+                    rejected = rejected
+                )
             )
-            return when (swarmResult) {
-                is ResolutionResult.Swarm -> TaskAssignedContract(
-                    contractId = contract.contractId,
-                    reportReference = contract.reportReference,
-                    position = contract.position,
-                    assignment = Assignment(
-                        contractorIds = swarmResult.contractors.map { it.contractorId },
-                        mode = AssignmentMode.SWARM
-                    ),
-                    trace = swarmResult.trace
-                )
-                is ResolutionResult.Blocked -> {
-                    // FALLBACK (MANDATORY): system must always attempt execution when at least
-                    // one contractor exists.  Swarm composition exhausted all options, but the
-                    // registry is non-empty, so select the best available contractor
-                    // deterministically: reliabilityScore DESC, contractorId ASC as tiebreaker.
-                    val fallback = contractors
-                        .maxWithOrNull(
-                            compareBy<ContractorProfile> { it.reliabilityScore }
-                                .thenByDescending { it.contractorId }
-                        )!!
-                    TaskAssignedContract(
-                        contractId      = contract.contractId,
-                        reportReference = contract.reportReference,
-                        position        = contract.position,
-                        assignment      = Assignment(
-                            contractorIds = listOf(fallback.contractorId),
-                            mode          = AssignmentMode.MATCHED
-                        ),
-                        trace = ResolutionTrace(
-                            evaluated = evaluated,
-                            matched   = listOf(fallback.contractorId),
-                            rejected  = rejected
-                        )
-                    )
-                }
-                is ResolutionResult.Matched -> TaskAssignedContract(
-                    contractId = contract.contractId,
-                    reportReference = contract.reportReference,
-                    position = contract.position,
-                    assignment = Assignment(
-                        contractorIds = listOf(swarmResult.contractor.contractorId),
-                        mode = AssignmentMode.MATCHED
-                    ),
-                    trace = swarmResult.trace
-                )
-            }
         }
 
-        // Steps 5 & 6 — Scoring and Selection
-        val scores = mutableMapOf<String, Double>()
-        for (contractor in valid) {
-            var capabilityScore = 0.0
-            for (req in requirements) {
-                val cap = contractor.capabilities.find { it.name == req.capability }!!
-                capabilityScore += req.weight * cap.level
-            }
-            val score = capabilityScore * contractor.reliabilityScore * contractor.availabilityScore * (1.0 - contractor.costScore)
-            scores[contractor.contractorId] = score
-        }
-        var best = valid.first()
-        var bestScore = scores[best.contractorId]!!
-        for (contractor in valid) {
-            val score = scores[contractor.contractorId]!!
-            if (score > bestScore || (score == bestScore && contractor.contractorId < best.contractorId)) {
-                best = contractor
-                bestScore = score
-            }
+        // STEP 2 — SWARM (composed capability)
+        val swarmResult = SwarmCompositionEngine().compose(
+            requirements,
+            contractors,
+            evaluated,
+            rejected
+        )
+
+        if (swarmResult is ResolutionResult.Swarm) {
+            return TaskAssignedContract(
+                contractId = contract.contractId,
+                reportReference = contract.reportReference,
+                position = contract.position,
+                assignment = Assignment(
+                    contractorIds = swarmResult.contractors.map { it.contractorId },
+                    mode = AssignmentMode.SWARM
+                ),
+                trace = swarmResult.trace
+            )
         }
 
-        // Step 7 — Return
+        // STEP 3 — FALLBACK (mandatory, not optional)
+        // Swarm exhausted all options but registry is non-empty — always attempt execution.
+        // Deterministic selection: reliabilityScore DESC, contractorId ASC as tiebreaker.
+        val fallback = contractors.maxWithOrNull(
+            compareBy<ContractorProfile> { it.reliabilityScore }
+                .thenByDescending { it.contractorId }
+        )!!
+
         return TaskAssignedContract(
             contractId = contract.contractId,
             reportReference = contract.reportReference,
             position = contract.position,
             assignment = Assignment(
-                contractorIds = listOf(best.contractorId),
+                contractorIds = listOf(fallback.contractorId),
                 mode = AssignmentMode.MATCHED
             ),
             trace = ResolutionTrace(
                 evaluated = evaluated,
-                matched = listOf(best.contractorId),
+                matched = listOf(fallback.contractorId),
                 rejected = rejected
             )
         )
