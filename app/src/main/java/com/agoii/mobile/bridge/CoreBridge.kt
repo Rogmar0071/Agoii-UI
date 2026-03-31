@@ -2,7 +2,6 @@ package com.agoii.mobile.bridge
 
 import android.content.Context
 import com.agoii.mobile.commit.ApprovalStatus
-import com.agoii.mobile.infrastructure.ConfigProvider
 import com.agoii.mobile.infrastructure.OpenAIClient
 import com.agoii.mobile.contractor.*
 import com.agoii.mobile.contracts.*
@@ -33,14 +32,10 @@ class CoreBridge(context: Context) {
     private val contractorRegistry = buildContractorRegistry()
 
     init {
-        val config = ConfigProvider.openAI()
-
-        if (config.apiKey.isNotBlank()) {
-            driverRegistry.register(
-                "llm",
-                LLMContractor(OpenAIClient())
-            )
-        }
+        driverRegistry.register(
+            "llm",
+            LLMContractor(OpenAIClient())
+        )
     }
 
     // ─────────────────────────────────────────────────────────────
