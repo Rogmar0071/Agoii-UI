@@ -1,7 +1,6 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
-import com.agoii.mobile.commit.ApprovalStatus
 import com.agoii.mobile.infrastructure.OpenAIClient
 import com.agoii.mobile.contractor.*
 import com.agoii.mobile.contracts.*
@@ -11,7 +10,6 @@ import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.interaction.*
 import com.agoii.mobile.irs.*
 import com.agoii.mobile.observability.*
-import java.util.UUID
 
 class CoreBridge(context: Context) {
 
@@ -44,10 +42,6 @@ class CoreBridge(context: Context) {
     private val executionAuthority = ExecutionAuthority(contractorRegistry, driverRegistry)
     private val executionEntryPoint = ExecutionEntryPoint(ledger, executionAuthority)
 
-    private val contractorSystem = ContractorSystem(
-        driverRegistry = driverRegistry
-    )
-
     private val observability = ExecutionObservability(ledger)
 
     // ─────────────────────────────────────────────────────────────
@@ -69,51 +63,63 @@ class CoreBridge(context: Context) {
             )
         }
 
-        val icsTaskId = "$projectId-ics-${UUID.randomUUID()}"
-
-        val result = contractorSystem.execute(
-            taskId = icsTaskId,
-            contractId = icsTaskId,
-            reportReference = icsTaskId,
-            position = 1,
-            constraints = emptyList(),
-            expectedOutput = "Clarify intent",
-            taskPayload = mapOf("userInput" to input),
-            requiredCapabilities = listOf(
-                ContractCapability.RELIABILITY,
-                ContractCapability.CONSTRAINT_OBEDIENCE
-            ),
-            executionType = ExecutionType.COMMUNICATION,
-            targetDomain = TargetDomain.CONTRACTOR,
-            registry = contractorRegistry
+        // ── Step 1: Execute intent → generate contracts ────────────────────
+        val authResult = executionEntryPoint.executeIntent(
+            projectId,
+            mapOf("objective" to input)
         )
-
-        val output = when (result) {
-
-            is ContractorSystemResult.Blocked ->
-                throw LedgerValidationException("ICS BLOCKED: ${result.reason}")
-
-            is ContractorSystemResult.Resolved -> {
-                val artifact = result.executionOutput.resultArtifact
-
-                val text = artifact.entries
-                    .filterNot { entry ->
-                        entry.key in ARTIFACT_METADATA_KEYS
-                    }
-                    .mapNotNull { entry ->
-                        entry.value?.toString()?.takeIf { it.isNotBlank() }
-                    }
-                    .firstOrNull()
-
-                text ?: throw LedgerValidationException("ICS BLOCKED: Empty output")
-            }
+        if (!authResult.authorized) {
+            throw LedgerValidationException("ICS BLOCKED: ${authResult.reason}")
         }
 
-        ledger.appendEvent(
-            projectId,
-            EventTypes.CONTRACTS_GENERATED,
-            mapOf("contractSetId" to icsTaskId)
-        )
+        // ── Step 2: Governor loop until TASK_STARTED (max 30 cycles) ──────
+        var cycles = 0
+        while (cycles < MAX_GOVERNOR_CYCLES) {
+            if (ledger.loadEvents(projectId).lastOrNull()?.type == EventTypes.TASK_STARTED) break
+            val govResult = governor.runGovernor(projectId)
+            if (govResult == Governor.GovernorResult.DRIFT) {
+                throw LedgerValidationException("ICS BLOCKED: Governor drift before TASK_STARTED (cycle $cycles)")
+            }
+            cycles++
+        }
+        if (ledger.loadEvents(projectId).lastOrNull()?.type != EventTypes.TASK_STARTED) {
+            throw LedgerValidationException(
+                "ICS BLOCKED: TASK_STARTED not reached within $MAX_GOVERNOR_CYCLES cycles"
+            )
+        }
+
+        // ── Step 3: Execute via ExecutionAuthority ─────────────────────────
+        val execResult = executionAuthority.executeFromLedger(projectId, ledger)
+        val output: String = when (execResult) {
+            is ExecutionAuthorityExecutionResult.Executed -> {
+                if (execResult.executionStatus != ExecutionStatus.SUCCESS) {
+                    throw LedgerValidationException(
+                        "ICS BLOCKED: Execution failed — status=${execResult.executionStatus}"
+                    )
+                }
+                execResult.report.artifactStructure["response"]?.toString()
+                    ?: throw LedgerValidationException("ICS BLOCKED: Empty output in artifact")
+            }
+            is ExecutionAuthorityExecutionResult.BlockedWithRecovery ->
+                throw LedgerValidationException("ICS BLOCKED: ${execResult.reason}")
+            else ->
+                throw LedgerValidationException(
+                    "ICS BLOCKED: Unexpected execution result: ${execResult::class.simpleName}"
+                )
+        }
+
+        // ── Step 4: Governor loop until EXECUTION_COMPLETED (max 30 cycles) ─
+        cycles = 0
+        while (cycles < MAX_GOVERNOR_CYCLES) {
+            val govResult = governor.runGovernor(projectId)
+            when (govResult) {
+                Governor.GovernorResult.COMPLETED -> break
+                Governor.GovernorResult.DRIFT ->
+                    throw LedgerValidationException("ICS BLOCKED: Governor drift after execution")
+                else -> { /* ADVANCED or NO_EVENT — continue */ }
+            }
+            cycles++
+        }
 
         return output
     }
@@ -162,9 +168,7 @@ class CoreBridge(context: Context) {
     }
 
     companion object {
-        private val ARTIFACT_METADATA_KEYS = setOf(
-            "taskId", "constraintsMet", "executionType", "targetDomain"
-        )
+        private const val MAX_GOVERNOR_CYCLES = 30
 
         private val REQUIRED_CONTRACTORS = listOf(
             Triple(
