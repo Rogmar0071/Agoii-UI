@@ -1,8 +1,8 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
-import com.agoii.mobile.BuildConfig
 import com.agoii.mobile.commit.ApprovalStatus
+import com.agoii.mobile.infrastructure.OpenAIClient
 import com.agoii.mobile.contractor.*
 import com.agoii.mobile.contracts.*
 import com.agoii.mobile.core.*
@@ -32,21 +32,10 @@ class CoreBridge(context: Context) {
     private val contractorRegistry = buildContractorRegistry()
 
     init {
-        val apiKey = BuildConfig.OPENAI_API_KEY
-
-        if (apiKey.isNotBlank()) {
-            driverRegistry.register(
-                "llm",
-                LLMDriver(
-                    LLMDriverConfig(
-                        apiKey    = apiKey,
-                        endpoint  = "https://api.openai.com/v1/chat/completions",
-                        model     = "gpt-4o-mini",
-                        timeoutMs = 30000
-                    )
-                )
-            )
-        }
+        driverRegistry.register(
+            "llm",
+            LLMContractor(OpenAIClient())
+        )
     }
 
     // ─────────────────────────────────────────────────────────────
