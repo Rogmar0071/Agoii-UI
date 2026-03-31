@@ -162,7 +162,7 @@ data class ExecutionContract(
 )
 
 /** Assignment resolution mode produced by [DeterministicMatchingEngine]. */
-enum class AssignmentMode { MATCHED, SWARM, BLOCKED }
+enum class AssignmentMode { MATCHED, BLOCKED }
 
 /**
  * Resolved contractor assignment.
@@ -216,16 +216,4 @@ data class ResolutionTrace(
     val rejected:  List<RejectedContractor>
 )
 
-/** Intermediate resolution result used internally by [SwarmCompositionEngine]. */
-sealed class ResolutionResult {
 
-    data class Swarm(
-        val contractors: List<ContractorProfile>,
-        val trace:       ResolutionTrace
-    ) : ResolutionResult()
-
-    data class Blocked(
-        val reason: String,
-        val trace:  ResolutionTrace
-    ) : ResolutionResult()
-}
