@@ -44,8 +44,12 @@ class LLMDriver(private val config: LLMDriverConfig) : ExecutionDriver {
                 status = ExecutionStatus.SUCCESS
             )
         } catch (e: Exception) {
-            e.printStackTrace()
-            throw e
+            return ContractorExecutionOutput(
+                taskId = input.taskId,
+                resultArtifact = mapOf("response" to "LLM_ERROR:\n${e.stackTraceToString()}"),
+                status = ExecutionStatus.FAILURE,
+                error = e.stackTraceToString()
+            )
         }
     }
 
@@ -71,7 +75,10 @@ class LLMDriver(private val config: LLMDriverConfig) : ExecutionDriver {
             val code = connection.responseCode
             println("LLM STATUS: $code")
             if (code !in 200..299) {
-                throw LedgerValidationException("ICS BLOCKED: LLM execution failed: HTTP $code")
+                val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }
+                throw LedgerValidationException(
+                    "LLM_HTTP_ERROR:\nCODE=$code\nBODY=$errorBody"
+                )
             }
 
             val raw = connection.inputStream.bufferedReader().readText()
