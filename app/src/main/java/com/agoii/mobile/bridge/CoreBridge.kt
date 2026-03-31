@@ -27,7 +27,7 @@ class CoreBridge(context: Context) {
     // ─────────────────────────────────────────────────────────────
     private val driverRegistry = DriverRegistry()
 
-    private val contractorRegistry = buildContractorRegistry()
+    private val contractorRegistry = ContractorRegistry()
 
     init {
         driverRegistry.register(
@@ -56,10 +56,6 @@ class CoreBridge(context: Context) {
     }
 
     private fun processInteractionInternal(projectId: String, input: String): String {
-
-        contractorRegistry.allVerified()
-            .firstOrNull { it.source == "llm" }
-            ?: throw LedgerValidationException("ICS BLOCKED: No real communication contractor available")
 
         val events = ledger.loadEvents(projectId)
 
@@ -153,37 +149,7 @@ class CoreBridge(context: Context) {
         executionAuthority.resolveCommitDecision(projectId, ledger, false)
     }
 
-    // ─────────────────────────────────────────────────────────────
-    // CONTRACTOR REGISTRY
-    // ─────────────────────────────────────────────────────────────
-    private fun buildContractorRegistry(): ContractorRegistry {
-        val registry = ContractorRegistry()
-        val engine = ContractorVerificationEngine()
-
-        REQUIRED_CONTRACTORS.forEach { (id, source, claims) ->
-            val candidate = ContractorCandidate(id, source, claims)
-            val result = engine.verify(candidate)
-            result.assignedProfile?.let { registry.registerVerified(it) }
-        }
-
-        return registry
-    }
-
     companion object {
         private const val MAX_GOVERNOR_CYCLES = 30
-
-        private val REQUIRED_CONTRACTORS = listOf(
-            Triple(
-                "communication-contractor-001",
-                "llm",
-                mapOf(
-                    "constraintObedience" to "high",
-                    "structuralAccuracy" to "high",
-                    "driftScore" to "low",
-                    "complexityCapacity" to "high",
-                    "reliability" to "high"
-                )
-            )
-        )
     }
 }

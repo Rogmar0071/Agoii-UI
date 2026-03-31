@@ -1,8 +1,5 @@
 package com.agoii.mobile.contractor
 
-import com.agoii.mobile.contractors.DeterministicMatchingEngine
-import com.agoii.mobile.contractors.ExecutionContract as MatchingContract
-import com.agoii.mobile.contractors.ResolutionTrace
 import com.agoii.mobile.contracts.ContractCapability
 import com.agoii.mobile.contracts.ExecutionType
 import com.agoii.mobile.contracts.TargetDomain
@@ -17,7 +14,7 @@ import com.agoii.mobile.execution.ExecutionStatus
 sealed class ContractorSystemResult {
 
     data class Resolved(
-        val assignment:      com.agoii.mobile.contractors.Assignment,
+        val assignment:      Assignment,
         val executionOutput: ContractorExecutionOutput,
         val trace:           ResolutionTrace,
         val executionType:   ExecutionType,
@@ -54,7 +51,7 @@ class ContractorSystem(
         registry:              ContractorRegistry
     ): ContractorSystemResult {
 
-        val matchContract = MatchingContract(
+        val matchContract = ExecutionContract(
             contractId      = contractId,
             reportReference = reportReference,
             position        = position.toString()
@@ -66,9 +63,7 @@ class ContractorSystem(
             registry
         )
 
-        if (assigned.assignment.mode ==
-            com.agoii.mobile.contractors.AssignmentMode.BLOCKED
-        ) {
+        if (assigned.assignment.mode == AssignmentMode.BLOCKED) {
             return ContractorSystemResult.Blocked(
                 reason = "NO_FEASIBLE_CONTRACTOR:${executionType.name}",
                 trace  = assigned.trace
@@ -83,9 +78,7 @@ class ContractorSystem(
             )
         }
 
-        val profiles = contractorIds.mapNotNull { id ->
-            registry.allVerified().find { it.id == id }
-        }
+        val profiles = contractorIds.mapNotNull { id -> registry.getById(id) }
 
         if (profiles.isEmpty()) {
             return ContractorSystemResult.Blocked(

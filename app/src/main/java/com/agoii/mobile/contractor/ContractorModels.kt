@@ -124,3 +124,96 @@ object ContractorEventTypes {
     const val CONTRACTOR_REJECTED             = "contractor_rejected"
     const val CONTRACTOR_PROFILE_UPDATED      = "contractor_profile_updated"
 }
+
+// ─── Matching Models ──────────────────────────────────────────────────────────
+
+/**
+ * A single capability requirement used by [DeterministicMatchingEngine].
+ *
+ * @property capability    Dimension name (e.g. "constraintObedience").
+ * @property requiredLevel Minimum acceptable level for floor dimensions;
+ *                         maximum acceptable level for [driftScore] (ceiling).
+ * @property weight        Relative weight of this requirement (non-negative).
+ */
+data class ContractRequirement(
+    val capability:    String,
+    val requiredLevel: Int,
+    val weight:        Double
+) {
+    init {
+        require(weight >= 0.0) { "weight must be non-negative" }
+    }
+}
+
+/**
+ * Lightweight contract descriptor passed to [DeterministicMatchingEngine.resolve].
+ *
+ * NOTE: Distinct from [com.agoii.mobile.execution.ExecutionContract] which carries
+ * additional fields (name, position as Int) used by the execution pipeline.
+ *
+ * @property contractId      Unique contract identifier.
+ * @property reportReference Traceability reference string.
+ * @property position        Ordinal position within the execution sequence (as String).
+ */
+data class ExecutionContract(
+    val contractId:      String,
+    val reportReference: String,
+    val position:        String
+)
+
+/** Assignment resolution mode produced by [DeterministicMatchingEngine]. */
+enum class AssignmentMode { MATCHED, BLOCKED }
+
+/**
+ * Resolved contractor assignment.
+ *
+ * @property contractorIds Ordered list of assigned contractor IDs.
+ * @property mode          Resolution mode that produced this assignment.
+ */
+data class Assignment(
+    val contractorIds: List<String>,
+    val mode:          AssignmentMode
+)
+
+/**
+ * Full resolution output returned by [DeterministicMatchingEngine].
+ *
+ * @property contractId      Echoed from the input contract.
+ * @property reportReference Echoed from the input contract.
+ * @property position        Echoed from the input contract.
+ * @property assignment      The resolved assignment.
+ * @property trace           Evaluation trace for observability.
+ */
+data class TaskAssignedContract(
+    val contractId:      String,
+    val reportReference: String,
+    val position:        String,
+    val assignment:      Assignment,
+    val trace:           ResolutionTrace
+)
+
+/**
+ * A contractor that was evaluated and rejected during matching.
+ *
+ * @property contractorId Contractor identifier.
+ * @property reason       Rejection reason code.
+ */
+data class RejectedContractor(
+    val contractorId: String,
+    val reason:       String
+)
+
+/**
+ * Evaluation trace emitted by [DeterministicMatchingEngine].
+ *
+ * @property evaluated List of all evaluated contractor IDs.
+ * @property matched   IDs of contractors selected for the assignment.
+ * @property rejected  Contractors that were evaluated and rejected.
+ */
+data class ResolutionTrace(
+    val evaluated: List<String>,
+    val matched:   List<String>,
+    val rejected:  List<RejectedContractor>
+)
+
+

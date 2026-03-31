@@ -32,10 +32,12 @@ class ContractorRegistry(
     /**
      * Register a verified [profile] in the registry.
      *
+     * Only contractors with [VerificationStatus.VERIFIED] are accepted.
+     *
      * @throws IllegalArgumentException when [profile] is not VERIFIED.
      * @return The emitted [ContractorEvent] for this registration.
      */
-    fun registerVerified(profile: ContractorProfile): ContractorEvent {
+    fun register(profile: ContractorProfile): ContractorEvent {
         require(profile.status == VerificationStatus.VERIFIED) {
             "Only VERIFIED contractors may be registered. Got: ${profile.status}"
         }
@@ -43,7 +45,40 @@ class ContractorRegistry(
         return emitter.verified(profile)
     }
 
+    /**
+     * Alias for [register] retained for call-sites established prior to this contract.
+     *
+     * @throws IllegalArgumentException when [profile] is not VERIFIED.
+     * @return The emitted [ContractorEvent] for this registration.
+     */
+    fun registerVerified(profile: ContractorProfile): ContractorEvent = register(profile)
+
     // ─── Lookup ───────────────────────────────────────────────────────────────
+
+    /**
+     * Return all verified contractors.
+     *
+     * This is the canonical single-source accessor; [allVerified] is an alias
+     * retained for locked call-sites.
+     */
+    fun getAll(): List<ContractorProfile> =
+        store.values.filter { it.status == VerificationStatus.VERIFIED }
+
+    /**
+     * Return all verified contractors.
+     *
+     * Alias for [getAll] retained for call-sites established prior to this contract.
+     */
+    fun allVerified(): List<ContractorProfile> = getAll()
+
+    /**
+     * Look up a verified contractor by [id].
+     *
+     * @param id Unique contractor identifier.
+     * @return The [ContractorProfile] if present and VERIFIED, or null.
+     */
+    fun getById(id: String): ContractorProfile? =
+        store[id]?.takeIf { it.status == VerificationStatus.VERIFIED }
 
     /**
      * Look up the best contractor matching [requiredCapabilities].
@@ -69,12 +104,6 @@ class ContractorRegistry(
                 )
             )
     }
-
-    /**
-     * Return all verified contractors.
-     */
-    fun allVerified(): List<ContractorProfile> =
-        store.values.filter { it.status == VerificationStatus.VERIFIED }
 
     // ─── Profile update ───────────────────────────────────────────────────────
 
