@@ -17,7 +17,7 @@ android {
         vectorDrawables {
             useSupportLibrary true
         }
-        buildConfigField "String", "OPENAI_API_KEY", "\"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"\""
+        buildConfigField "String", "OPENAI_API_KEY", "\"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\""
     }
 
     buildTypes {
