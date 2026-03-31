@@ -110,7 +110,7 @@ fun ProjectScreen(projectId: String) {
 
         scope.launch {
             try {
-                val response = bridge.processInteractionSafe(projectId, trimmed)
+                val response = bridge.processInteraction(projectId, trimmed)
                 inputText = ""
                 sendMessage = null
                 responseMessage = response

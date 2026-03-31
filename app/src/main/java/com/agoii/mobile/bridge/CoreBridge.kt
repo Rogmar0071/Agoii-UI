@@ -66,7 +66,10 @@ class CoreBridge(context: Context) {
     // ─────────────────────────────────────────────────────────────
     // ICS ENTRY
     // ─────────────────────────────────────────────────────────────
-    fun processInteraction(projectId: String, input: String): String {
+    suspend fun processInteraction(projectId: String, input: String): String =
+        withContext(Dispatchers.IO) { processInteractionInternal(projectId, input) }
+
+    private fun processInteractionInternal(projectId: String, input: String): String {
 
         contractorRegistry.allVerified()
             .firstOrNull { it.source == "llm" }
@@ -130,9 +133,6 @@ class CoreBridge(context: Context) {
 
         return output
     }
-
-    suspend fun processInteractionSafe(projectId: String, input: String): String =
-        withContext(Dispatchers.IO) { processInteraction(projectId, input) }
 
     // ─────────────────────────────────────────────────────────────
     // UI + GOVERNANCE SURFACE
