@@ -59,63 +59,74 @@ class CoreBridge(context: Context) {
             .firstOrNull { it.source == "llm" }
             ?: throw LedgerValidationException("ICS BLOCKED: No real communication contractor available")
 
-        val events = ledger.loadEvents(projectId)
-
+        // Step 1: Write INTENT_SUBMITTED if ledger is empty
+        var events = ledger.loadEvents(projectId)
         if (events.isEmpty()) {
             ledger.appendEvent(
                 projectId,
                 EventTypes.INTENT_SUBMITTED,
                 mapOf("objective" to input)
             )
+            events = ledger.loadEvents(projectId)
         }
 
-        val icsTaskId = "$projectId-ics-${UUID.randomUUID()}"
+        // Step 2: ExecutionEntryPoint generates contracts → CONTRACTS_GENERATED
+        val alreadyHasContracts = events.any { it.type == EventTypes.CONTRACTS_GENERATED }
+        if (!alreadyHasContracts) {
+            val intentEvent = events.firstOrNull { it.type == EventTypes.INTENT_SUBMITTED }
+                ?: throw LedgerValidationException("ICS BLOCKED: No INTENT_SUBMITTED event")
 
-        val result = contractorSystem.execute(
-            taskId = icsTaskId,
-            contractId = icsTaskId,
-            reportReference = icsTaskId,
-            position = 1,
-            constraints = emptyList(),
-            expectedOutput = "Clarify intent",
-            taskPayload = mapOf("userInput" to input),
-            requiredCapabilities = listOf(
-                ContractCapability.RELIABILITY,
-                ContractCapability.CONSTRAINT_OBEDIENCE
-            ),
-            executionType = ExecutionType.COMMUNICATION,
-            targetDomain = TargetDomain.CONTRACTOR,
-            registry = contractorRegistry
-        )
-
-        val output = when (result) {
-
-            is ContractorSystemResult.Blocked ->
-                throw LedgerValidationException("ICS BLOCKED: ${result.reason}")
-
-            is ContractorSystemResult.Resolved -> {
-                val artifact = result.executionOutput.resultArtifact
-
-                val text = artifact.entries
-                    .filterNot { entry ->
-                        entry.key in ARTIFACT_METADATA_KEYS
-                    }
-                    .mapNotNull { entry ->
-                        entry.value?.toString()?.takeIf { it.isNotBlank() }
-                    }
-                    .firstOrNull()
-
-                text ?: throw LedgerValidationException("ICS BLOCKED: Empty output")
+            val authResult = executionEntryPoint.executeIntent(
+                projectId     = projectId,
+                intentPayload = intentEvent.payload
+            )
+            if (!authResult.authorized) {
+                throw LedgerValidationException("ICS BLOCKED: ${authResult.reason}")
             }
         }
 
-        ledger.appendEvent(
-            projectId,
-            EventTypes.CONTRACTS_GENERATED,
-            mapOf("contractSetId" to icsTaskId)
-        )
+        // Step 3–5: Governor drives CONTRACTS_GENERATED → TASK_STARTED,
+        // ExecutionAuthority executes the contractor, Governor closes the lifecycle.
+        var responseText: String? = null
+        var iterations = 0
 
-        return output
+        while (iterations++ < MAX_EXECUTION_CHAIN_ITERATIONS) {
+            val lastEventType = ledger.loadEvents(projectId).lastOrNull()?.type
+                ?: throw LedgerValidationException("ICS BLOCKED: Empty ledger after init")
+
+            when (lastEventType) {
+                EventTypes.TASK_STARTED -> {
+                    val execResult = executionAuthority.executeFromLedger(projectId, ledger)
+                    if (execResult is ExecutionAuthorityExecutionResult.Executed &&
+                        execResult.executionStatus == ExecutionStatus.SUCCESS) {
+                        val artifact = execResult.report.artifactStructure
+                        val text = artifact.entries
+                            .filterNot { entry -> entry.key in ARTIFACT_METADATA_KEYS }
+                            .mapNotNull { entry ->
+                                entry.value?.toString()?.takeIf { it.isNotBlank() }
+                            }
+                            .firstOrNull()
+                        if (text != null && responseText == null) responseText = text
+                    }
+                }
+                EventTypes.EXECUTION_COMPLETED -> break
+                EventTypes.TASK_FAILED, EventTypes.CONTRACT_FAILED -> break
+                else -> {
+                    val govResult = governor.runGovernor(projectId)
+                    if (govResult == Governor.GovernorResult.NO_EVENT ||
+                        govResult == Governor.GovernorResult.DRIFT ||
+                        govResult == Governor.GovernorResult.COMPLETED) break
+                }
+            }
+        }
+
+        return responseText
+            ?: run {
+                val lastEvent = ledger.loadEvents(projectId).lastOrNull()?.type ?: "EMPTY"
+                throw LedgerValidationException(
+                    "ICS BLOCKED: No response produced from execution chain (last event: $lastEvent)"
+                )
+            }
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -165,6 +176,15 @@ class CoreBridge(context: Context) {
         private val ARTIFACT_METADATA_KEYS = setOf(
             "taskId", "constraintsMet", "executionType", "targetDomain"
         )
+
+        /**
+         * Upper bound on governor + executeFromLedger iterations per interaction.
+         *
+         * A single-contract ICS cycle requires ~9 steps (CONTRACTS_GENERATED → EXECUTION_COMPLETED).
+         * 30 accommodates up to ~3 contracts with headroom for retries, preventing infinite loops
+         * in the event of an unexpected ledger state.
+         */
+        private const val MAX_EXECUTION_CHAIN_ITERATIONS = 30
 
         private val REQUIRED_CONTRACTORS = listOf(
             Triple(

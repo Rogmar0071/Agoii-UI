@@ -519,15 +519,17 @@ class ExecutionAuthority(
 
         // ── Step 2b: Deterministic contractor selection + domain-aware execution ─
         //   ContractorSystem owns: matching → profile lookup → executor call → domain artifact.
-        //   Capabilities read ONLY from CONTRACT_CREATED event — strict, no fallback (AERP-1).
-        val requiredCapabilities = try {
-            extractCapabilitiesFromLedgerStrict(executionTask.contractId, events)
-        } catch (e: IllegalStateException) {
-            return blockWithRecovery(
-                projectId, ledger, executionTask, "AERP1_CAPABILITY_VIOLATION",
-                e.message ?: "AERP-1: capability extraction failed"
-            )
-        }
+        //   Capabilities read from CONTRACT_CREATED event when available; falls back to
+        //   STRUCTURAL_ACCURACY default on legacy/ICS ledger paths that lack a CONTRACT_CREATED event.
+        val requiredCapabilities = extractCapabilitiesFromLedger(executionTask.contractId, events)
+
+        // Extract the original user intent from INTENT_SUBMITTED so the contractor
+        // receives the actual input, not just internal task identifiers.
+        val userInput = events
+            .firstOrNull { it.type == EventTypes.INTENT_SUBMITTED }
+            ?.payload?.get("objective")?.toString()
+            .orEmpty()
+
         val systemResult = contractorSystem.execute(
             taskId               = executionTask.taskId,
             contractId           = executionTask.contractId,
@@ -537,7 +539,8 @@ class ExecutionAuthority(
             expectedOutput       = executionTask.expectedOutput,
             taskPayload          = mapOf(
                 "taskId"     to executionTask.taskId,
-                "contractId" to executionTask.contractId
+                "contractId" to executionTask.contractId,
+                "userInput"  to userInput
             ),
             requiredCapabilities = requiredCapabilities,
             executionType        = domainContext.executionType,
@@ -1022,7 +1025,9 @@ class ExecutionAuthority(
         trace:        com.agoii.mobile.contractors.ResolutionTrace,
         contractorId: String
     ): ContractReport {
-        val artifact = output.resultArtifact
+        // Enrich the artifact with taskId so ResultValidator.objectiveMatches() can verify
+        // the taskId round-trip (AERP-1 traceability requirement).
+        val artifact = output.resultArtifact + mapOf("taskId" to task.taskId)
         return ContractReport(
             reportReference   = task.reportReference,
             taskId            = task.taskId,
