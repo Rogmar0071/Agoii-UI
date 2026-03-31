@@ -62,25 +62,32 @@ class UniversalContractReport {
         trace:           ResolutionTrace
     ): ContractReport {
         val artifact = executionOutput.resultArtifact
+        val steps    = listOf(
+            "UCS1_VALIDATED",
+            "UCS1_NORMALIZED",
+            "UCS1_ENFORCED",
+            "UCS1_ROUTED",
+            "MATCHING_RESOLVED",
+            "EXECUTION_INVOKED",
+            "ARTIFACT_PRODUCED"
+        )
         return ContractReport(
-            reportReference   = contract.reportReference,
-            taskId            = taskId,
-            contractId        = contract.contractId,
-            contractorId      = contractorId,
-            typeInventory     = artifact.keys.toList(),
-            executionSteps    = UCS1_PIPELINE_STEPS,
-            artifactStructure = artifact,
-            errorConditions   = listOfNotNull(executionOutput.error),
-            traceStructure    = mapOf(
-                "taskId"          to taskId,
-                "contractId"      to contract.contractId,
-                "contractClass"   to contract.contractClass.name,
-                "executionType"   to contract.executionType.name,
-                "targetDomain"    to contract.targetDomain.name,
-                "evaluated"       to trace.evaluated,
-                "matched"         to trace.matched,
-                "executionStatus" to executionOutput.status.name
-            )
+            reportReference    = contract.reportReference,
+            taskId             = taskId,
+            contractId         = contract.contractId,
+            contractorId       = contractorId,
+            typeInventory      = artifact.keys.toList(),
+            functionSignatures = listOf(contract.contractId),
+            logicFlow          = steps,
+            errorConditions    = listOfNotNull(executionOutput.error),
+            traceStructure     = trace,
+            rawOutput          = artifact["response"]?.toString() ?: executionOutput.error ?: "",
+            normalizedOutput   = if (executionOutput.error == null) artifact["response"]?.toString() else null,
+            exitCode           = if (executionOutput.error == null) 0 else 1,
+            failureSurface     = listOfNotNull(executionOutput.error),
+            policyViolations   = emptyList(),
+            executionSteps     = steps,
+            artifactStructure  = artifact
         )
     }
 
@@ -101,27 +108,5 @@ class UniversalContractReport {
         validatedPaths     = report.executionSteps.toList()
     )
 
-    companion object {
-        /**
-         * UCS-1 pipeline stages recorded in every AERP-1 report (A3).
-         *
-         * These steps reflect the full Surface pipeline executed before and during execution:
-         *  1. UCS1_VALIDATED   — Surface 2: structural + semantic validation passed.
-         *  2. UCS1_NORMALIZED  — Surface 3: canonical form produced.
-         *  3. UCS1_ENFORCED    — Surface 6: enforcement gate passed.
-         *  4. UCS1_ROUTED      — Surface 4: execution route determined.
-         *  5. MATCHING_RESOLVED — contractor matched deterministically.
-         *  6. EXECUTION_INVOKED — contractor executor invoked.
-         *  7. ARTIFACT_PRODUCED — result artifact captured from contractor.
-         */
-        private val UCS1_PIPELINE_STEPS = listOf(
-            "UCS1_VALIDATED",
-            "UCS1_NORMALIZED",
-            "UCS1_ENFORCED",
-            "UCS1_ROUTED",
-            "MATCHING_RESOLVED",
-            "EXECUTION_INVOKED",
-            "ARTIFACT_PRODUCED"
-        )
-    }
+    companion object
 }

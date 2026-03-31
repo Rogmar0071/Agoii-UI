@@ -36,6 +36,7 @@ import com.agoii.mobile.contractor.ContractorInitialization
 import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.contractor.ContractorSystem
 import com.agoii.mobile.contractor.ContractorSystemResult
+import com.agoii.mobile.contractor.ResolutionTrace
 import com.agoii.mobile.contracts.ContractCapability
 import com.agoii.mobile.contracts.ContractEnforcementEngine
 import com.agoii.mobile.contracts.ContractEnforcementResult
@@ -98,7 +99,7 @@ data class ExecutionTask(
 )
 
 /**
- * Structured contract report produced after execution (AERP-1).
+ * Structured contract report produced after execution (AERP-1 / CONVERGENCE_HARDENING_V1).
  * Validation operates only against this report, not against raw execution output.
  *
  * Mandatory fields (AERP-1 hard enforcement):
@@ -107,19 +108,40 @@ data class ExecutionTask(
  *  - contractId
  *  - contractorId
  *  - typeInventory
+ *  - functionSignatures
+ *  - logicFlow
+ *  - errorConditions
+ *  - traceStructure (strongly typed — ResolutionTrace; NO generic Map)
  *  - executionSteps
  *  - artifactStructure
  */
 data class ContractReport(
-    val reportReference:   String,
-    val taskId:            String,
-    val contractId:        String,
-    val contractorId:      String,
-    val typeInventory:     List<String>,
-    val executionSteps:    List<String>,
-    val artifactStructure: Map<String, Any>,
-    val errorConditions:   List<String>,
-    val traceStructure:    Map<String, Any>
+    val reportReference:    String,
+    val taskId:             String,
+    val contractId:         String,
+    val contractorId:       String,
+
+    // AERP-1 REQUIRED SURFACES
+    val typeInventory:      List<String>,
+    val functionSignatures: List<String>,
+    val logicFlow:          List<String>,
+    val errorConditions:    List<String>,
+
+    // MUST BE EXPLICIT — NO GENERIC MAP
+    val traceStructure:     ResolutionTrace,
+
+    // EXECUTION OUTPUT
+    val rawOutput:          String,
+    val normalizedOutput:   String?,
+    val exitCode:           Int,
+
+    // VALIDATION SURFACE
+    val failureSurface:     List<String>,
+    val policyViolations:   List<String>,
+
+    // LEGACY AERP-1 FIELDS (retained for downstream pipeline compatibility)
+    val executionSteps:     List<String>,
+    val artifactStructure:  Map<String, Any>
 )
 
 /**
@@ -587,6 +609,9 @@ class ExecutionAuthority(
 
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
         val contractReport = generateContractReport(executionTask, executionOutput, resolved.trace, contractorId)
+
+        // ── Step 5-CHV1: Enforce report completeness (CONVERGENCE_HARDENING_V1) ─
+        validateReportCompleteness(contractReport)
 
         // ── Step 5a: Freeze report — immutable snapshot (AERP-1 / RRIL-1) ───
         val frozenReport = contractReport.copy()
@@ -1098,31 +1123,57 @@ class ExecutionAuthority(
         return ExecutionAuthorityExecutionResult.BlockedWithRecovery(reason, listOf(recovery))
     }
 
-    /** Generate [ContractReport] from execution output (AERP-1 compliance). */
+    /** Generate [ContractReport] from execution output (AERP-1 / CONVERGENCE_HARDENING_V1). */
     private fun generateContractReport(
         task:         ExecutionTask,
         output:       ContractorExecutionOutput,
         trace:        com.agoii.mobile.contractors.ResolutionTrace,
         contractorId: String
     ): ContractReport {
-        val artifact = output.resultArtifact + mapOf("taskId" to task.taskId)
+        val artifact     = output.resultArtifact + mapOf("taskId" to task.taskId)
+        val steps        = listOf("MATCHING_RESOLVED", "EXECUTION_INVOKED", "ARTIFACT_PRODUCED")
+        val rawOut       = output.resultArtifact["response"]?.toString() ?: output.error ?: ""
+        val exitCodeVal  = if (output.status == ExecutionStatus.SUCCESS) 0 else 1
         return ContractReport(
-            reportReference   = task.reportReference,
-            taskId            = task.taskId,
-            contractId        = task.contractId,
-            contractorId      = contractorId,
-            typeInventory     = artifact.keys.toList(),
-            executionSteps    = listOf("MATCHING_RESOLVED", "EXECUTION_INVOKED", "ARTIFACT_PRODUCED"),
-            artifactStructure = artifact,
-            errorConditions   = listOfNotNull(output.error),
-            traceStructure    = mapOf(
-                "taskId"          to task.taskId,
-                "contractId"      to task.contractId,
-                "evaluated"       to trace.evaluated,
-                "matched"         to trace.matched,
-                "executionStatus" to output.status.name
-            )
+            reportReference    = task.reportReference,
+            taskId             = task.taskId,
+            contractId         = task.contractId,
+            contractorId       = contractorId,
+            typeInventory      = artifact.keys.toList(),
+            functionSignatures = task.requirements.map { it.toString() }.ifEmpty { listOf(task.contractId) },
+            logicFlow          = steps,
+            errorConditions    = listOfNotNull(output.error),
+            traceStructure     = trace,
+            rawOutput          = rawOut,
+            normalizedOutput   = if (output.status == ExecutionStatus.SUCCESS) rawOut else null,
+            exitCode           = exitCodeVal,
+            failureSurface     = listOfNotNull(output.error),
+            policyViolations   = emptyList(),
+            executionSteps     = steps,
+            artifactStructure  = artifact
         )
+    }
+
+    /**
+     * Enforce AERP-1 report completeness (CONVERGENCE_HARDENING_V1).
+     *
+     * All four AERP-1 required surfaces MUST be non-empty.
+     * Throws [IllegalArgumentException] if any surface is missing, blocking execution
+     * before validation proceeds.
+     */
+    private fun validateReportCompleteness(report: ContractReport) {
+        require(report.typeInventory.isNotEmpty()) {
+            "AERP-1 VIOLATION: typeInventory is empty — report_reference=${report.reportReference}"
+        }
+        require(report.functionSignatures.isNotEmpty()) {
+            "AERP-1 VIOLATION: functionSignatures is empty — report_reference=${report.reportReference}"
+        }
+        require(report.logicFlow.isNotEmpty()) {
+            "AERP-1 VIOLATION: logicFlow is empty — report_reference=${report.reportReference}"
+        }
+        require(report.errorConditions.isNotEmpty() || report.exitCode == 0) {
+            "AERP-1 VIOLATION: errorConditions is empty on non-zero exitCode — report_reference=${report.reportReference}"
+        }
     }
 
     /**
