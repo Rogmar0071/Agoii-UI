@@ -1,0 +1,17 @@
+name: Copilot Recovery Execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        required: true
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Placeholder
+        run: |
+          echo "Recovery contract issued."
+          echo "Copilot must be triggered manually or via API."
