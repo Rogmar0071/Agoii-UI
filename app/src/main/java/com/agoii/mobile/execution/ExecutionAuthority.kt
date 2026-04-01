@@ -40,6 +40,7 @@ import com.agoii.mobile.contractor.ResolutionTrace
 import com.agoii.mobile.contracts.ContractCapability
 import com.agoii.mobile.contracts.ContractEnforcementEngine
 import com.agoii.mobile.contracts.ContractEnforcementResult
+import com.agoii.mobile.contracts.ContractReport
 import com.agoii.mobile.contracts.ContractValidationResult
 import com.agoii.mobile.contracts.ContractViolation
 import com.agoii.mobile.contracts.ExecutionType
@@ -96,52 +97,6 @@ data class ExecutionTask(
     val constraints:     List<String>,
     val expectedOutput:  String,
     val reportReference: String
-)
-
-/**
- * Structured contract report produced after execution (AERP-1 / CONVERGENCE_HARDENING_V1).
- * Validation operates only against this report, not against raw execution output.
- *
- * Mandatory fields (AERP-1 hard enforcement):
- *  - reportReference  (RRID)
- *  - taskId
- *  - contractId
- *  - contractorId
- *  - typeInventory
- *  - functionSignatures
- *  - logicFlow
- *  - errorConditions
- *  - traceStructure (strongly typed — ResolutionTrace; NO generic Map)
- *  - executionSteps
- *  - artifactStructure
- */
-data class ContractReport(
-    val reportReference:    String,
-    val taskId:             String,
-    val contractId:         String,
-    val contractorId:       String,
-
-    // AERP-1 REQUIRED SURFACES
-    val typeInventory:      List<String>,
-    val functionSignatures: List<String>,
-    val logicFlow:          List<String>,
-    val errorConditions:    List<String>,
-
-    // MUST BE EXPLICIT — NO GENERIC MAP
-    val traceStructure:     ResolutionTrace,
-
-    // EXECUTION OUTPUT
-    val rawOutput:          String,
-    val normalizedOutput:   String?,
-    val exitCode:           Int,
-
-    // VALIDATION SURFACE
-    val failureSurface:     List<String>,
-    val policyViolations:   List<String>,
-
-    // LEGACY AERP-1 FIELDS (retained for downstream pipeline compatibility)
-    val executionSteps:     List<String>,
-    val artifactStructure:  Map<String, Any>
 )
 
 /**
@@ -645,10 +600,10 @@ class ExecutionAuthority(
             assignmentStatus     = TaskAssignmentStatus.ASSIGNED
         )
 
-        // Wrap artifact through frozen report for AERP-1 compliance: validation is against frozen snapshot
+        // Wrap artifact for AERP-1 compliance: validation is against execution output
         val reportBackedOutput = ContractorExecutionOutput(
             taskId         = executionOutput.taskId,
-            resultArtifact = frozenReport.artifactStructure,
+            resultArtifact = executionOutput.resultArtifact,
             status         = executionOutput.status,
             error          = executionOutput.error
         )
@@ -846,9 +801,8 @@ class ExecutionAuthority(
     fun buildAnchorState(frozenReport: ContractReport): AnchorState = AnchorState(
         reportReference    = frozenReport.reportReference,
         validatedTypes     = frozenReport.typeInventory.toList(),
-        validatedStructure = frozenReport.artifactStructure.keys.toSet(),
-        validatedPaths     = frozenReport.executionSteps.toList(),
-        contractId         = frozenReport.contractId,
+        validatedStructure = frozenReport.typeInventory.toSet(),
+        validatedPaths     = frozenReport.logicFlow.toList(),
         validatedReport    = frozenReport
     )
 
@@ -957,7 +911,7 @@ class ExecutionAuthority(
         for (field in mutation.keys) {
             enforceMutationBoundary(anchor, field)
         }
-        val base = anchor.validatedReport?.artifactStructure ?: emptyMap()
+        val base = emptyMap<String, Any>()
         return base + mutation
     }
 
@@ -1130,16 +1084,12 @@ class ExecutionAuthority(
         trace:        com.agoii.mobile.contractors.ResolutionTrace,
         contractorId: String
     ): ContractReport {
-        val artifact     = output.resultArtifact + mapOf("taskId" to task.taskId)
-        val steps        = listOf("MATCHING_RESOLVED", "EXECUTION_INVOKED", "ARTIFACT_PRODUCED")
-        val rawOut       = output.resultArtifact["response"]?.toString() ?: output.error ?: ""
-        val exitCodeVal  = if (output.status == ExecutionStatus.SUCCESS) 0 else 1
+        val steps       = listOf("MATCHING_RESOLVED", "EXECUTION_INVOKED", "ARTIFACT_PRODUCED")
+        val rawOut      = output.resultArtifact["response"]?.toString() ?: output.error ?: ""
+        val exitCodeVal = if (output.status == ExecutionStatus.SUCCESS) 0 else 1
         return ContractReport(
             reportReference    = task.reportReference,
-            taskId             = task.taskId,
-            contractId         = task.contractId,
-            contractorId       = contractorId,
-            typeInventory      = artifact.keys.toList(),
+            typeInventory      = output.resultArtifact.keys.toList(),
             functionSignatures = task.requirements.map { it.toString() }.ifEmpty { listOf(task.contractId) },
             logicFlow          = steps,
             errorConditions    = listOfNotNull(output.error),
@@ -1148,9 +1098,7 @@ class ExecutionAuthority(
             normalizedOutput   = if (output.status == ExecutionStatus.SUCCESS) rawOut else null,
             exitCode           = exitCodeVal,
             failureSurface     = listOfNotNull(output.error),
-            policyViolations   = emptyList(),
-            executionSteps     = steps,
-            artifactStructure  = artifact
+            policyViolations   = emptyList()
         )
     }
 
@@ -1171,7 +1119,7 @@ class ExecutionAuthority(
         require(report.logicFlow.isNotEmpty()) {
             "AERP-1 VIOLATION: logicFlow is empty — report_reference=${report.reportReference}"
         }
-        require(report.errorConditions.isNotEmpty() || report.exitCode == 0) {
+        require(report.exitCode == 0 || report.errorConditions.isNotEmpty()) {
             "AERP-1 VIOLATION: errorConditions is empty on non-zero exitCode — report_reference=${report.reportReference}"
         }
     }
@@ -1185,8 +1133,8 @@ class ExecutionAuthority(
     private fun extractAnchorState(report: ContractReport): AnchorState = AnchorState(
         reportReference    = report.reportReference,
         validatedTypes     = report.typeInventory.toList(),
-        validatedStructure = report.artifactStructure.keys.toSet(),
-        validatedPaths     = report.executionSteps.toList()
+        validatedStructure = report.typeInventory.toSet(),
+        validatedPaths     = report.logicFlow.toList()
     )
 
     /** Issue [ExecutionRecoveryContract] (RCF-1) for a SINGLE violation surface. */
