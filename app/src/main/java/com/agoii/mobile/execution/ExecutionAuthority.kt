@@ -262,6 +262,19 @@ sealed class UniversalIngestionResult {
 
 // ---------- DELTA EXECUTION (DEE-1) ----------
 
+/**
+ * Restricted input for delta execution (CLC-1 Part 2).
+ *
+ * Contractor input is scoped exclusively to the violation surface. Full contract
+ * re-execution is BLOCKED when running in DELTA mode — only the violationField
+ * may be corrected against the AnchorState.
+ */
+data class DeltaExecutionInput(
+    val violationField:       String,
+    val correctionDirective:  String,
+    val anchorState:          AnchorState
+)
+
 private enum class ExecutionMode {
     NORMAL,
     DELTA
@@ -311,6 +324,12 @@ class ExecutionAuthority(
          * NO infinite loops are permitted (CONVERGENCE LOOP CONTROL — RCF-1).
          */
         const val MAX_RETRY = 3
+
+        /**
+         * Maximum delta convergence iterations per report reference (CLC-1 Part 6).
+         * When exceeded, a NON_CONVERGENT recovery contract is issued and execution halts.
+         */
+        const val MAX_DELTA = 3
     }
 
     // ═══════════════════════════════════════════════════════════════════════

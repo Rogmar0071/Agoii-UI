@@ -106,6 +106,12 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.TASK_STARTED && to == EventTypes.TASK_FAILED) return true
             // ExecutionAuthority: recovery contract written immediately after TASK_EXECUTED (FAILURE)
             if (from == EventTypes.TASK_EXECUTED && to == EventTypes.RECOVERY_CONTRACT) return true
+            // CLC-1 delta loop: Governor responds to recovery by creating a delta contract
+            if (from == EventTypes.RECOVERY_CONTRACT && to == EventTypes.DELTA_CONTRACT_CREATED) return true
+            // CLC-1 delta loop: Governor emits TASK_ASSIGNED from DELTA_CONTRACT_CREATED
+            if (from == EventTypes.DELTA_CONTRACT_CREATED && to == EventTypes.TASK_ASSIGNED) return true
+            // Also allow RECOVERY_CONTRACT directly after TASK_FAILED (for pre-EA recovery paths)
+            if (from == EventTypes.TASK_FAILED && to == EventTypes.RECOVERY_CONTRACT) return true
             // Governor: task lifecycle — validation of completed task
             if (from == EventTypes.TASK_COMPLETED && to == EventTypes.TASK_VALIDATED) return true
             // Governor: task lifecycle — validation failure

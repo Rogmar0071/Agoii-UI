@@ -188,6 +188,7 @@ class ValidationLayer {
             EventTypes.TASK_COMPLETED      -> checkTaskCompleted(projectId, payload, state)
             EventTypes.TASK_VALIDATED      -> checkTaskValidated(projectId, payload, state)
             EventTypes.RECOVERY_CONTRACT   -> checkRecoveryContract(projectId, payload)
+            EventTypes.DELTA_CONTRACT_CREATED -> checkDeltaContractCreated(projectId, payload)
             EventTypes.CONTRACT_COMPLETED  -> checkContractCompleted(projectId, payload, state)
             EventTypes.EXECUTION_COMPLETED -> checkExecutionCompleted(projectId, payload, state)
             EventTypes.ASSEMBLY_STARTED    -> checkAssemblyStarted(projectId, payload)
@@ -444,14 +445,43 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "RECOVERY_CONTRACT missing or blank 'failureClass' in '$projectId'"
             )
-        payload["violationSurface"]?.toString()?.takeIf { it.isNotBlank() }
+        payload["violationField"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw LedgerValidationException(
-                "RECOVERY_CONTRACT missing or blank 'violationSurface' in '$projectId'"
+                "RECOVERY_CONTRACT missing or blank 'violationField' in '$projectId'"
             )
         payload["artifactReference"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw LedgerValidationException(
                 "RECOVERY_CONTRACT missing or blank 'artifactReference' in '$projectId'"
             )
+    }
+
+    private fun checkDeltaContractCreated(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.DELTA_CONTRACT_CREATED, payload, DELTA_CONTRACT_CREATED_KEYS)
+        payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "DELTA_CONTRACT_CREATED missing or blank 'contractId' in '$projectId'"
+            )
+        payload["violationField"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "DELTA_CONTRACT_CREATED missing or blank 'violationField' in '$projectId'"
+            )
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "DELTA_CONTRACT_CREATED missing or blank 'report_reference' in '$projectId'"
+            )
+        val countRaw = payload["delta_iteration_count"]
+            ?: throw LedgerValidationException(
+                "DELTA_CONTRACT_CREATED missing 'delta_iteration_count' in '$projectId'"
+            )
+        val count = toInt(countRaw)
+            ?: throw LedgerValidationException(
+                "DELTA_CONTRACT_CREATED 'delta_iteration_count' must be an integer in '$projectId'"
+            )
+        if (count < 1) {
+            throw LedgerValidationException(
+                "DELTA_CONTRACT_CREATED 'delta_iteration_count' must be >= 1, got $count in '$projectId'"
+            )
+        }
     }
 
     private fun checkContractCompleted(
@@ -856,8 +886,11 @@ class ValidationLayer {
         private val RECOVERY_CONTRACT_KEYS  = setOf(
             "contractId", "taskId", "contractType", "executionPosition",
             "report_reference",
-            "failureClass", "violationSurface", "correctionDirective",
+            "failureClass", "violationField", "correctionDirective",
             "successCondition", "artifactReference"
+        )
+        private val DELTA_CONTRACT_CREATED_KEYS = setOf(
+            "contractId", "violationField", "report_reference", "delta_iteration_count"
         )
         private val TASK_ID_ONLY            = setOf("taskId")
         private val TASK_WITH_POSITION_KEYS = setOf("taskId", "position", "total")
