@@ -41,6 +41,7 @@ import com.agoii.mobile.contracts.ContractCapability
 import com.agoii.mobile.contracts.ContractEnforcementEngine
 import com.agoii.mobile.contracts.ContractEnforcementResult
 import com.agoii.mobile.contracts.ContractReport
+import com.agoii.mobile.contracts.ExecutionRecoveryContract as ContractsExecutionRecoveryContract
 import com.agoii.mobile.contracts.FailureClass
 import com.agoii.mobile.contracts.Violation
 import com.agoii.mobile.contracts.ContractValidationResult
@@ -180,7 +181,7 @@ sealed class ExecutionAuthorityExecutionResult {
      */
     data class BlockedWithRecovery(
         val reason:            String,
-        val recoveryContracts: List<ExecutionRecoveryContract>,
+        val recoveryContracts: List<ContractsExecutionRecoveryContract>,
         val violations:        List<Violation> = emptyList(),
         val reportReference:   String = ""
     ) : ExecutionAuthorityExecutionResult()
@@ -569,12 +570,16 @@ class ExecutionAuthority(
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
         val contractReport = generateContractReport(executionTask, executionOutput, resolved.trace, contractorId)
 
-        // ── Step 5-CHV1: Enforce report completeness (CONVERGENCE_HARDENING_V1) ─
+        // ── Step 5-CHV1: Enforce report completeness (CONVERGENCE_HARDENING_V1 / FSE-2) ─
         val reportViolations = validateReportCompleteness(contractReport, executionTask.contractId)
         if (reportViolations.isNotEmpty()) {
+            val recoveryContracts = buildRecoveryContracts(reportViolations, contractReport)
+            require(recoveryContracts.size == reportViolations.size) {
+                "RCF-1 VIOLATION: Recovery contracts must map 1:1 with violations"
+            }
             return ExecutionAuthorityExecutionResult.BlockedWithRecovery(
-                reason = "REPORT_COMPLETENESS_VIOLATION",
-                recoveryContracts = emptyList(),
+                reason = "REPORT_VALIDATION_FAILED",
+                recoveryContracts = recoveryContracts,
                 violations = reportViolations,
                 reportReference = contractReport.reportReference
             )
@@ -1086,7 +1091,7 @@ class ExecutionAuthority(
         val recovery = issueRecoveryContract(task, anchorState, failureClass, reason)
         // VIOLATION 3: RecoveryContract MUST be ledger-materialized (RCF-1)
         writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
-        return ExecutionAuthorityExecutionResult.BlockedWithRecovery(reason, listOf(recovery))
+        return ExecutionAuthorityExecutionResult.BlockedWithRecovery(reason, emptyList())
     }
 
     /** Generate [ContractReport] from execution output (AERP-1 / CONVERGENCE_HARDENING_V1). */
@@ -1266,7 +1271,41 @@ class ExecutionAuthority(
     }
 
     /**
-     * Extract an immutable [AnchorState] from a [ContractReport] (AERP-1).
+     * Transform a list of [Violation] objects into deterministic [ContractsExecutionRecoveryContract]
+     * instances (FSE-2 / RCF-1).
+     *
+     * One violation → one recovery contract. The anchor state is derived from the frozen
+     * [ContractReport] at the moment of validation and embedded as-is. The result is
+     * deterministically ordered by violationField ASC, then failureClass ordinal ASC.
+     */
+    private fun buildRecoveryContracts(
+        violations: List<Violation>,
+        report: ContractReport
+    ): List<ContractsExecutionRecoveryContract> {
+        val anchorState = AnchorState(
+            reportReference    = report.reportReference,
+            validatedTypes     = report.typeInventory,
+            validatedStructure = report.typeInventory.toSet(),
+            validatedPaths     = report.logicFlow,
+            validatedReport    = report
+        )
+        return violations.map { violation ->
+            ContractsExecutionRecoveryContract(
+                reportReference     = violation.reportReference,
+                contractId          = "RCF_${violation.contractId}_${violation.fieldPath.replace(".", "_")}",
+                failureClass        = violation.failureClass,
+                violationField      = violation.fieldPath,
+                correctionDirective = violation.correctionDirective,
+                anchorState         = anchorState,
+                successCondition    = "FIELD_CORRECTED:${violation.fieldPath}"
+            )
+        }.sortedWith(
+            compareBy<ContractsExecutionRecoveryContract> { it.violationField }
+                .thenBy { it.failureClass.ordinal }
+        )
+    }
+
+
      *
      * The AnchorState is captured at the moment validation begins and MUST NOT be modified
      * thereafter. It is embedded in every [ExecutionRecoveryContract] issued for this attempt.
