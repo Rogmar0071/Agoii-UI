@@ -241,18 +241,43 @@ class Governor(
             EventTypes.TASK_FAILED -> null
 
             // Governor-only recovery flow: ASSEMBLY_FAILED → RECOVERY_CONTRACT (CLC-1 §4.2)
-            // Governor reads the primary failure from the ASSEMBLY_FAILED payload and issues
-            // a RECOVERY_CONTRACT, driving the recovery spine deterministically.
+            // FIX 2/3: Reads ALL failureReasons from the list payload; emits RECOVERY_CONTRACT
+            // for the FIRST unprocessed failure (one whose contractId has no matching
+            // RECOVERY_CONTRACT yet for this report_reference). Caller must invoke Governor
+            // repeatedly to drain all pending failures.
+            // FIX 4: lockedSections from ASSEMBLY_FAILED are forwarded in each RECOVERY_CONTRACT.
             // NO CoreBridge or implicit orchestration involved.
             EventTypes.ASSEMBLY_FAILED -> {
-                val contractId = last.payload["failureReasonContractId"]?.toString()
-                    ?.takeIf { it.isNotBlank() } ?: return null
-                val failureClass = last.payload["failureType"]?.toString()
-                    ?.takeIf { it.isNotBlank() } ?: return null
-                val violationField = last.payload["violatedInvariant"]?.toString()
-                    ?.takeIf { it.isNotBlank() } ?: return null
                 val reportReference = last.payload["report_reference"]?.toString()
                     ?.takeIf { it.isNotBlank() } ?: return null
+
+                @Suppress("UNCHECKED_CAST")
+                val failureReasonsList = last.payload["failureReasons"] as? List<*> ?: return null
+
+                val lockedSections = last.payload["lockedSections"] ?: emptyList<String>()
+
+                // Determine which contractIds already have a RECOVERY_CONTRACT in this ledger
+                val recoveredContractIds = events
+                    .filter { it.type == EventTypes.RECOVERY_CONTRACT &&
+                              it.payload["report_reference"]?.toString() == reportReference }
+                    .mapNotNull { it.payload["contractId"]?.toString() }
+                    .toSet()
+
+                // Find the first failureReason not yet recovered
+                val nextFailure = failureReasonsList
+                    .filterIsInstance<Map<*, *>>()
+                    .firstOrNull { fr ->
+                        val cid = fr["contractId"]?.toString() ?: ""
+                        cid.isNotBlank() && cid !in recoveredContractIds
+                    } ?: return null
+
+                val contractId     = nextFailure["contractId"]?.toString()
+                    ?.takeIf { it.isNotBlank() } ?: return null
+                val failureClass   = nextFailure["failureType"]?.toString()
+                    ?.takeIf { it.isNotBlank() } ?: return null
+                val violationField = nextFailure["violatedInvariant"]?.toString()
+                    ?.takeIf { it.isNotBlank() } ?: return null
+
                 Event(
                     type    = EventTypes.RECOVERY_CONTRACT,
                     payload = mapOf(
@@ -265,7 +290,8 @@ class Governor(
                         "correctionDirective" to "RECOVER_ASSEMBLY_FAILURE",
                         "successCondition"    to "ASSEMBLY_COMPLETED",
                         "artifactReference"   to "assembly_failed_$contractId",
-                        "irs_violation_type"  to failureClass
+                        "irs_violation_type"  to failureClass,
+                        "lockedSections"      to lockedSections
                     )
                 )
             }

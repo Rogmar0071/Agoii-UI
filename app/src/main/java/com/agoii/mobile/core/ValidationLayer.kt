@@ -664,18 +664,39 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "ASSEMBLY_FAILED missing or blank 'contractSetId' in '$projectId'"
             )
-        payload["failureReasonContractId"]?.toString()?.takeIf { it.isNotBlank() }
+        val rawReasons = payload["failureReasons"]
             ?: throw LedgerValidationException(
-                "ASSEMBLY_FAILED missing or blank 'failureReasonContractId' in '$projectId'"
+                "ASSEMBLY_FAILED missing 'failureReasons' in '$projectId'"
             )
-        payload["failureType"]?.toString()?.takeIf { it.isNotBlank() }
+        @Suppress("UNCHECKED_CAST")
+        val reasonsList = rawReasons as? List<*>
             ?: throw LedgerValidationException(
-                "ASSEMBLY_FAILED missing or blank 'failureType' in '$projectId'"
+                "ASSEMBLY_FAILED 'failureReasons' must be a List in '$projectId'"
             )
-        payload["violatedInvariant"]?.toString()?.takeIf { it.isNotBlank() }
-            ?: throw LedgerValidationException(
-                "ASSEMBLY_FAILED missing or blank 'violatedInvariant' in '$projectId'"
+        if (reasonsList.isEmpty()) {
+            throw LedgerValidationException(
+                "ASSEMBLY_FAILED 'failureReasons' must be non-empty in '$projectId'"
             )
+        }
+        for ((index, reason) in reasonsList.withIndex()) {
+            @Suppress("UNCHECKED_CAST")
+            val r = reason as? Map<*, *>
+                ?: throw LedgerValidationException(
+                    "ASSEMBLY_FAILED 'failureReasons[$index]' must be a Map in '$projectId'"
+                )
+            r["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+                ?: throw LedgerValidationException(
+                    "ASSEMBLY_FAILED 'failureReasons[$index].contractId' missing or blank in '$projectId'"
+                )
+            r["failureType"]?.toString()?.takeIf { it.isNotBlank() }
+                ?: throw LedgerValidationException(
+                    "ASSEMBLY_FAILED 'failureReasons[$index].failureType' missing or blank in '$projectId'"
+                )
+            r["violatedInvariant"]?.toString()?.takeIf { it.isNotBlank() }
+                ?: throw LedgerValidationException(
+                    "ASSEMBLY_FAILED 'failureReasons[$index].violatedInvariant' missing or blank in '$projectId'"
+                )
+        }
     }
 
     private fun checkAssemblyValidated(projectId: String, state: ValidationState) {
@@ -913,7 +934,7 @@ class ValidationLayer {
             "report_reference",
             "failureClass", "violationField", "correctionDirective",
             "successCondition", "artifactReference",
-            "irs_violation_type"
+            "irs_violation_type", "lockedSections"
         )
         private val DELTA_CONTRACT_CREATED_KEYS = setOf(
             "contractId", "violationField", "report_reference", "delta_iteration_count"
@@ -929,7 +950,7 @@ class ValidationLayer {
         )
         private val ASSEMBLY_FAILED_KEYS     = setOf(
             "report_reference", "contractSetId",
-            "failureReasonContractId", "failureType", "violatedInvariant",
+            "failureReasons",   // List<Map> — each with contractId, failureType, violatedInvariant
             "lockedSections", "violationSurface"
         )
         private val ICS_STARTED_KEYS         = setOf("report_reference", "finalArtifactReference", "taskId")

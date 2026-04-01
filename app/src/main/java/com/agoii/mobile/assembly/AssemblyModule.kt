@@ -150,6 +150,20 @@ class AssemblyModule {
                     "present after ASSEMBLY_FAILED for RRID=$reportReference"
                 )
             }
+            // FIX 5: RRID continuity — latest CONTRACTS_GENERATED RRID must match ASSEMBLY_FAILED RRID
+            val latestContractsGenRrid = events
+                .lastOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
+                ?.let { it.payload["report_reference"]?.toString() ?: it.payload["report_id"]?.toString() }
+                ?: ""
+            val failureRrid = previousFailure.payload["report_reference"]?.toString() ?: ""
+            if (latestContractsGenRrid.isNotBlank() && failureRrid.isNotBlank() &&
+                latestContractsGenRrid != failureRrid) {
+                throw IllegalStateException(
+                    "ASSEMBLY_INVARIANT_VIOLATION: RE_ENTRY_BLOCKED — RRID_CONTINUITY_VIOLATION: " +
+                    "latest CONTRACTS_GENERATED.report_reference='$latestContractsGenRrid' " +
+                    "!= ASSEMBLY_FAILED.report_reference='$failureRrid'"
+                )
+            }
         }
 
         // ── Step 4: Pure projection — collect ALL CONTRACT_COMPLETED events ──
@@ -228,10 +242,10 @@ class AssemblyModule {
                 )
             }
             if (unexpectedContracts.isEmpty() && missingPositions.isNotEmpty()) {
-                // Positions are valid integers but set is incomplete — flag a sentinel entry
+                // Positions are valid integers but set is incomplete — sentinel entry (no real contractId)
                 failureReasons.add(
                     AssemblyFailureReason(
-                        contractId        = "POSITION_GAP",
+                        contractId        = "_SENTINEL_POSITION_GAP",
                         failureType       = "POSITION_VIOLATION",
                         violatedInvariant = "position set $observedPositionSet missing $missingPositions " +
                                             "from expected [1..$totalContracts]"
@@ -255,22 +269,14 @@ class AssemblyModule {
         }
 
         // ── Step 7: Build traceMap (contractId → artifactReference) ──────────
-        // Only non-blank artifactReferences are entered; missing entries signal
-        // TRACE_INCOMPLETE. Trace completeness: every SUCCESS TASK_EXECUTED must
-        // have a non-blank artifactReference tracked in the traceMap (AERP-1 §3 / spec §7.2).
+        // FIX 1: Full projection — ALL SUCCESS TASK_EXECUTED entries are included,
+        // even those with blank artifactReference. No filtering.
+        // A blank entry signals TRACE_INCOMPLETE and is detected below.
         val traceMap: Map<String, String> = successTaskExecutions
-            .filterValues { it.artifactReference.isNotBlank() }
-            .mapKeys { (contractId, _) -> contractId }
             .mapValues { (_, data) -> data.artifactReference }
 
-        events.filter { ev ->
-            ev.type == EventTypes.TASK_EXECUTED &&
-            ev.payload["executionStatus"]?.toString() == "SUCCESS" &&
-            (reportReference.isEmpty() ||
-                ev.payload["report_reference"]?.toString() == reportReference)
-        }.forEach { ev ->
-            val contractId  = ev.payload["contractId"]?.toString() ?: return@forEach
-            val artifactRef = ev.payload["artifactReference"]?.toString() ?: ""
+        // Trace completeness: blank artifactReference in any SUCCESS entry → TRACE_INCOMPLETE
+        for ((contractId, artifactRef) in traceMap) {
             if (artifactRef.isBlank()) {
                 val alreadyReported = failureReasons.any {
                     it.contractId == contractId && it.failureType == "TRACE_INCOMPLETE"
@@ -303,19 +309,25 @@ class AssemblyModule {
             val invalidContractIds = failureReasons.map { it.contractId }.toSet()
             val lockedSections     = contractOutputs.filter { it.contractId !in invalidContractIds }
             val violationSurface   = contractOutputs.filter { it.contractId in invalidContractIds }
-            val primary            = failureReasons.first()
+
+            // FIX 2: Serialize all failure reasons as a list of maps (multi-failure support).
+            val failureReasonsPayload = failureReasons.map { r ->
+                mapOf(
+                    "contractId"        to r.contractId,
+                    "failureType"       to r.failureType,
+                    "violatedInvariant" to r.violatedInvariant
+                )
+            }
 
             ledger.appendEvent(
                 projectId,
                 EventTypes.ASSEMBLY_FAILED,
                 mapOf(
-                    "report_reference"        to reportReference,
-                    "contractSetId"           to contractSetId,
-                    "failureReasonContractId" to primary.contractId,
-                    "failureType"             to primary.failureType,
-                    "violatedInvariant"       to primary.violatedInvariant,
-                    "lockedSections"          to lockedSections.map { it.contractId },
-                    "violationSurface"        to violationSurface.map { it.contractId }
+                    "report_reference" to reportReference,
+                    "contractSetId"    to contractSetId,
+                    "failureReasons"   to failureReasonsPayload,
+                    "lockedSections"   to lockedSections.map { it.contractId },
+                    "violationSurface" to violationSurface.map { it.contractId }
                 )
             )
 
