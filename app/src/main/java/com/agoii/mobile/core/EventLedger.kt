@@ -2,7 +2,7 @@ package com.agoii.mobile.core
 
 import java.util.UUID
 
-class EventLedger(private val store: EventStore) : EventRepository {
+class EventLedger(private val store: EventStorage) : EventRepository {
 
     private val lock = LedgerLock()
     private val validation = ValidationLayer()

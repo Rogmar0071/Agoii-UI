@@ -10,7 +10,7 @@ import java.io.IOException
 class LedgerWriteException(message: String, cause: Throwable? = null) :
     RuntimeException(message, cause)
 
-class EventStore(private val context: Context) {
+class EventStore(private val context: Context) : EventStorage {
 
     private val gson = Gson()
 
@@ -25,7 +25,7 @@ class EventStore(private val context: Context) {
         return File(file.parent, "${file.name}.tmp")
     }
 
-    internal fun appendEvent(projectId: String, event: Event, priorEvents: List<Event>) {
+    override fun appendEvent(projectId: String, event: Event, priorEvents: List<Event>) {
         val file = ledgerFile(projectId)
         val tmp = tmpFile(projectId)
 
@@ -47,7 +47,7 @@ class EventStore(private val context: Context) {
         }
     }
 
-    fun loadEvents(projectId: String): List<Event> {
+    override fun loadEvents(projectId: String): List<Event> {
         val file = ledgerFile(projectId)
         val tmp = tmpFile(projectId)
 
