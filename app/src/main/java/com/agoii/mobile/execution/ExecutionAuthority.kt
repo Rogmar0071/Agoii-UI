@@ -1019,7 +1019,8 @@ class ExecutionAuthority(
                     "failure_class"    to "LOGICAL",
                     "violation_field"  to violation.field,
                     "violation_reason" to violation.reason,
-                    "locked_fields"    to anchor.lockedFields.toList()
+                    "locked_fields"    to anchor.lockedFields.toList(),
+                    "source"           to "EXECUTION_AUTHORITY"
                 )
             )
         } catch (_: Exception) {
@@ -1533,7 +1534,8 @@ class ExecutionAuthority(
                     "violationField"      to recovery.violationField,
                     "correctionDirective" to recovery.correctionDirective,
                     "successCondition"    to recovery.successCondition,
-                    "artifactReference"   to artifactRef
+                    "artifactReference"   to artifactRef,
+                    "source"              to "EXECUTION_AUTHORITY"
                 )
             )
         } catch (_: Exception) {

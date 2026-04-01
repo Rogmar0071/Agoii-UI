@@ -128,75 +128,18 @@ class Governor(
      * to append in this evaluation step, or an empty list when no Governor-owned
      * transition exists.
      *
-     * For most transitions this returns a single event. For ASSEMBLY_FAILED it
-     * returns one RECOVERY_CONTRACT per failure reason — all in a single deterministic
-     * step, with no dependency on repeated Governor calls.
+     * For most transitions this returns a single event. For ASSEMBLY_FAILED the
+     * Governor no longer emits RECOVERY_CONTRACT — recovery is exclusively owned
+     * by [com.agoii.mobile.execution.ExecutionAuthority] (AGOII-ALIGN-1 RULE 4).
      *
      * This function has no side effects. The caller is responsible for persisting
      * all returned events via [com.agoii.mobile.core.EventRepository].
      */
     fun nextEvents(events: List<Event>): List<Event> {
         if (events.isEmpty()) return emptyList()
-        val last = events.last()
 
-        // ── GOVERNOR: deterministic recovery emission (STRICT) ───────────────────
-        // ALL failureReasons MUST be converted into RECOVERY_CONTRACTS
-        // NO silent dropping allowed
-        if (last.type == EventTypes.ASSEMBLY_FAILED) {
-            val reportReference = last.payload["report_reference"]?.toString()
-                ?.takeIf { it.isNotBlank() }
-                ?: throw IllegalStateException(
-                    "GOVERNOR_INVARIANT_VIOLATION: report_reference in ASSEMBLY_FAILED is missing or blank"
-                )
-
-            @Suppress("UNCHECKED_CAST")
-            val failureReasonsList = last.payload["failureReasons"] as? List<*>
-                ?: throw IllegalStateException(
-                    "GOVERNOR_INVARIANT_VIOLATION: failureReasons missing or invalid"
-                )
-
-            val lockedSections = last.payload["lockedSections"] ?: emptyList<String>()
-
-            val recoveryContracts = failureReasonsList.mapIndexed { index, fr ->
-                val reason = fr as? Map<*, *>
-                    ?: throw IllegalStateException(
-                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index] must be a Map, got ${fr?.javaClass?.simpleName ?: "null"}"
-                    )
-
-                val contractId = reason["contractId"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException(
-                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index].contractId missing"
-                    )
-
-                val failureClass = reason["failureType"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException(
-                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index].failureType missing"
-                    )
-
-                val violationField = reason["violatedInvariant"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException(
-                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index].violatedInvariant missing"
-                    )
-
-                Event(
-                    type    = EventTypes.RECOVERY_CONTRACT,
-                    payload = mapOf(
-                        "contractId"          to contractId,
-                        "report_reference"    to reportReference,
-                        "failureClass"        to failureClass,
-                        "violationField"      to violationField,
-                        "correctionDirective" to "DELTA_REPAIR_REQUIRED",
-                        "successCondition"    to "VALIDATION_PASS",
-                        "artifactReference"   to contractId,
-                        "irs_violation_type"  to "ASSEMBLY_FAILURE",
-                        "lockedSections"      to lockedSections
-                    )
-                )
-            }
-            return recoveryContracts
-        }
-
-        // All other transitions produce at most one event.
+        // All transitions produce at most one event; multi-event steps have been removed
+        // as part of AGOII-ALIGN-1 (ASSEMBLY_FAILED recovery is now owned by ExecutionAuthority).
         return listOfNotNull(nextEventSingle(events))
     }
 
@@ -327,10 +270,28 @@ class Governor(
             // No auto-retry: task failure requires external escalation.
             EventTypes.TASK_FAILED -> null
 
-            // ASSEMBLY_FAILED is handled in nextEvents() — emits ALL recovery contracts
-            // in one deterministic step. This single-event path returns null to ensure
-            // callers use nextEvents() for ASSEMBLY_FAILED.
+            // ASSEMBLY_FAILED: Governor no longer emits RECOVERY_CONTRACT (AGOII-ALIGN-1 RULE 4).
+            // Recovery is owned exclusively by ExecutionAuthority.
             EventTypes.ASSEMBLY_FAILED -> null
+
+            // AGOII-ALIGN-1 RULE 3 — ICS ENTRY LOCK:
+            // Governor is the sole emitter of ICS_STARTED; source=GOVERNOR is mandatory.
+            EventTypes.ASSEMBLY_COMPLETED -> {
+                val reportReference = last.payload["report_reference"]?.toString()
+                    ?.takeIf { it.isNotBlank() } ?: return null
+                val finalArtifactReference = last.payload["finalArtifactReference"]?.toString()
+                    ?.takeIf { it.isNotBlank() } ?: return null
+                val taskId = "ICS::$reportReference"
+                Event(
+                    type    = EventTypes.ICS_STARTED,
+                    payload = mapOf(
+                        "report_reference"       to reportReference,
+                        "finalArtifactReference" to finalArtifactReference,
+                        "taskId"                 to taskId,
+                        "source"                 to "GOVERNOR"
+                    )
+                )
+            }
 
             // CLC-1 delta loop: RECOVERY_CONTRACT → DELTA_CONTRACT_CREATED
             // Governor extracts contractId, violationField, report_reference from the

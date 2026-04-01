@@ -454,6 +454,13 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "RECOVERY_CONTRACT missing or blank 'artifactReference' in '$projectId'"
             )
+        // RULE 1 — RECOVERY ORIGIN LOCK: source must be EXECUTION_AUTHORITY (AGOII-ALIGN-1)
+        val source = payload["source"]?.toString()
+        if (source != "EXECUTION_AUTHORITY") {
+            throw LedgerValidationException(
+                "RECOVERY_CONTRACT requires source=EXECUTION_AUTHORITY in '$projectId' (got '$source')"
+            )
+        }
     }
 
     private fun checkDeltaContractCreated(projectId: String, payload: Map<String, Any>) {
@@ -574,6 +581,13 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "ICS_STARTED missing or blank 'taskId' in '$projectId'"
             )
+        // RULE 3 — ICS ENTRY LOCK: source must be GOVERNOR (AGOII-ALIGN-1)
+        val source = payload["source"]?.toString()
+        if (source != "GOVERNOR") {
+            throw LedgerValidationException(
+                "ICS_STARTED requires source=GOVERNOR in '$projectId' (got '$source')"
+            )
+        }
     }
 
     private fun checkIcsCompleted(projectId: String, payload: Map<String, Any>) {
@@ -590,6 +604,13 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "ICS_COMPLETED missing or blank 'icsOutputReference' in '$projectId'"
             )
+        // RULE 5 — MODULE OWNERSHIP: source must be ICS_MODULE (AGOII-ALIGN-1)
+        val source = payload["source"]?.toString()
+        if (source != "ICS_MODULE") {
+            throw LedgerValidationException(
+                "ICS_COMPLETED requires source=ICS_MODULE in '$projectId' (got '$source')"
+            )
+        }
     }
 
     private fun checkAssemblyStarted(projectId: String, payload: Map<String, Any>) {
@@ -934,7 +955,8 @@ class ValidationLayer {
             "report_reference",
             "failureClass", "violationField", "correctionDirective",
             "successCondition", "artifactReference",
-            "irs_violation_type", "lockedSections"
+            "irs_violation_type", "lockedSections",
+            "source"  // AGOII-ALIGN-1: origin authority field (must be EXECUTION_AUTHORITY)
         )
         private val DELTA_CONTRACT_CREATED_KEYS = setOf(
             "contractId", "violationField", "report_reference", "delta_iteration_count"
@@ -953,8 +975,14 @@ class ValidationLayer {
             "failureReasons",   // List<Map> — each with contractId, failureType, violatedInvariant
             "lockedSections", "violationSurface"
         )
-        private val ICS_STARTED_KEYS         = setOf("report_reference", "finalArtifactReference", "taskId")
-        private val ICS_COMPLETED_KEYS       = setOf("report_reference", "taskId", "icsOutputReference")
+        private val ICS_STARTED_KEYS         = setOf(
+            "report_reference", "finalArtifactReference", "taskId",
+            "source"  // AGOII-ALIGN-1: origin authority field (must be GOVERNOR)
+        )
+        private val ICS_COMPLETED_KEYS       = setOf(
+            "report_reference", "taskId", "icsOutputReference",
+            "source"  // AGOII-ALIGN-1: origin authority field (must be ICS_MODULE)
+        )
         // UCS-1 ingestion lifecycle event key sets
         private val CONTRACT_CREATED_KEYS    = setOf(
             "contractId", "intentId", "report_reference",

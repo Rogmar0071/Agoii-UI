@@ -30,7 +30,7 @@ package com.agoii.mobile.ics
 
 import com.agoii.mobile.assembly.ContractOutput
 import com.agoii.mobile.assembly.FinalArtifact
-import com.agoii.mobile.core.EventLedger
+import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 
 /**
@@ -39,16 +39,16 @@ import com.agoii.mobile.core.EventTypes
  * Single public entry point: [process].
  *
  * Pipeline (happy path):
- *  1. Trigger check: last ledger event MUST be ASSEMBLY_COMPLETED
- *  2. Extract ICS input fields from ASSEMBLY_COMPLETED payload (RRIL-1, ledger-only)
+ *  1. Trigger check: last ledger event MUST be ICS_STARTED (written by Governor — AGOII-ALIGN-1)
+ *  2. Extract ICS input fields from ICS_STARTED payload; read assembly metadata from ASSEMBLY_COMPLETED
  *  3. Idempotency guard: no ICS_COMPLETED for same report_reference
  *  4. Reconstruct [FinalArtifact] from ASSEMBLY_STARTED payload + TASK_EXECUTED events
- *  5. Write ICS_STARTED to ledger
+ *  5. ICS_STARTED already written by Governor; no write here
  *  6. Structural normalization — remove execution-only metadata, standardize names
  *  7. Output classification — determine [IcsOutputType] per entry
  *  8. Structured packaging — group into deterministic sections
  *  9. Trace preservation — contractId + artifactReference on every entry
- * 10. Write ICS_COMPLETED to ledger
+ * 10. Write ICS_COMPLETED (source=ICS_MODULE) to ledger
  * 11. Return [IcsExecutionResult.Processed]
  */
 class IcsModule {
@@ -57,20 +57,21 @@ class IcsModule {
      * Execute the ICS processing pipeline.
      *
      * @param projectId  Project ledger identifier.
-     * @param ledger     EventLedger — sole write authority.
+     * @param ledger     [EventRepository] — sole write authority.
      * @return [IcsExecutionResult] describing the pipeline outcome.
      */
-    fun process(projectId: String, ledger: EventLedger): IcsExecutionResult {
+    fun process(projectId: String, ledger: EventRepository): IcsExecutionResult {
 
         val events = ledger.loadEvents(projectId)
 
-        // ── Trigger condition 1: last event MUST be ASSEMBLY_COMPLETED ────────
+        // ── Trigger condition 1: last event MUST be ICS_STARTED (AGOII-ALIGN-1) ──
+        // Governor emits ICS_STARTED; IcsModule consumes it and emits ICS_COMPLETED.
         val lastEvent = events.lastOrNull()
-        if (lastEvent?.type != EventTypes.ASSEMBLY_COMPLETED) {
+        if (lastEvent?.type != EventTypes.ICS_STARTED) {
             return IcsExecutionResult.NotTriggered
         }
 
-        // ── Trigger condition 2: required payload fields ───────────────────────
+        // ── Trigger condition 2: required payload fields from ICS_STARTED ─────────
         val reportReference = lastEvent.payload["report_reference"]?.toString()
             ?.takeIf { it.isNotBlank() }
             ?: return IcsExecutionResult.NotTriggered
@@ -79,8 +80,17 @@ class IcsModule {
             ?.takeIf { it.isNotBlank() }
             ?: return IcsExecutionResult.NotTriggered
 
-        val contractSetId = lastEvent.payload["contractSetId"]?.toString() ?: ""
-        val totalContracts = resolveInt(lastEvent.payload["totalContracts"]) ?: 0
+        val icsTaskId = lastEvent.payload["taskId"]?.toString()
+            ?.takeIf { it.isNotBlank() }
+            ?: "ICS::$reportReference"
+
+        // ── Resolve contractSetId and totalContracts from ASSEMBLY_COMPLETED ─────
+        // ICS_STARTED carries only the ICS-specific fields; assembly metadata is read
+        // from the ASSEMBLY_COMPLETED event in the ledger history (RRIL-1 traceability).
+        val assemblyCompletedEvent = events.lastOrNull { it.type == EventTypes.ASSEMBLY_COMPLETED }
+        val contractSetId   = assemblyCompletedEvent?.payload?.get("contractSetId")?.toString() ?: ""
+        val totalContracts  = assemblyCompletedEvent?.payload?.get("totalContracts")
+            ?.let { resolveInt(it) } ?: 0
 
         // ── Trigger condition 3: idempotency guard ────────────────────────────
         val alreadyCompleted = events.any { ev ->
@@ -112,31 +122,21 @@ class IcsModule {
             finalArtifact          = finalArtifact
         )
 
-        val icsTaskId          = "ICS::$reportReference"
         val icsOutputReference = buildIcsOutputReference(reportReference)
 
-        // ── Step 5: Write ICS_STARTED ────────────────────────────────────────
-        ledger.appendEvent(
-            projectId,
-            EventTypes.ICS_STARTED,
-            mapOf(
-                "report_reference"       to reportReference,
-                "finalArtifactReference" to finalArtifactReference,
-                "taskId"                 to icsTaskId
-            )
-        )
-
         // ── Steps 6–9: Build IcsOutput (normalize, classify, package, trace) ─
+        // ICS_STARTED was already written by Governor (AGOII-ALIGN-1 RULE 3).
         val icsOutput = buildIcsOutput(icsInput, icsTaskId, icsOutputReference)
 
-        // ── Step 10: Write ICS_COMPLETED ─────────────────────────────────────
+        // ── Step 10: Write ICS_COMPLETED (source=ICS_MODULE — AGOII-ALIGN-1) ─
         ledger.appendEvent(
             projectId,
             EventTypes.ICS_COMPLETED,
             mapOf(
-                "report_reference"  to reportReference,
-                "taskId"            to icsTaskId,
-                "icsOutputReference" to icsOutputReference
+                "report_reference"   to reportReference,
+                "taskId"             to icsTaskId,
+                "icsOutputReference" to icsOutputReference,
+                "source"             to "ICS_MODULE"
             )
         )
 
