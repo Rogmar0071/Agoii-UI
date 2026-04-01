@@ -1813,36 +1813,22 @@ class ExecutionAuthority(
     ): ContractorExecutionOutput {
         val anchor = deltaContext.anchorState
         val field  = deltaContext.violationField
-        return output.copy(
-            resultArtifact = enforceFieldIsolation(
-                output.resultArtifact,
-                anchor,
-                field
-            )
-        )
-    }
 
-    private fun enforceFieldIsolation(
-        artifact: Map<String, Any>,
-        anchor: AnchorState,
-        allowedField: String
-    ): Map<String, Any> {
-        val anchored = anchorToArtifact(anchor)
-        return mergeDelta(anchored, artifact, allowedField)
+        val anchorArtifact = anchorToArtifact(anchor)
+        val deltaArtifact  = output.resultArtifact
+
+        val correctedValue = deltaArtifact[field]
+            ?: throw IllegalStateException("DELTA_MISSING_FIELD: $field")
+
+        val newArtifact = mutableMapOf<String, Any>()
+        newArtifact.putAll(anchorArtifact)
+        newArtifact[field] = correctedValue
+
+        return output.copy(resultArtifact = newArtifact)
     }
 
     private fun anchorToArtifact(anchor: AnchorState): Map<String, Any> {
         return anchor.validatedStructure.associateWith { it }
-    }
-
-    private fun mergeDelta(
-        anchor: Map<String, Any>,
-        delta: Map<String, Any>,
-        field: String
-    ): Map<String, Any> {
-        val result = anchor.toMutableMap()
-        delta[field]?.let { result[field] = it }
-        return result
     }
 
     private fun extractFieldValue(source: Any, field: String): Any? {
