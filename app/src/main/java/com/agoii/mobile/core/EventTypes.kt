@@ -36,6 +36,7 @@ object EventTypes {
     const val CONTRACTOR_REASSIGNED   = "contractor_reassigned"
     const val CONTRACT_FAILED         = "contract_failed"
     const val RECOVERY_CONTRACT       = "recovery_contract"
+    const val DELTA_CONTRACT_CREATED  = "delta_contract_created"
 
     // ── UCS-1 contract ingestion lifecycle events ─────────────────────────────
     // Emitted by ExecutionAuthority.ingestUniversalContract() to replace
@@ -68,6 +69,7 @@ object EventTypes {
         CONTRACTOR_REASSIGNED,
         CONTRACT_FAILED,
         RECOVERY_CONTRACT,
+        DELTA_CONTRACT_CREATED,
         CONTRACT_CREATED,
         CONTRACT_VALIDATED,
         CONTRACT_APPROVED,
