@@ -864,7 +864,8 @@ class ExecutionAuthority(
      * Only ExecutionAuthority is permitted to invoke assembly (via [CoreBridge]).
      *
      * @param projectId Project ledger identifier.
-     * @param ledger    EventLedger — single write authority.
+     * @param ledger    [EventRepository] — single write authority (accepts any implementation,
+     *                  including [com.agoii.mobile.core.EventLedger]).
      * @return [AssemblyExecutionResult] describing the pipeline outcome.
      */
     fun assembleFromLedger(

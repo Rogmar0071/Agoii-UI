@@ -420,7 +420,12 @@ class AssemblyConvergenceTest {
                 val pos = when (val raw = ev.payload["position"]) {
                     is Double -> raw.toInt()
                     is Int    -> raw
-                    else      -> 1
+                    is Long   -> raw.toInt()
+                    is String -> raw.toIntOrNull()
+                        ?: throw IllegalStateException("TASK_EXECUTED missing valid 'position' in test fixture: $raw")
+                    else      -> throw IllegalStateException(
+                        "TASK_EXECUTED 'position' has unexpected type ${raw?.javaClass} in test fixture"
+                    )
                 }
                 Event(ev.type, ev.payload + ("artifactReference" to "artifact-fixed-$pos-$reportRef"),
                       sequenceNumber = ev.sequenceNumber)
