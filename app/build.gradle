@@ -70,6 +70,8 @@ dependencies {
 
     // Unit tests (JVM only — no Android emulator needed)
     testImplementation 'junit:junit:4.13.2'
+    // Mockito with inline support (final-class mocking) — required to mock EventLedger
+    testImplementation 'org.mockito:mockito-core:5.2.0'
 
     // Android instrumented tests
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
