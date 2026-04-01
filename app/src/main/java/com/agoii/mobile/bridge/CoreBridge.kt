@@ -1,6 +1,8 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
+import com.agoii.mobile.assembly.AssemblyExecutionResult
+import com.agoii.mobile.ics.IcsExecutionResult
 import com.agoii.mobile.infrastructure.OpenAIClient
 import com.agoii.mobile.contractor.*
 import com.agoii.mobile.contracts.*
@@ -81,36 +83,62 @@ class CoreBridge(context: Context) {
         var output: String? = null
         while (cycles < MAX_GOVERNOR_CYCLES) {
             val lastType = ledger.loadEvents(projectId).lastOrNull()?.type
-            if (lastType == EventTypes.EXECUTION_COMPLETED) break
-            if (lastType == EventTypes.TASK_STARTED) {
-                // Mandatory trigger: IF last event == TASK_STARTED → ExecutionAuthority executes
-                val execResult = executionAuthority.executeFromLedger(projectId, ledger)
-                when (execResult) {
-                    is ExecutionAuthorityExecutionResult.Executed -> {
-                        if (execResult.executionStatus != ExecutionStatus.SUCCESS) {
-                            throw LedgerValidationException(
-                                "ICS BLOCKED: Execution failed — status=${execResult.executionStatus}"
-                            )
-                        }
-                        output = execResult.report.rawOutput.ifBlank { null }
-                            ?: throw LedgerValidationException("ICS BLOCKED: Empty output in artifact")
+            when {
+                // ── CLC-1B PART 3: Assembly → ICS pipeline activation ──────────────
+                // EXECUTION_COMPLETED and ASSEMBLY_COMPLETED are handled directly by
+                // ExecutionAuthority — Governor MUST NOT be delegated these states.
+                lastType == EventTypes.ICS_COMPLETED -> break
+
+                lastType == EventTypes.EXECUTION_COMPLETED -> {
+                    val assemblyResult = executionAuthority.assembleFromLedger(projectId, ledger)
+                    if (assemblyResult is AssemblyExecutionResult.Blocked) {
+                        throw LedgerValidationException(
+                            "ICS BLOCKED: Assembly failed — ${assemblyResult.reason}"
+                        )
                     }
-                    is ExecutionAuthorityExecutionResult.BlockedWithRecovery ->
-                        throw LedgerValidationException("ICS BLOCKED: ${execResult.reason}")
-                    else ->
-                        throw LedgerValidationException(
-                            "ICS BLOCKED: Unexpected execution result: ${execResult::class.simpleName}"
-                        )
                 }
-            } else {
-                val govResult = governor.runGovernor(projectId)
-                when (govResult) {
-                    Governor.GovernorResult.COMPLETED -> break
-                    Governor.GovernorResult.DRIFT ->
+
+                lastType == EventTypes.ASSEMBLY_COMPLETED -> {
+                    val icsResult = executionAuthority.runIcsFromLedger(projectId, ledger)
+                    if (icsResult is IcsExecutionResult.Blocked) {
                         throw LedgerValidationException(
-                            "ICS BLOCKED: Governor drift at state '$lastType' (cycle $cycles)"
+                            "ICS BLOCKED: ICS pipeline failed — ${icsResult.reason}"
                         )
-                    else -> { /* ADVANCED or NO_EVENT — continue */ }
+                    }
+                }
+
+                lastType == EventTypes.TASK_STARTED -> {
+                    // Mandatory trigger: IF last event == TASK_STARTED → ExecutionAuthority executes
+                    val execResult = executionAuthority.executeFromLedger(projectId, ledger)
+                    when (execResult) {
+                        is ExecutionAuthorityExecutionResult.Executed -> {
+                            if (execResult.executionStatus != ExecutionStatus.SUCCESS) {
+                                throw LedgerValidationException(
+                                    "ICS BLOCKED: Execution failed — status=${execResult.executionStatus}"
+                                )
+                            }
+                            output = execResult.report.rawOutput.ifBlank { null }
+                                ?: throw LedgerValidationException("ICS BLOCKED: Empty output in artifact")
+                        }
+                        is ExecutionAuthorityExecutionResult.BlockedWithRecovery ->
+                            throw LedgerValidationException("ICS BLOCKED: ${execResult.reason}")
+                        else ->
+                            throw LedgerValidationException(
+                                "ICS BLOCKED: Unexpected execution result: ${execResult::class.simpleName}"
+                            )
+                    }
+                }
+
+                else -> {
+                    val govResult = governor.runGovernor(projectId)
+                    when (govResult) {
+                        Governor.GovernorResult.COMPLETED -> break
+                        Governor.GovernorResult.DRIFT ->
+                            throw LedgerValidationException(
+                                "ICS BLOCKED: Governor drift at state '$lastType' (cycle $cycles)"
+                            )
+                        else -> { /* ADVANCED or NO_EVENT — continue */ }
+                    }
                 }
             }
             cycles++
