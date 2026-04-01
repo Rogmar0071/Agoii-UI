@@ -9,7 +9,8 @@
 //   CONTRACTS_GENERATED, CONTRACT_COMPLETED (N), TASK_EXECUTED (N), EXECUTION_COMPLETED
 //
 // EXECUTION SURFACE (WRITE):
-//   ASSEMBLY_STARTED → ASSEMBLY_COMPLETED
+//   ASSEMBLY_STARTED → ASSEMBLY_COMPLETED  (success path)
+//   ASSEMBLY_FAILED                        (failure path — Governor drives recovery)
 //
 // AUTHORITY RULES:
 //   - Ordering and contract identity: CONTRACT_COMPLETED events             (spec §6.5)
@@ -23,17 +24,33 @@
 //   - NO synthetic reconstruction
 //   - NO external data sources
 //   - NO heuristic ordering
+//   - NO filtering of contractOutputs (pure projection)
+//   - NO deduplication of contractOutputs
+//   - NO ordering correction of contractOutputs
+//   - NO fallback/default injection
+//   ALL anomalies pass through unchanged to ExecutionAuthority via ASSEMBLY_FAILED
+//
+// RE-ENTRY GUARD:
+//   Re-entry after ASSEMBLY_FAILED is allowed ONLY when:
+//     - SAME contractSetId
+//     - NO new CONTRACTS_GENERATED present after ASSEMBLY_FAILED
+//     - EXECUTION_COMPLETED already present
+//   Else → throw IllegalStateException (invariant violation)
 //
 // EXECUTION AUTHORITY:
 //   Assembly is invoked ONLY by ExecutionAuthority. Governor MUST NOT call assemble().
 //
+// RECOVERY AUTHORITY:
+//   ASSEMBLY_FAILED is the sole trigger for the Governor-owned recovery flow:
+//   ASSEMBLY_FAILED → RECOVERY_CONTRACT → DELTA_CONTRACT_CREATED → TASK_ASSIGNED
+//
 // LEDGER AUTHORITY:
-//   ALL reads and writes operate exclusively through EventLedger.
+//   ALL reads and writes operate exclusively through EventRepository.
 //   No external memory; no inference; no external orchestrators.
 
 package com.agoii.mobile.assembly
 
-import com.agoii.mobile.core.EventLedger
+import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 
 /**
@@ -41,21 +58,21 @@ import com.agoii.mobile.core.EventTypes
  *
  * Single public entry point: [assemble].
  *
- * Pipeline (happy path):
+ * Pipeline (success path):
  *  1. Verify EXECUTION_COMPLETED exists (internal gate — spec §6.1)
  *  2. Derive metadata (RRID, contractSetId, totalContracts) from CONTRACTS_GENERATED
  *  3. Idempotency guard — no duplicate ASSEMBLY_COMPLETED for same RRID
- *  4. Reconstruct ordered contracts from CONTRACT_COMPLETED events (spec §6.5)
- *  5. Enforce RRID lineage on every CONTRACT_COMPLETED (spec §6.3)
- *  6. Enforce position completeness: [1..N], no gaps, no duplicates (spec §6.2)
- *  7. Derive execution surface (artifactReference only) from
- *     TASK_EXECUTED(SUCCESS) events — artifactStructure is NOT in the ledger (AERP-1 §3)
- *  8. Pre-flight: verify every contract has a SUCCESS execution surface (spec §6.4)
- *  9. Append ASSEMBLY_STARTED to ledger
- * 10. Build [FinalArtifact] with traceMap (position 1 → N, spec §7.1/§7.2)
- * 11. Build [AssemblyContractReport] (AERP-1)
- * 12. Append ASSEMBLY_COMPLETED to ledger (spec §7.3)
- * 13. Return [AssemblyExecutionResult.Assembled]
+ *  3b. Re-entry guard — strict check when ASSEMBLY_FAILED already exists for this RRID
+ *  4. Pure projection: collect ALL CONTRACT_COMPLETED events without filtering/sorting/deduplication
+ *  5. Collect ALL TASK_EXECUTED events (success + failure — pure projection)
+ *  6. Detect anomalies: RRID violations, position violations, incomplete execution surface,
+ *     trace completeness violations
+ *  7. If anomalies → emit ASSEMBLY_FAILED, return [AssemblyExecutionResult.Failed]
+ *  8. Append ASSEMBLY_STARTED to ledger
+ *  9. Build [FinalArtifact] with traceMap (contractId → artifactReference)
+ * 10. Build [AssemblyContractReport] (AERP-1)
+ * 11. Append ASSEMBLY_COMPLETED to ledger
+ * 12. Return [AssemblyExecutionResult.Assembled]
  */
 class AssemblyModule {
 
@@ -64,17 +81,16 @@ class AssemblyModule {
      *
      * Reads the full ledger for [projectId], enforces all trigger conditions
      * internally (no reliance on caller), and — when conditions are met — appends
-     * ASSEMBLY_STARTED and ASSEMBLY_COMPLETED to [ledger],
-     * then returns the [FinalArtifact].
+     * either ASSEMBLY_FAILED or (ASSEMBLY_STARTED + ASSEMBLY_COMPLETED) to [ledger].
      *
      * This method is a pure function of the ledger state: same ledger state always
      * produces the same result.  It has no implicit inputs and performs no inference.
      *
      * @param projectId  Project ledger identifier.
-     * @param ledger     EventLedger — sole write authority.
+     * @param ledger     EventRepository — sole write authority.
      * @return [AssemblyExecutionResult] describing the pipeline outcome.
      */
-    fun assemble(projectId: String, ledger: EventLedger): AssemblyExecutionResult {
+    fun assemble(projectId: String, ledger: EventRepository): AssemblyExecutionResult {
 
         val events = ledger.loadEvents(projectId)
 
@@ -111,7 +127,34 @@ class AssemblyModule {
             return AssemblyExecutionResult.AlreadyCompleted(reportReference)
         }
 
-        // ── Step 4: Reconstruct ordered contracts from CONTRACT_COMPLETED (spec 5.1) ──
+        // ── Step 3b: Re-entry guard — strict check when ASSEMBLY_FAILED exists ──
+        val failureIndex = events.indexOfLast { ev ->
+            ev.type == EventTypes.ASSEMBLY_FAILED &&
+            ev.payload["report_reference"]?.toString() == reportReference
+        }
+        if (failureIndex >= 0) {
+            val previousFailure = events[failureIndex]
+            val storedContractSetId = previousFailure.payload["contractSetId"]?.toString() ?: ""
+            if (storedContractSetId != contractSetId) {
+                throw IllegalStateException(
+                    "ASSEMBLY_INVARIANT_VIOLATION: RE_ENTRY_BLOCKED — contractSetId mismatch " +
+                    "for RRID=$reportReference. Stored=$storedContractSetId, current=$contractSetId"
+                )
+            }
+            val newContractsGenAfterFailure = events.drop(failureIndex + 1).any { ev ->
+                ev.type == EventTypes.CONTRACTS_GENERATED
+            }
+            if (newContractsGenAfterFailure) {
+                throw IllegalStateException(
+                    "ASSEMBLY_INVARIANT_VIOLATION: RE_ENTRY_BLOCKED — new CONTRACTS_GENERATED " +
+                    "present after ASSEMBLY_FAILED for RRID=$reportReference"
+                )
+            }
+        }
+
+        // ── Step 4: Pure projection — collect ALL CONTRACT_COMPLETED events ──
+        // NO filtering, NO deduplication, NO ordering correction, NO fallback injection.
+        // All anomalies pass through unchanged.
         val completedEvents = events.filter { it.type == EventTypes.CONTRACT_COMPLETED }
 
         // Trigger condition: all contracts must be completed (spec 5.5 count check)
@@ -120,9 +163,9 @@ class AssemblyModule {
         }
 
         val assemblyContracts = completedEvents.mapNotNull { ev ->
-            val contractId      = ev.payload["contractId"]?.toString()      ?: return@mapNotNull null
-            val position        = resolveInt(ev.payload["position"])         ?: return@mapNotNull null
-            val contractRrid    = ev.payload["report_reference"]?.toString() ?: ""
+            val contractId   = ev.payload["contractId"]?.toString()      ?: return@mapNotNull null
+            val position     = resolveInt(ev.payload["position"])         ?: return@mapNotNull null
+            val contractRrid = ev.payload["report_reference"]?.toString() ?: ""
             AssemblyContract(
                 contractId      = contractId,
                 position        = position,
@@ -130,58 +173,163 @@ class AssemblyModule {
             )
         }
 
-        // ── Step 5: RRID lineage enforcement (spec 5.3) ──────────────────────
-        val rridViolations = assemblyContracts.filter { c ->
-            c.reportReference.isNotBlank() && c.reportReference != reportReference
-        }
-        if (rridViolations.isNotEmpty()) {
-            return AssemblyExecutionResult.Blocked(
-                reason           = "RRID_VIOLATION: ${rridViolations.map { it.contractId }}",
-                missingContracts = rridViolations.map { it.contractId }
-            )
+        // ── Step 5: Pure projection — collect ALL TASK_EXECUTED events ───────
+        // SUCCESS executions are tracked for traceMap and surface validation.
+        // ALL executions are tracked for pure contractOutput projection.
+        val allTaskExecutions    = mutableMapOf<String, ContractExecutionData>()
+        val successTaskExecutions = mutableMapOf<String, ContractExecutionData>()
+        events.filter { ev ->
+            ev.type == EventTypes.TASK_EXECUTED &&
+            (reportReference.isEmpty() ||
+                ev.payload["report_reference"]?.toString() == reportReference)
+        }.forEach { ev ->
+            val contractId  = ev.payload["contractId"]?.toString()        ?: return@forEach
+            val artifactRef = ev.payload["artifactReference"]?.toString() ?: ""
+            val execStatus  = ev.payload["executionStatus"]?.toString()   ?: ""
+            // Last write wins (idempotent across retries)
+            allTaskExecutions[contractId] = ContractExecutionData(artifactRef)
+            if (execStatus == "SUCCESS") {
+                successTaskExecutions[contractId] = ContractExecutionData(artifactRef)
+            }
         }
 
-        // ── Step 6: Position completeness — [1..N], no gaps, no duplicates (spec 5.5) ──
-        val sortedContracts   = assemblyContracts.sortedBy { it.position }
-        val observedPositions = sortedContracts.map { it.position }
-        val expectedPositions = (1..totalContracts).toList()
-        if (observedPositions != expectedPositions) {
-            return AssemblyExecutionResult.Blocked(
-                reason = "POSITION_VIOLATION: positions $observedPositions != expected $expectedPositions"
-            )
+        // ── Step 6: Collect anomalies (without filtering or mutating contractOutputs) ──
+        val failureReasons = mutableListOf<AssemblyFailureReason>()
+
+        // RRID lineage violations (spec 5.3)
+        for (contract in assemblyContracts) {
+            if (contract.reportReference.isNotBlank() &&
+                contract.reportReference != reportReference) {
+                failureReasons.add(
+                    AssemblyFailureReason(
+                        contractId        = contract.contractId,
+                        failureType       = "RRID_VIOLATION",
+                        violatedInvariant = "report_reference '${contract.reportReference}' " +
+                                            "!= expected '$reportReference' (spec §6.3)"
+                    )
+                )
+            }
         }
 
-        // ── Step 7: Derive execution surface from TASK_EXECUTED(SUCCESS) (spec 6.4) ──
-        // artifactStructure is NOT persisted in the EventLedger (AERP-1 §3);
-        // only artifactReference is legal to consume from TASK_EXECUTED.
-        val taskExecutionData = mutableMapOf<String, ContractExecutionData>()
+        // Position completeness — [1..N], no gaps, no duplicates (spec 5.5)
+        val observedPositionSet  = assemblyContracts.map { it.position }.toSortedSet()
+        val expectedPositionSet  = (1..totalContracts).toSortedSet()
+        if (observedPositionSet != expectedPositionSet) {
+            val missingPositions  = expectedPositionSet - observedPositionSet
+            val unexpectedContracts = assemblyContracts.filter { it.position !in expectedPositionSet }
+            for (contract in unexpectedContracts) {
+                failureReasons.add(
+                    AssemblyFailureReason(
+                        contractId        = contract.contractId,
+                        failureType       = "POSITION_VIOLATION",
+                        violatedInvariant = "position ${contract.position} not in expected range " +
+                                            "[1..$totalContracts]; missing=$missingPositions"
+                    )
+                )
+            }
+            if (unexpectedContracts.isEmpty() && missingPositions.isNotEmpty()) {
+                // Positions are valid integers but set is incomplete — flag a sentinel entry
+                failureReasons.add(
+                    AssemblyFailureReason(
+                        contractId        = "POSITION_GAP",
+                        failureType       = "POSITION_VIOLATION",
+                        violatedInvariant = "position set $observedPositionSet missing $missingPositions " +
+                                            "from expected [1..$totalContracts]"
+                    )
+                )
+            }
+        }
+
+        // Incomplete execution surface — every contract must have a SUCCESS TASK_EXECUTED
+        for (contract in assemblyContracts) {
+            if (!successTaskExecutions.containsKey(contract.contractId)) {
+                failureReasons.add(
+                    AssemblyFailureReason(
+                        contractId        = contract.contractId,
+                        failureType       = "INCOMPLETE_EXECUTION_SURFACE",
+                        violatedInvariant = "contractId='${contract.contractId}' has no " +
+                                            "SUCCESS TASK_EXECUTED event (spec §6.4)"
+                    )
+                )
+            }
+        }
+
+        // ── Step 7: Build traceMap (contractId → artifactReference) ──────────
+        // Trace completeness: every SUCCESS TASK_EXECUTED must have a non-blank
+        // artifactReference tracked in the traceMap (AERP-1 §3 / spec §7.2).
+        val traceMap: Map<String, String> = assemblyContracts.associate { c ->
+            c.contractId to (successTaskExecutions[c.contractId]?.artifactReference ?: "")
+        }
+
         events.filter { ev ->
             ev.type == EventTypes.TASK_EXECUTED &&
             ev.payload["executionStatus"]?.toString() == "SUCCESS" &&
             (reportReference.isEmpty() ||
                 ev.payload["report_reference"]?.toString() == reportReference)
         }.forEach { ev ->
-            val contractId  = ev.payload["contractId"]?.toString()        ?: return@forEach
-            val artifactRef = ev.payload["artifactReference"]?.toString() ?: return@forEach
-            // Last SUCCESS wins (idempotent across retries)
-            taskExecutionData[contractId] = ContractExecutionData(
-                artifactReference = artifactRef
+            val contractId  = ev.payload["contractId"]?.toString() ?: return@forEach
+            val artifactRef = ev.payload["artifactReference"]?.toString() ?: ""
+            if (artifactRef.isBlank() || traceMap[contractId].isNullOrBlank()) {
+                val alreadyReported = failureReasons.any {
+                    it.contractId == contractId && it.failureType == "TRACE_INCOMPLETE"
+                }
+                if (!alreadyReported) {
+                    failureReasons.add(
+                        AssemblyFailureReason(
+                            contractId        = contractId,
+                            failureType       = "TRACE_INCOMPLETE",
+                            violatedInvariant = "artifactReference for contractId='$contractId' " +
+                                                "is absent from AssemblyContractReport.traceMap (AERP-1 §3)"
+                        )
+                    )
+                }
+            }
+        }
+
+        // ── Build contractOutputs (pure projection — ALL contracts, in ledger order) ──
+        val contractOutputs = assemblyContracts.map { contract ->
+            ContractOutput(
+                contractId        = contract.contractId,
+                position          = contract.position,
+                reportReference   = reportReference,
+                artifactReference = allTaskExecutions[contract.contractId]?.artifactReference ?: ""
             )
         }
 
-        // ── Step 8: Pre-flight — every contract must have SUCCESS execution surface (spec 5.6) ──
-        val incompleteContracts = sortedContracts
-            .filter { !taskExecutionData.containsKey(it.contractId) }
-            .map { it.contractId }
+        // ── Step 8: If anomalies exist → emit ASSEMBLY_FAILED ────────────────
+        if (failureReasons.isNotEmpty()) {
+            val invalidContractIds = failureReasons.map { it.contractId }.toSet()
+            val lockedSections     = contractOutputs.filter { it.contractId !in invalidContractIds }
+            val violationSurface   = contractOutputs.filter { it.contractId in invalidContractIds }
+            val primary            = failureReasons.first()
 
-        if (incompleteContracts.isNotEmpty()) {
-            return AssemblyExecutionResult.Blocked(
-                reason           = "INCOMPLETE_EXECUTION_SURFACE: $incompleteContracts",
-                missingContracts = incompleteContracts
+            ledger.appendEvent(
+                projectId,
+                EventTypes.ASSEMBLY_FAILED,
+                mapOf(
+                    "report_reference"        to reportReference,
+                    "contractSetId"           to contractSetId,
+                    "failureReasonContractId" to primary.contractId,
+                    "failureType"             to primary.failureType,
+                    "violatedInvariant"       to primary.violatedInvariant,
+                    "lockedSections"          to lockedSections.map { it.contractId },
+                    "violationSurface"        to violationSurface.map { it.contractId }
+                )
+            )
+
+            return AssemblyExecutionResult.Failed(
+                reportReference  = reportReference,
+                failureReasons   = failureReasons,
+                lockedSections   = lockedSections,
+                violationSurface = violationSurface
             )
         }
 
         // ── Step 9: Write ASSEMBLY_STARTED ───────────────────────────────────
+        // Sort only for the final artifact ordering — ledger order is preserved in
+        // contractOutputs above; this sorted list is used solely for ASSEMBLY_STARTED/COMPLETED.
+        val sortedContracts = assemblyContracts.sortedBy { it.position }
+
         ledger.appendEvent(
             projectId,
             EventTypes.ASSEMBLY_STARTED,
@@ -192,24 +340,21 @@ class AssemblyModule {
             )
         )
 
-        // ── Step 10: Build FinalArtifact with traceMap (spec §7.1/§7.2) ─────
-        val contractOutputs = sortedContracts.map { contract ->
-            val execData = taskExecutionData.getValue(contract.contractId)
+        // ── Step 10: Build FinalArtifact with traceMap ───────────────────────
+        val finalContractOutputs = sortedContracts.map { contract ->
             ContractOutput(
                 contractId        = contract.contractId,
                 position          = contract.position,
                 reportReference   = reportReference,
-                artifactReference = execData.artifactReference
+                artifactReference = successTaskExecutions.getValue(contract.contractId).artifactReference
             )
         }
-        val traceMap: Map<String, String> = sortedContracts.associate { c ->
-            c.contractId to reportReference
-        }
+
         val finalArtifact = FinalArtifact(
             reportReference = reportReference,
             contractSetId   = contractSetId,
             totalContracts  = totalContracts,
-            contractOutputs = contractOutputs,
+            contractOutputs = finalContractOutputs,
             traceMap        = traceMap
         )
 

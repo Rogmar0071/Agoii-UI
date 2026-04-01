@@ -89,6 +89,23 @@ data class AssemblyContractReport(
     val finalArtifact:   FinalArtifact
 )
 
+// ── Failure models ────────────────────────────────────────────────────────────
+
+/**
+ * Describes a single assembly failure in a machine-readable, audit-complete form.
+ *
+ * Every failure MUST carry:
+ *  - [contractId]        — the specific contract that triggered the failure.
+ *  - [failureType]       — the failure class (e.g. INCOMPLETE_EXECUTION_SURFACE,
+ *                          RRID_VIOLATION, POSITION_VIOLATION, TRACE_INCOMPLETE).
+ *  - [violatedInvariant] — the precise invariant that was violated.
+ */
+data class AssemblyFailureReason(
+    val contractId:        String,
+    val failureType:       String,
+    val violatedInvariant: String
+)
+
 // ── Result ────────────────────────────────────────────────────────────────────
 
 /**
@@ -124,6 +141,21 @@ sealed class AssemblyExecutionResult {
     data class Blocked(
         val reason:           String,
         val missingContracts: List<String> = emptyList()
+    ) : AssemblyExecutionResult()
+
+    /**
+     * Assembly detected one or more invariant violations.
+     * ASSEMBLY_FAILED has been written to the ledger; Governor MUST drive recovery.
+     *
+     * [failureReasons]  — every violation with contractId, failureType, violatedInvariant.
+     * [lockedSections]  — contract outputs that passed all invariant checks.
+     * [violationSurface] — contract outputs that triggered at least one failure.
+     */
+    data class Failed(
+        val reportReference:  String,
+        val failureReasons:   List<AssemblyFailureReason>,
+        val lockedSections:   List<ContractOutput>,
+        val violationSurface: List<ContractOutput>
     ) : AssemblyExecutionResult()
 }
 

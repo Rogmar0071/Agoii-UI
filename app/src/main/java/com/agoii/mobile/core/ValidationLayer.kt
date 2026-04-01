@@ -194,6 +194,7 @@ class ValidationLayer {
             EventTypes.ASSEMBLY_STARTED    -> checkAssemblyStarted(projectId, payload)
             EventTypes.ASSEMBLY_VALIDATED  -> checkAssemblyValidated(projectId, state)
             EventTypes.ASSEMBLY_COMPLETED  -> checkAssemblyCompleted(projectId, payload)
+            EventTypes.ASSEMBLY_FAILED     -> checkAssemblyFailed(projectId, payload)
             EventTypes.ICS_STARTED         -> checkIcsStarted(projectId, payload)
             EventTypes.ICS_COMPLETED       -> checkIcsCompleted(projectId, payload)
             // UCS-1 ingestion lifecycle events
@@ -653,6 +654,30 @@ class ValidationLayer {
             )
     }
 
+    private fun checkAssemblyFailed(projectId: String, payload: Map<String, Any>) {
+        requireKeys(projectId, EventTypes.ASSEMBLY_FAILED, payload, ASSEMBLY_FAILED_KEYS)
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_FAILED missing or blank 'report_reference' in '$projectId'"
+            )
+        payload["contractSetId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_FAILED missing or blank 'contractSetId' in '$projectId'"
+            )
+        payload["failureReasonContractId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_FAILED missing or blank 'failureReasonContractId' in '$projectId'"
+            )
+        payload["failureType"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_FAILED missing or blank 'failureType' in '$projectId'"
+            )
+        payload["violatedInvariant"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_FAILED missing or blank 'violatedInvariant' in '$projectId'"
+            )
+    }
+
     private fun checkAssemblyValidated(projectId: String, state: ValidationState) {
         if (!state.hasExecutionCompleted) {
             throw LedgerValidationException(
@@ -901,6 +926,11 @@ class ValidationLayer {
         private val ASSEMBLY_COMPLETED_KEYS  = setOf(
             "report_reference", "contractSetId", "totalContracts",
             "finalArtifactReference", "taskId", "assemblyId", "traceMap"
+        )
+        private val ASSEMBLY_FAILED_KEYS     = setOf(
+            "report_reference", "contractSetId",
+            "failureReasonContractId", "failureType", "violatedInvariant",
+            "lockedSections", "violationSurface"
         )
         private val ICS_STARTED_KEYS         = setOf("report_reference", "finalArtifactReference", "taskId")
         private val ICS_COMPLETED_KEYS       = setOf("report_reference", "taskId", "icsOutputReference")

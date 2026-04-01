@@ -17,6 +17,7 @@ object EventTypes {
     const val ASSEMBLY_STARTED    = "assembly_started"
     const val ASSEMBLY_VALIDATED  = "assembly_validated"
     const val ASSEMBLY_COMPLETED  = "assembly_completed"
+    const val ASSEMBLY_FAILED     = "assembly_failed"
     const val ICS_STARTED         = "ics_started"
     const val ICS_COMPLETED       = "ics_completed"
 
@@ -57,6 +58,7 @@ object EventTypes {
         ASSEMBLY_STARTED,
         ASSEMBLY_VALIDATED,
         ASSEMBLY_COMPLETED,
+        ASSEMBLY_FAILED,
         ICS_STARTED,
         ICS_COMPLETED,
         TASK_CREATED,

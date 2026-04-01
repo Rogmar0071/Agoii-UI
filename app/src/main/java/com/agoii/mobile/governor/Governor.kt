@@ -240,11 +240,40 @@ class Governor(
             // No auto-retry: task failure requires external escalation.
             EventTypes.TASK_FAILED -> null
 
+            // Governor-only recovery flow: ASSEMBLY_FAILED → RECOVERY_CONTRACT (CLC-1 §4.2)
+            // Governor reads the primary failure from the ASSEMBLY_FAILED payload and issues
+            // a RECOVERY_CONTRACT, driving the recovery spine deterministically.
+            // NO CoreBridge or implicit orchestration involved.
+            EventTypes.ASSEMBLY_FAILED -> {
+                val contractId = last.payload["failureReasonContractId"]?.toString()
+                    ?.takeIf { it.isNotBlank() } ?: return null
+                val failureClass = last.payload["failureType"]?.toString()
+                    ?.takeIf { it.isNotBlank() } ?: return null
+                val violationField = last.payload["violatedInvariant"]?.toString()
+                    ?.takeIf { it.isNotBlank() } ?: return null
+                val reportReference = last.payload["report_reference"]?.toString()
+                    ?.takeIf { it.isNotBlank() } ?: return null
+                Event(
+                    type    = EventTypes.RECOVERY_CONTRACT,
+                    payload = mapOf(
+                        "contractId"          to contractId,
+                        "taskId"              to "assembly_recovery_$contractId",
+                        "contractType"        to "ASSEMBLY_RECOVERY",
+                        "report_reference"    to reportReference,
+                        "failureClass"        to failureClass,
+                        "violationField"      to violationField,
+                        "correctionDirective" to "RECOVER_ASSEMBLY_FAILURE",
+                        "successCondition"    to "ASSEMBLY_COMPLETED",
+                        "artifactReference"   to "assembly_failed_$contractId",
+                        "irs_violation_type"  to failureClass
+                    )
+                )
+            }
+
             // CLC-1 delta loop: RECOVERY_CONTRACT → DELTA_CONTRACT_CREATED
             // Governor extracts contractId, violationField, report_reference from the
             // recovery payload and issues DELTA_CONTRACT_CREATED with the iteration count.
-            EventTypes.RECOVERY_CONTRACT -> {
-                val contractId      = last.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+            EventTypes.RECOVERY_CONTRACT -> {                val contractId      = last.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
                 val violationField  = last.payload["violationField"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
