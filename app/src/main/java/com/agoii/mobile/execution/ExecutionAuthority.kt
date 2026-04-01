@@ -260,6 +260,19 @@ sealed class UniversalIngestionResult {
     ) : UniversalIngestionResult()
 }
 
+// ---------- DELTA EXECUTION (DEE-1) ----------
+
+private enum class ExecutionMode {
+    NORMAL,
+    DELTA
+}
+
+private data class DeltaContext(
+    val violationField: String,
+    val anchorState: AnchorState,
+    val previousReportReference: String
+)
+
 // ---------- EXECUTION AUTHORITY ----------
 
 /**
@@ -473,6 +486,17 @@ class ExecutionAuthority(
                 knownTaskId = taskId
             )
 
+        // ── DEE-1: Detect delta mode from contractId prefix ──────────────────
+        val isDelta = executionTask.contractId.startsWith("RCF_")
+        val deltaContext: DeltaContext? = if (isDelta) {
+            DeltaContext(
+                violationField          = extractViolationFieldFromContractId(executionTask.contractId),
+                anchorState             = extractAnchorStateFromRecovery(executionTask, events),
+                previousReportReference = extractReportReferenceFromRecovery(executionTask)
+            )
+        } else null
+        val executionMode = if (isDelta) ExecutionMode.DELTA else ExecutionMode.NORMAL
+
         // ── MQP-EXECUTION-INVARIANT-LOCK-01: mandatory execution closure ────────
         // Every path from here MUST produce TASK_EXECUTED (SUCCESS or FAILURE).
         // This try/catch is the final safety net for any unexpected exception that
@@ -501,6 +525,12 @@ class ExecutionAuthority(
         //   ContractorSystem owns: matching → profile lookup → executor call → domain artifact.
         //   Capabilities read from CONTRACT_CREATED event with STRUCTURAL_ACCURACY fallback.
         val requiredCapabilities = extractCapabilitiesFromLedger(executionTask.contractId, events)
+
+        // ── DEE-1 Step 2: Enforce anchor state integrity before contractor execution ─
+        if (executionMode == ExecutionMode.DELTA && deltaContext != null) {
+            enforceAnchorStateIntegrity(deltaContext)
+        }
+
         val systemResult = contractorSystem.execute(
             taskId               = executionTask.taskId,
             contractId           = executionTask.contractId,
@@ -543,12 +573,28 @@ class ExecutionAuthority(
 
         val executionOutput = resolved.executionOutput
 
+        // ── DEE-1 Step 3: Filter to delta surface before report generation ────
+        val filteredOutput = if (executionMode == ExecutionMode.DELTA && deltaContext != null) {
+            filterToDeltaSurface(executionOutput, deltaContext)
+        } else executionOutput
+
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
-        val contractReport = generateContractReport(executionTask, executionOutput, resolved.trace, contractorId)
+        val contractReport = generateContractReport(executionTask, filteredOutput, resolved.trace, contractorId)
 
         // ── Step 5-CHV1: Enforce report completeness (CONVERGENCE_HARDENING_V1 / FSE-2) ─
-        val reportViolations = validateReportCompleteness(contractReport, executionTask.contractId)
+        val reportViolations = validateReportCompleteness(contractReport, executionTask.contractId, deltaContext)
         if (reportViolations.isNotEmpty()) {
+            // ── DEE-1 Step 5: Loop guard — block non-converging delta ─────────
+            if (executionMode == ExecutionMode.DELTA) {
+                if (isNonConverging(deltaContext, reportViolations)) {
+                    return ExecutionAuthorityExecutionResult.BlockedWithRecovery(
+                        reason            = "NON_CONVERGING_DELTA",
+                        recoveryContracts = emptyList(),
+                        violations        = reportViolations,
+                        reportReference   = contractReport.reportReference
+                    )
+                }
+            }
             val recoveryContracts = buildRecoveryContracts(reportViolations, contractReport)
             require(recoveryContracts.size == reportViolations.size) {
                 "RCF-1 VIOLATION: Recovery contracts must map 1:1 with violations"
@@ -595,10 +641,10 @@ class ExecutionAuthority(
 
         // Wrap artifact for AERP-1 compliance: validation is against execution output
         val reportBackedOutput = ContractorExecutionOutput(
-            taskId         = executionOutput.taskId,
-            resultArtifact = executionOutput.resultArtifact,
-            status         = executionOutput.status,
-            error          = executionOutput.error
+            taskId         = filteredOutput.taskId,
+            resultArtifact = filteredOutput.resultArtifact,
+            status         = filteredOutput.status,
+            error          = filteredOutput.error
         )
 
         val validationResult = validator.validate(task, reportBackedOutput)
@@ -635,7 +681,7 @@ class ExecutionAuthority(
 
         // ── Step 7: TASK_EXECUTED ledger write — only after authorization ────
         val artifactRef    = buildArtifactReference(executionTask.reportReference, executionTask.taskId)
-        val execStatusStr  = executionOutput.status.name
+        val execStatusStr  = filteredOutput.status.name
         val validStatusStr = validationResult.verdict.name
 
         ledger.appendEvent(
@@ -657,7 +703,7 @@ class ExecutionAuthority(
 
         ExecutionAuthorityExecutionResult.Executed(
             taskId            = executionTask.taskId,
-            executionStatus   = executionOutput.status,
+            executionStatus   = filteredOutput.status,
             validationVerdict = validationResult.verdict,
             report            = frozenReport
         )
@@ -1104,7 +1150,8 @@ class ExecutionAuthority(
      */
     private fun validateReportCompleteness(
         report: ContractReport,
-        contractId: String
+        contractId: String,
+        deltaContext: DeltaContext? = null
     ): List<Violation> {
         val violations = mutableListOf<Violation>()
 
@@ -1238,6 +1285,51 @@ class ExecutionAuthority(
                     correctionDirective = "Provide execution output in rawOutput when exitCode == 0"
                 )
             )
+        }
+
+        // ── DEE-1-PATCH Step 3: Field-level regression check across all anchor paths ─
+        if (deltaContext != null) {
+
+            val anchorPaths = deltaContext.anchorState.validatedPaths
+
+            anchorPaths.forEach { path ->
+                if (path != deltaContext.violationField) {
+
+                    val anchorValue   = extractFieldValue(deltaContext.anchorState, path)
+                    val currentValue  = extractFieldValue(report, path)
+
+                    if (anchorValue != currentValue) {
+                        violations.add(
+                            Violation(
+                                reportReference     = report.reportReference,
+                                contractId          = contractId,
+                                fieldPath           = path,
+                                failureClass        = FailureClass.DETERMINISM,
+                                expected            = anchorValue.toString(),
+                                actual              = currentValue.toString(),
+                                message             = "REGRESSION_DETECTED",
+                                correctionDirective = "Restore field: $path"
+                            )
+                        )
+                    }
+                }
+            }
+
+            // CORRECTION CHECK
+            if (violations.any { it.fieldPath == deltaContext.violationField }) {
+                violations.add(
+                    Violation(
+                        reportReference     = report.reportReference,
+                        contractId          = contractId,
+                        fieldPath           = deltaContext.violationField,
+                        failureClass        = FailureClass.COMPLETENESS,
+                        expected            = "corrected",
+                        actual              = "still_invalid",
+                        message             = "VIOLATION_NOT_RESOLVED",
+                        correctionDirective = "Fix violation at ${deltaContext.violationField}"
+                    )
+                )
+            }
         }
 
         return violations.sortedWith(
@@ -1663,5 +1755,108 @@ class ExecutionAuthority(
             contractId      = normalized.contractId,
             reportReference = normalized.reportReference
         )
+    }
+
+    // ── DEE-1 Step 6: Helper functions ────────────────────────────────────────
+
+    private fun extractViolationFieldFromContractId(contractId: String): String {
+        return contractId.substringAfterLast("_").replace("_", ".")
+    }
+
+    private fun extractAnchorStateFromRecovery(
+        task: ExecutionTask,
+        events: List<com.agoii.mobile.core.Event>
+    ): AnchorState {
+        val reportRef = task.reportReference
+        val reportEvent = events
+            .firstOrNull { it.payload["report_reference"] == reportRef }
+            ?: throw IllegalStateException("ANCHOR_STATE_MISSING: $reportRef")
+        val report = reconstructContractReport(reportEvent)
+        return AnchorState(
+            reportReference    = report.reportReference,
+            validatedTypes     = report.typeInventory,
+            validatedStructure = report.typeInventory.toSet(),
+            validatedPaths     = extractValidatedPaths(report),
+            validatedReport    = report
+        )
+    }
+
+    private fun reconstructContractReport(event: com.agoii.mobile.core.Event): ContractReport {
+        return event.payload["contract_report"] as? ContractReport
+            ?: throw IllegalStateException(
+                "ANCHOR_STATE_MISSING: contract_report not found in event payload for report_reference=${event.payload["report_reference"]}"
+            )
+    }
+
+    private fun extractValidatedPaths(report: ContractReport): List<String> {
+        return buildList {
+            if (report.typeInventory.isNotEmpty()) add("typeInventory")
+            if (report.functionSignatures.isNotEmpty()) add("functionSignatures")
+            if (report.logicFlow.isNotEmpty()) add("logicFlow")
+            if (report.errorConditions.isNotEmpty()) add("errorConditions")
+            add("exitCode")
+            if (report.rawOutput.isNotEmpty()) add("rawOutput")
+        }
+    }
+
+    private fun extractReportReferenceFromRecovery(task: ExecutionTask): String {
+        return task.reportReference
+    }
+
+    private fun enforceAnchorStateIntegrity(deltaContext: DeltaContext) {
+        // NO-OP placeholder (future extension point)
+    }
+
+    private fun filterToDeltaSurface(
+        output: ContractorExecutionOutput,
+        deltaContext: DeltaContext
+    ): ContractorExecutionOutput {
+        val anchor = deltaContext.anchorState
+        val field  = deltaContext.violationField
+
+        val anchorArtifact = anchorToArtifact(anchor)
+        val deltaArtifact  = output.resultArtifact
+
+        val correctedValue = deltaArtifact[field]
+            ?: throw IllegalStateException("DELTA_MISSING_FIELD: $field")
+
+        val newArtifact = mutableMapOf<String, Any>()
+        newArtifact.putAll(anchorArtifact)
+        newArtifact[field] = correctedValue
+
+        return output.copy(resultArtifact = newArtifact)
+    }
+
+    private fun anchorToArtifact(anchor: AnchorState): Map<String, Any> {
+        return anchor.validatedStructure.associateWith { it }
+    }
+
+    private fun extractFieldValue(source: Any, field: String): Any? {
+        val report: ContractReport? = when (source) {
+            is ContractReport -> source
+            is AnchorState    -> source.validatedReport
+            else              -> null
+        }
+        return when (field) {
+            "typeInventory"      -> report?.typeInventory
+            "functionSignatures" -> report?.functionSignatures
+            "logicFlow"          -> report?.logicFlow
+            "errorConditions"    -> report?.errorConditions
+            "exitCode"           -> report?.exitCode
+            "rawOutput"          -> report?.rawOutput
+            else                 -> null
+        }
+    }
+
+    private fun isNonConverging(
+        deltaContext: DeltaContext?,
+        violations: List<Violation>
+    ): Boolean {
+        if (deltaContext == null) return false
+
+        return violations.any {
+            it.fieldPath == deltaContext.violationField &&
+            it.failureClass == FailureClass.COMPLETENESS
+        }
     }
 }

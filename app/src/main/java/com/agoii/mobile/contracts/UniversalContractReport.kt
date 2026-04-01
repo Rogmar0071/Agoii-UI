@@ -80,7 +80,7 @@ class UniversalContractReport {
      * Extract an immutable [AnchorState] from [report] (AERP-1, A4).
      *
      * The returned [AnchorState] MUST NOT be modified after extraction.
-     * It is embedded in every [com.agoii.mobile.execution.ExecutionRecoveryContract]
+     * It is embedded in every [ExecutionRecoveryContract]
      * issued for this execution attempt.
      *
      * @param report The [ContractReport] produced by [generateReport].
