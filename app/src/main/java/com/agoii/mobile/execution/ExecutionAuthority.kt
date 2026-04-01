@@ -53,6 +53,7 @@ import com.agoii.mobile.contracts.UniversalContractNormalizer
 import com.agoii.mobile.contracts.UniversalContractValidator
 import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
+import java.util.UUID
 import com.agoii.mobile.core.LedgerValidationException
 import com.agoii.mobile.ics.IcsExecutionResult
 import com.agoii.mobile.ics.IcsModule
@@ -473,21 +474,32 @@ class ExecutionAuthority(
         // When ICS_STARTED is the last ledger event, IcsModule.process() is invoked
         // automatically; no external call is required or permitted.
         if (lastEvent?.type == EventTypes.ICS_STARTED) {
-            val result = icsModule.process(projectId, ledger)
-            return when (result) {
-                is com.agoii.mobile.ics.IcsExecutionResult.Processed ->
-                    ExecutionAuthorityExecutionResult.IcsCompleted(
-                        reportReference = lastEvent.payload["report_reference"]?.toString() ?: ""
-                    )
-                is com.agoii.mobile.ics.IcsExecutionResult.AlreadyCompleted ->
-                    ExecutionAuthorityExecutionResult.IcsCompleted(
-                        reportReference = result.reportReference
-                    )
-                else -> throw IllegalStateException(
-                    "AGOII-ALIGN-1-PATCH: ICS execution did not complete after ICS_STARTED " +
-                    "— result=${result::class.simpleName}"
+            val reportReference = lastEvent.payload["report_reference"]?.toString() ?: ""
+
+            // AGOII-ALIGN-1-FINAL-LOCK RULE 4: ICS idempotency guard.
+            // If ICS_COMPLETED already exists for this report_reference, do not re-execute.
+            val icsAlreadyCompleted = events.any {
+                it.type == EventTypes.ICS_COMPLETED &&
+                it.payload["report_reference"]?.toString() == reportReference
+            }
+            if (icsAlreadyCompleted) {
+                return ExecutionAuthorityExecutionResult.Idempotent
+            }
+
+            icsModule.process(projectId, ledger)
+
+            // AGOII-ALIGN-1-FINAL-LOCK RULE 3: ICS ledger verification.
+            // Trust ledger mutation, NOT the return value of IcsModule.process().
+            val updatedEvents = ledger.loadEvents(projectId)
+            val lastUpdated   = updatedEvents.lastOrNull()
+            if (lastUpdated?.type != EventTypes.ICS_COMPLETED) {
+                throw IllegalStateException(
+                    "AGOII-ALIGN-1-FINAL-LOCK: ICS_COMPLETED not written to ledger after ICS_STARTED " +
+                    "— last event=${lastUpdated?.type}"
                 )
             }
+
+            return ExecutionAuthorityExecutionResult.IcsCompleted(reportReference = reportReference)
         }
 
         // ── AGOII-ALIGN-1-PATCH RULE 1/2 — Recovery trigger lock ────────────
@@ -504,6 +516,16 @@ class ExecutionAuthority(
                 val contractId = lastEvent.payload["contractId"]?.toString()
                     ?.takeIf { it.isNotBlank() }
                     ?: return ExecutionAuthorityExecutionResult.NotTriggered
+                // AGOII-ALIGN-1-FINAL-LOCK RULE 1: Recovery idempotency guard.
+                // If RECOVERY_CONTRACT already exists for this contractId, do not re-emit.
+                val recoveryId = "RCF_${contractId}_EXECUTION"
+                val recoveryAlreadyExists = events.any {
+                    it.type == EventTypes.RECOVERY_CONTRACT &&
+                    it.payload["contractId"]?.toString() == recoveryId
+                }
+                if (recoveryAlreadyExists) {
+                    return ExecutionAuthorityExecutionResult.Idempotent
+                }
                 val reportReference = lastEvent.payload["report_reference"]?.toString()
                     ?.takeIf { it.isNotBlank() }
                     ?: return ExecutionAuthorityExecutionResult.NotTriggered
@@ -1096,24 +1118,23 @@ class ExecutionAuthority(
         anchor:        AnchorState,
         violation:     ViolationSurface
     ): ExecutionAuthorityExecutionResult.RecoveryIssued {
-        try {
-            ledger.appendEvent(
-                projectId,
-                EventTypes.RECOVERY_CONTRACT,
-                mapOf(
-                    "contractId"       to executionTask.contractId,
-                    "taskId"           to executionTask.taskId,
-                    "report_reference" to anchor.reportReference,
-                    "failure_class"    to "LOGICAL",
-                    "violation_field"  to violation.field,
-                    "violation_reason" to violation.reason,
-                    "locked_fields"    to anchor.lockedFields.toList(),
-                    "source"           to "EXECUTION_AUTHORITY"
-                )
-            )
-        } catch (_: Exception) {
-            // Ledger write failure does not suppress the recovery result
-        }
+        // AGOII-ALIGN-1-FINAL-LOCK RULE 1: Recovery singularity.
+        // All RECOVERY_CONTRACT writes MUST route through writeRecoveryContractToLedger —
+        // never appendEvent directly.
+        val failureClassEnum = runCatching { FailureClass.valueOf("LOGICAL") }
+            .getOrElse { FailureClass.STRUCTURAL }
+        val recovery = ExecutionRecoveryContract(
+            reportReference     = anchor.reportReference,
+            contractId          = executionTask.contractId,
+            failureClass        = failureClassEnum,
+            violationField      = violation.field,
+            correctionDirective = "Resolve LOGICAL for task '${executionTask.taskId}' " +
+                                  "at position ${executionTask.position}: ${violation.field}",
+            anchorState         = anchor,
+            successCondition    = "TASK_EXECUTED written with executionStatus=SUCCESS AND validationStatus=VALIDATED"
+        )
+        val artifactRef = buildArtifactReference(anchor.reportReference, executionTask.taskId, "VIOLATION_SURFACE")
+        writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
         return ExecutionAuthorityExecutionResult.RecoveryIssued(
             contractId = executionTask.contractId,
             reason     = violation.reason
@@ -1616,6 +1637,7 @@ class ExecutionAuthority(
                 projectId,
                 EventTypes.RECOVERY_CONTRACT,
                 mapOf(
+                    "recoveryId"          to UUID.randomUUID().toString(),
                     "contractId"          to recovery.contractId,
                     "report_reference"    to recovery.reportReference,
                     "failureClass"        to recovery.failureClass.name,
