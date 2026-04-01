@@ -41,13 +41,15 @@ import com.agoii.mobile.contracts.ContractCapability
 import com.agoii.mobile.contracts.ContractEnforcementEngine
 import com.agoii.mobile.contracts.ContractEnforcementResult
 import com.agoii.mobile.contracts.ContractReport
+import com.agoii.mobile.contracts.ExecutionRecoveryContract
+import com.agoii.mobile.contracts.FailureClass
+import com.agoii.mobile.contracts.Violation
 import com.agoii.mobile.contracts.ContractValidationResult
 import com.agoii.mobile.contracts.ContractViolation
 import com.agoii.mobile.contracts.ExecutionType
 import com.agoii.mobile.contracts.TargetDomain
 import com.agoii.mobile.contracts.UniversalContract
 import com.agoii.mobile.contracts.UniversalContractNormalizer
-import com.agoii.mobile.contracts.UniversalContractRecovery
 import com.agoii.mobile.contracts.UniversalContractValidator
 import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
@@ -139,28 +141,6 @@ data class ViolationSurface(
 )
 
 /**
- * Recovery contract issued on execution or validation failure (RCF-1).
- * One contract = ONE violation surface. Anchor state is immutable.
- *
- * FAILURE_REFERENCE: contractId + taskId + executionPosition
- * ANCHOR_STATE:      Immutable snapshot derived from [ContractReport] (AERP-1).
- * VIOLATION_SURFACE: Single, atomic failing unit — no grouping permitted.
- */
-data class ExecutionRecoveryContract(
-    val contractId:          String,
-    val taskId:              String,
-    val contractType:        String,
-    val executionPosition:   Int,
-    val reportReference:     String,
-    val failureClass:        String,
-    val anchorState:         AnchorState,
-    val violationSurface:    String,
-    val correctionDirective: String,
-    val constraintLock:      String,
-    val successCondition:    String
-)
-
-/**
  * Result of [ExecutionAuthority.executeFromLedger].
  */
 sealed class ExecutionAuthorityExecutionResult {
@@ -178,7 +158,9 @@ sealed class ExecutionAuthorityExecutionResult {
      */
     data class BlockedWithRecovery(
         val reason:            String,
-        val recoveryContracts: List<ExecutionRecoveryContract>
+        val recoveryContracts: List<ExecutionRecoveryContract>,
+        val violations:        List<Violation> = emptyList(),
+        val reportReference:   String = ""
     ) : ExecutionAuthorityExecutionResult()
 
     /** TASK_EXECUTED already exists with SUCCESS for this taskId — idempotent guard triggered. */
@@ -304,11 +286,10 @@ class ExecutionAuthority(
     private val assemblyModule  = AssemblyModule()
     private val icsModule       = IcsModule()
 
-    // ── UCS-1 ingestion components (Surfaces 2, 3, 6, 8) ─────────────────────
+    // ── UCS-1 ingestion components (Surfaces 2, 3, 6) ────────────────────────
     private val contractValidator  = UniversalContractValidator()
     private val contractNormalizer = UniversalContractNormalizer()
     private val enforcementEngine  = ContractEnforcementEngine()
-    private val contractRecovery   = UniversalContractRecovery()
 
     companion object {
         /**
@@ -565,8 +546,20 @@ class ExecutionAuthority(
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
         val contractReport = generateContractReport(executionTask, executionOutput, resolved.trace, contractorId)
 
-        // ── Step 5-CHV1: Enforce report completeness (CONVERGENCE_HARDENING_V1) ─
-        validateReportCompleteness(contractReport)
+        // ── Step 5-CHV1: Enforce report completeness (CONVERGENCE_HARDENING_V1 / FSE-2) ─
+        val reportViolations = validateReportCompleteness(contractReport, executionTask.contractId)
+        if (reportViolations.isNotEmpty()) {
+            val recoveryContracts = buildRecoveryContracts(reportViolations, contractReport)
+            require(recoveryContracts.size == reportViolations.size) {
+                "RCF-1 VIOLATION: Recovery contracts must map 1:1 with violations"
+            }
+            return ExecutionAuthorityExecutionResult.BlockedWithRecovery(
+                reason = "REPORT_VALIDATION_FAILED",
+                recoveryContracts = recoveryContracts,
+                violations = reportViolations,
+                reportReference = contractReport.reportReference
+            )
+        }
 
         // ── Step 5a: Freeze report — immutable snapshot (AERP-1 / RRIL-1) ───
         val frozenReport = contractReport.copy()
@@ -1103,25 +1096,189 @@ class ExecutionAuthority(
     }
 
     /**
-     * Enforce AERP-1 report completeness (CONVERGENCE_HARDENING_V1).
+     * Enforce AERP-1 report completeness (CONVERGENCE_HARDENING_V1 / FSE-1).
      *
-     * All four AERP-1 required surfaces MUST be non-empty.
-     * Throws [IllegalArgumentException] if any surface is missing, blocking execution
-     * before validation proceeds.
+     * Returns a deterministically-ordered list of [Violation] objects — one per failing
+     * field path. An empty list means the report is complete and execution may proceed.
+     * No exception is thrown; all failures are emitted as atomic [Violation] values.
      */
-    private fun validateReportCompleteness(report: ContractReport) {
-        require(report.typeInventory.isNotEmpty()) {
-            "AERP-1 VIOLATION: typeInventory is empty — report_reference=${report.reportReference}"
+    private fun validateReportCompleteness(
+        report: ContractReport,
+        contractId: String
+    ): List<Violation> {
+        val violations = mutableListOf<Violation>()
+
+        // typeInventory — EMPTY
+        if (report.typeInventory.isEmpty()) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "typeInventory",
+                    failureClass       = FailureClass.COMPLETENESS,
+                    expected           = "non-empty list",
+                    actual             = "empty",
+                    message            = "typeInventory is empty",
+                    correctionDirective = "Add at least one type entry to typeInventory"
+                )
+            )
         }
-        require(report.functionSignatures.isNotEmpty()) {
-            "AERP-1 VIOLATION: functionSignatures is empty — report_reference=${report.reportReference}"
+
+        // functionSignatures — EMPTY
+        if (report.functionSignatures.isEmpty()) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "functionSignatures",
+                    failureClass       = FailureClass.COMPLETENESS,
+                    expected           = "non-empty list",
+                    actual             = "empty",
+                    message            = "functionSignatures is empty",
+                    correctionDirective = "Add at least one function signature"
+                )
+            )
         }
-        require(report.logicFlow.isNotEmpty()) {
-            "AERP-1 VIOLATION: logicFlow is empty — report_reference=${report.reportReference}"
+
+        // functionSignatures[i] — INVALID
+        report.functionSignatures.forEachIndexed { i, value ->
+            if (value.isBlank()) {
+                violations.add(
+                    Violation(
+                        reportReference    = report.reportReference,
+                        contractId         = contractId,
+                        fieldPath          = "functionSignatures[$i]",
+                        failureClass       = FailureClass.STRUCTURAL,
+                        expected           = "valid non-empty function signature",
+                        actual             = value,
+                        message            = "Invalid function signature at index $i",
+                        correctionDirective = "Replace with valid function signature at index $i"
+                    )
+                )
+            }
         }
-        require(report.exitCode == 0 || report.errorConditions.isNotEmpty()) {
-            "AERP-1 VIOLATION: errorConditions is empty on non-zero exitCode — report_reference=${report.reportReference}"
+
+        // logicFlow — EMPTY
+        if (report.logicFlow.isEmpty()) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "logicFlow",
+                    failureClass       = FailureClass.COMPLETENESS,
+                    expected           = "non-empty execution flow",
+                    actual             = "empty",
+                    message            = "logicFlow is empty",
+                    correctionDirective = "Add execution steps to logicFlow"
+                )
+            )
         }
+
+        // logicFlow[i] — INVALID
+        report.logicFlow.forEachIndexed { i, step ->
+            if (step.isBlank()) {
+                violations.add(
+                    Violation(
+                        reportReference    = report.reportReference,
+                        contractId         = contractId,
+                        fieldPath          = "logicFlow[$i]",
+                        failureClass       = FailureClass.LOGICAL,
+                        expected           = "valid execution step",
+                        actual             = step,
+                        message            = "Invalid logicFlow step at index $i",
+                        correctionDirective = "Replace with valid execution step at index $i"
+                    )
+                )
+            }
+        }
+
+        // errorConditions vs exitCode
+        if (report.exitCode != 0 && report.errorConditions.isEmpty()) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "errorConditions",
+                    failureClass       = FailureClass.LOGICAL,
+                    expected           = "non-empty when exitCode != 0",
+                    actual             = "empty with exitCode=${report.exitCode}",
+                    message            = "errorConditions missing for non-zero exitCode",
+                    correctionDirective = "Add errorConditions describing failure when exitCode != 0"
+                )
+            )
+        }
+
+        // exitCode constraint
+        if (report.exitCode != 0 && report.exitCode != 1) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "exitCode",
+                    failureClass       = FailureClass.CONSTRAINT,
+                    expected           = "0 or 1",
+                    actual             = report.exitCode.toString(),
+                    message            = "Invalid exitCode value",
+                    correctionDirective = "Set exitCode to 0 (success) or 1 (failure)"
+                )
+            )
+        }
+
+        // rawOutput empty on success
+        if (report.exitCode == 0 && report.rawOutput.isBlank()) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "rawOutput",
+                    failureClass       = FailureClass.COMPLETENESS,
+                    expected           = "non-empty output when execution succeeds",
+                    actual             = "blank",
+                    message            = "rawOutput is empty on successful execution",
+                    correctionDirective = "Provide execution output in rawOutput when exitCode == 0"
+                )
+            )
+        }
+
+        return violations.sortedWith(
+            compareBy<Violation> { it.fieldPath }
+                .thenBy { it.failureClass.ordinal }
+        )
+    }
+
+    /**
+     * Transform a list of [Violation] objects into deterministic [ExecutionRecoveryContract]
+     * instances (FSE-2 / RCF-1).
+     *
+     * One violation → one recovery contract. The anchor state is derived from the frozen
+     * [ContractReport] at the moment of validation and embedded as-is. The result is
+     * deterministically ordered by violationField ASC, then failureClass ordinal ASC.
+     */
+    private fun buildRecoveryContracts(
+        violations: List<Violation>,
+        report: ContractReport
+    ): List<ExecutionRecoveryContract> {
+        val anchorState = AnchorState(
+            reportReference    = report.reportReference,
+            validatedTypes     = report.typeInventory,
+            validatedStructure = report.typeInventory.toSet(),
+            validatedPaths     = report.logicFlow,
+            validatedReport    = report
+        )
+        return violations.map { violation ->
+            ExecutionRecoveryContract(
+                reportReference     = violation.reportReference,
+                contractId          = "RCF_${violation.contractId}_${violation.fieldPath.replace(".", "_").replace("[", "_").replace("]", "")}",
+                failureClass        = violation.failureClass,
+                violationField      = violation.fieldPath,
+                correctionDirective = violation.correctionDirective,
+                anchorState         = anchorState,
+                successCondition    = "FIELD_CORRECTED:${violation.fieldPath}"
+            )
+        ).sortedWith(
+            compareBy<ExecutionRecoveryContract> { it.violationField }
+                .thenBy { it.failureClass.ordinal }
+        )
     }
 
     /**
@@ -1143,25 +1300,25 @@ class ExecutionAuthority(
         anchorState:     AnchorState,
         failureClass:    String,
         violationSurface: String
-    ): ExecutionRecoveryContract = ExecutionRecoveryContract(
-        contractId          = task?.contractId ?: "UNKNOWN",
-        taskId              = task?.taskId     ?: "UNKNOWN",
-        contractType        = "TASK_EXECUTION",
-        executionPosition   = task?.position   ?: -1,
-        reportReference     = anchorState.reportReference,
-        failureClass        = failureClass,
-        anchorState         = anchorState,
-        violationSurface    = violationSurface,
-        correctionDirective = "Resolve $failureClass for task '${task?.taskId ?: "UNKNOWN"}' " +
-                              "at position ${task?.position ?: -1}: $violationSurface",
-        constraintLock      = "ANCHOR_STATE is IMMUTABLE — no modification to validated fields permitted",
-        successCondition    = "TASK_EXECUTED written with executionStatus=SUCCESS AND validationStatus=VALIDATED"
-    )
+    ): ExecutionRecoveryContract {
+        val failureClassEnum = runCatching { FailureClass.valueOf(failureClass) }
+            .getOrElse { FailureClass.STRUCTURAL }
+        return ExecutionRecoveryContract(
+            reportReference     = anchorState.reportReference,
+            contractId          = "RCF_${task?.contractId ?: "UNKNOWN"}_EXECUTION",
+            failureClass        = failureClassEnum,
+            violationField      = violationSurface,
+            correctionDirective = "Resolve $failureClass for task '${task?.taskId ?: "UNKNOWN"}' " +
+                                  "at position ${task?.position ?: -1}: $violationSurface",
+            anchorState         = anchorState,
+            successCondition    = "TASK_EXECUTED written with executionStatus=SUCCESS AND validationStatus=VALIDATED"
+        )
+    }
 
     /**
      * Write [ExecutionRecoveryContract] to the ledger as a RECOVERY_CONTRACT event (RCF-1).
      * All recovery MUST be ledger-materialized; in-memory recovery is PROHIBITED.
-     * Includes FAILURE_REFERENCE fields (taskId, report_reference) for ledger traceability.
+     * Includes FAILURE_REFERENCE fields (report_reference, contractId) for ledger traceability.
      */
     private fun writeRecoveryContractToLedger(
         projectId:  String,
@@ -1175,12 +1332,9 @@ class ExecutionAuthority(
                 EventTypes.RECOVERY_CONTRACT,
                 mapOf(
                     "contractId"          to recovery.contractId,
-                    "taskId"              to recovery.taskId,
-                    "contractType"        to recovery.contractType,
-                    "executionPosition"   to recovery.executionPosition,
                     "report_reference"    to recovery.reportReference,
-                    "failureClass"        to recovery.failureClass,
-                    "violationSurface"    to recovery.violationSurface,
+                    "failureClass"        to recovery.failureClass.name,
+                    "violationField"      to recovery.violationField,
                     "correctionDirective" to recovery.correctionDirective,
                     "successCondition"    to recovery.successCondition,
                     "artifactReference"   to artifactRef
@@ -1434,12 +1588,14 @@ class ExecutionAuthority(
             )
             val artifactRef      = buildArtifactReference(contract.reportReference, ingestTaskId, "NO_ARTIFACT")
             val violationSurface = "VALIDATION_FAILED: ${validationResult.violations.joinToString("; ")}"
-            val recovery = contractRecovery.issueRecovery(
-                contract         = contract,
-                taskId           = ingestTaskId,
-                failureClass     = "STRUCTURAL",
-                violationSurface = violationSurface,
-                anchorState      = anchorState
+            val recovery = ExecutionRecoveryContract(
+                reportReference     = contract.reportReference,
+                contractId          = "RCF_${contract.contractId}_VALIDATION",
+                failureClass        = FailureClass.STRUCTURAL,
+                violationField      = violationSurface,
+                correctionDirective = "Resolve STRUCTURAL failure for contract '${contract.contractId}': $violationSurface",
+                anchorState         = anchorState,
+                successCondition    = "Contract '${contract.contractId}' executed with SUCCESS"
             )
             writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
             return UniversalIngestionResult.ValidationFailed(
@@ -1473,12 +1629,14 @@ class ExecutionAuthority(
             )
             val artifactRef      = buildArtifactReference(normalized.reportReference, ingestTaskId, "NO_ARTIFACT")
             val violationSurface = "ENFORCEMENT_FAILED: ${enforcementResult.violations.joinToString("; ") { it.description }}"
-            val recovery = contractRecovery.issueRecovery(
-                contract         = normalized,
-                taskId           = ingestTaskId,
-                failureClass     = "STRUCTURAL",
-                violationSurface = violationSurface,
-                anchorState      = anchorState
+            val recovery = ExecutionRecoveryContract(
+                reportReference     = normalized.reportReference,
+                contractId          = "RCF_${normalized.contractId}_ENFORCEMENT",
+                failureClass        = FailureClass.STRUCTURAL,
+                violationField      = violationSurface,
+                correctionDirective = "Resolve STRUCTURAL enforcement failure for contract '${normalized.contractId}': $violationSurface",
+                anchorState         = anchorState,
+                successCondition    = "Contract '${normalized.contractId}' executed with SUCCESS"
             )
             writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
             return UniversalIngestionResult.EnforcementFailed(
