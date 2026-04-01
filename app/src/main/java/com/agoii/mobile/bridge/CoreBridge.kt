@@ -92,7 +92,7 @@ class CoreBridge(context: Context) {
                                 "ICS BLOCKED: Execution failed — status=${execResult.executionStatus}"
                             )
                         }
-                        output = execResult.report.artifactStructure["response"]?.toString()
+                        output = execResult.report.rawOutput.ifBlank { null }
                             ?: throw LedgerValidationException("ICS BLOCKED: Empty output in artifact")
                     }
                     is ExecutionAuthorityExecutionResult.BlockedWithRecovery ->
