@@ -217,10 +217,11 @@ class AssemblyModuleTest {
             "violationField must be non-blank",
             next.payload["violationField"]?.toString()?.isNotBlank() == true
         )
-        assertTrue(
-            "artifactReference must be non-blank",
-            next.payload["artifactReference"]?.toString()?.isNotBlank() == true
-        )
+        // artifactReference is the contractId itself (strict emission)
+        assertEquals("contract_3", next.payload["artifactReference"])
+        assertEquals("DELTA_REPAIR_REQUIRED", next.payload["correctionDirective"])
+        assertEquals("VALIDATION_PASS", next.payload["successCondition"])
+        assertEquals("ASSEMBLY_FAILURE", next.payload["irs_violation_type"])
     }
 
     @Test
@@ -271,7 +272,7 @@ class AssemblyModuleTest {
     }
 
     @Test
-    fun `nextEvents returns empty list when ASSEMBLY_FAILED has no valid failureReasons`() {
+    fun `nextEvents returns empty list when ASSEMBLY_FAILED has empty failureReasons`() {
         val assemblyFailedEvent = Event(
             EventTypes.ASSEMBLY_FAILED,
             mapOf(
@@ -285,6 +286,47 @@ class AssemblyModuleTest {
         val events  = listOf(assemblyFailedEvent)
         val results = Governor(MemoryRepository(events)).nextEvents(events)
         assertTrue("Empty failureReasons must yield empty result", results.isEmpty())
+    }
+
+    @Test
+    fun `nextEvents throws when ASSEMBLY_FAILED is missing report_reference`() {
+        val event = Event(
+            EventTypes.ASSEMBLY_FAILED,
+            mapOf(
+                "failureReasons" to listOf(
+                    mapOf("contractId" to "c1", "failureType" to "T", "violatedInvariant" to "v")
+                ),
+                "lockedSections" to emptyList<String>()
+            )
+        )
+        val events = listOf(event)
+        try {
+            Governor(MemoryRepository(events)).nextEvents(events)
+            fail("Expected IllegalStateException for missing report_reference")
+        } catch (e: IllegalStateException) {
+            assertTrue(e.message?.contains("GOVERNOR_INVARIANT_VIOLATION") == true)
+        }
+    }
+
+    @Test
+    fun `nextEvents throws when a failureReason entry is missing contractId`() {
+        val event = Event(
+            EventTypes.ASSEMBLY_FAILED,
+            mapOf(
+                "report_reference" to "rrid-bad-001",
+                "failureReasons" to listOf(
+                    mapOf("failureType" to "T", "violatedInvariant" to "v") // contractId absent
+                ),
+                "lockedSections" to emptyList<String>()
+            )
+        )
+        val events = listOf(event)
+        try {
+            Governor(MemoryRepository(events)).nextEvents(events)
+            fail("Expected IllegalStateException for missing contractId")
+        } catch (e: IllegalStateException) {
+            assertTrue(e.message?.contains("GOVERNOR_INVARIANT_VIOLATION") == true)
+        }
     }
 
     @Test

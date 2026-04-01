@@ -139,40 +139,60 @@ class Governor(
         if (events.isEmpty()) return emptyList()
         val last = events.last()
 
-        // ASSEMBLY_FAILED: emit ALL recovery contracts in one deterministic step.
+        // ── GOVERNOR: deterministic recovery emission (STRICT) ───────────────────
+        // ALL failureReasons MUST be converted into RECOVERY_CONTRACTS
+        // NO silent dropping allowed
         if (last.type == EventTypes.ASSEMBLY_FAILED) {
             val reportReference = last.payload["report_reference"]?.toString()
-                ?.takeIf { it.isNotBlank() } ?: return emptyList()
+                ?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException(
+                    "GOVERNOR_INVARIANT_VIOLATION: report_reference in ASSEMBLY_FAILED is missing or blank"
+                )
 
             @Suppress("UNCHECKED_CAST")
             val failureReasonsList = last.payload["failureReasons"] as? List<*>
-                ?: return emptyList()
+                ?: throw IllegalStateException(
+                    "GOVERNOR_INVARIANT_VIOLATION: failureReasons missing or invalid"
+                )
 
             val lockedSections = last.payload["lockedSections"] ?: emptyList<String>()
 
-            val recoveryContracts = failureReasonsList
-                .filterIsInstance<Map<*, *>>()
-                .mapNotNull { fr ->
-                    val contractId = fr["contractId"]?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    val failureClass = fr["failureType"]?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    val violationField = fr["violatedInvariant"]?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    Event(
-                        type    = EventTypes.RECOVERY_CONTRACT,
-                        payload = mapOf(
-                            "contractId"          to contractId,
-                            "taskId"              to "assembly_recovery_$contractId",
-                            "contractType"        to "ASSEMBLY_RECOVERY",
-                            "report_reference"    to reportReference,
-                            "failureClass"        to failureClass,
-                            "violationField"      to violationField,
-                            "correctionDirective" to "RECOVER_ASSEMBLY_FAILURE",
-                            "successCondition"    to "ASSEMBLY_COMPLETED",
-                            "artifactReference"   to "assembly_failed_$contractId",
-                            "irs_violation_type"  to failureClass,
-                            "lockedSections"      to lockedSections
-                        )
+            val recoveryContracts = failureReasonsList.mapIndexed { index, fr ->
+                val reason = fr as? Map<*, *>
+                    ?: throw IllegalStateException(
+                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index] must be a Map, got ${fr?.javaClass?.simpleName ?: "null"}"
                     )
-                }
+
+                val contractId = reason["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException(
+                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index].contractId missing"
+                    )
+
+                val failureClass = reason["failureType"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException(
+                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index].failureType missing"
+                    )
+
+                val violationField = reason["violatedInvariant"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException(
+                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index].violatedInvariant missing"
+                    )
+
+                Event(
+                    type    = EventTypes.RECOVERY_CONTRACT,
+                    payload = mapOf(
+                        "contractId"          to contractId,
+                        "report_reference"    to reportReference,
+                        "failureClass"        to failureClass,
+                        "violationField"      to violationField,
+                        "correctionDirective" to "DELTA_REPAIR_REQUIRED",
+                        "successCondition"    to "VALIDATION_PASS",
+                        "artifactReference"   to contractId,
+                        "irs_violation_type"  to "ASSEMBLY_FAILURE",
+                        "lockedSections"      to lockedSections
+                    )
+                )
+            }
             return recoveryContracts
         }
 
