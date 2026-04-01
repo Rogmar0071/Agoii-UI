@@ -91,10 +91,17 @@ class CoreBridge(context: Context) {
 
                 lastType == EventTypes.EXECUTION_COMPLETED -> {
                     val assemblyResult = executionAuthority.assembleFromLedger(projectId, ledger)
-                    if (assemblyResult is AssemblyExecutionResult.Blocked) {
-                        throw LedgerValidationException(
-                            "ICS BLOCKED: Assembly failed — ${assemblyResult.reason}"
-                        )
+                    when (assemblyResult) {
+                        is AssemblyExecutionResult.Blocked ->
+                            throw LedgerValidationException(
+                                "ICS BLOCKED: Assembly failed — ${assemblyResult.reason}"
+                            )
+                        is AssemblyExecutionResult.ValidationFailed ->
+                            // ASSEMBLY_FAILED + RECOVERY_CONTRACT already written to ledger.
+                            // Allow the convergence loop to advance via Governor
+                            // (RECOVERY_CONTRACT → DELTA_CONTRACT_CREATED).
+                            Unit
+                        else -> Unit
                     }
                 }
 
@@ -106,6 +113,10 @@ class CoreBridge(context: Context) {
                         )
                     }
                 }
+
+                // ASSEMBLY_FAILED written without RECOVERY_CONTRACT resolved yet — break
+                // to avoid Governor drift; convergence will be driven on the next entry.
+                lastType == EventTypes.ASSEMBLY_FAILED -> break
 
                 lastType == EventTypes.TASK_STARTED -> {
                     // Mandatory trigger: IF last event == TASK_STARTED → ExecutionAuthority executes

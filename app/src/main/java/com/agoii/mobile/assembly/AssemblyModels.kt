@@ -77,6 +77,10 @@ data class FinalArtifact(
  *
  * Produced by the Assembly Module after a successful assembly run.
  * [taskId] / [assemblyId] are always "assembly_<reportReference>".
+ *
+ * [validationSummary] is set to "PENDING" by [AssemblyModule], then updated to
+ * "PASS" or "FAIL" by [ExecutionAuthority] after AERP-1 validation.
+ * [failureReasons] is populated only when [validationSummary] == "FAIL".
  */
 data class AssemblyContractReport(
     val reportReference: String,
@@ -86,20 +90,53 @@ data class AssemblyContractReport(
     val assemblyId:      String,
     val contractSetId:   String,
     val totalContracts:  Int,
-    val finalArtifact:   FinalArtifact
+    val finalArtifact:   FinalArtifact,
+    /** "PENDING" until ExecutionAuthority validates; "PASS" or "FAIL" thereafter. */
+    val validationSummary: String          = "PENDING",
+    /** Non-empty only when [validationSummary] == "FAIL". */
+    val failureReasons:    List<String>    = emptyList()
 )
 
 // ── Result ────────────────────────────────────────────────────────────────────
 
 /**
- * Result of [AssemblyModule.assemble].
+ * Result of [AssemblyModule.assemble] and [com.agoii.mobile.execution.ExecutionAuthority.assembleFromLedger].
  */
 sealed class AssemblyExecutionResult {
 
-    /** Assembly completed successfully; ASSEMBLY_COMPLETED written to ledger. */
+    /**
+     * Assembly fully completed and AERP-1 validated.
+     *
+     * ASSEMBLY_STARTED, ASSEMBLY_VALIDATED, and ASSEMBLY_COMPLETED have all been written
+     * to the ledger by [com.agoii.mobile.execution.ExecutionAuthority].
+     */
     data class Assembled(
         val finalArtifact:  FinalArtifact,
         val assemblyReport: AssemblyContractReport
+    ) : AssemblyExecutionResult()
+
+    /**
+     * ASSEMBLY_STARTED was written and the artifact is built; awaiting AERP-1 validation
+     * by [com.agoii.mobile.execution.ExecutionAuthority].
+     *
+     * ASSEMBLY_VALIDATED and ASSEMBLY_COMPLETED have NOT yet been written.
+     * Only [com.agoii.mobile.execution.ExecutionAuthority] may transition from this state.
+     */
+    data class ReadyForValidation(
+        val finalArtifact:  FinalArtifact,
+        val assemblyReport: AssemblyContractReport
+    ) : AssemblyExecutionResult()
+
+    /**
+     * AERP-1 validation failed after assembly.
+     *
+     * ASSEMBLY_FAILED and RECOVERY_CONTRACT have been written to the ledger by
+     * [com.agoii.mobile.execution.ExecutionAuthority].
+     * ASSEMBLY_COMPLETED is NOT written in this path.
+     */
+    data class ValidationFailed(
+        val assemblyReport: AssemblyContractReport,
+        val failureReasons: List<String>
     ) : AssemblyExecutionResult()
 
     /**

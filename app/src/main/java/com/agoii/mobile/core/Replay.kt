@@ -42,10 +42,12 @@ data class ExecutionStructuralState(
 )
 
 data class AssemblyStructuralState(
-    val assemblyStarted: Boolean,
+    val assemblyStarted:   Boolean,
     val assemblyValidated: Boolean,
     val assemblyCompleted: Boolean,
-    val assemblyValid: Boolean
+    val assemblyValid:     Boolean,
+    /** True when ASSEMBLY_FAILED appears anywhere in the ledger (AGOII-CLC-1F). */
+    val assemblyFailed:    Boolean = false
 )
 
 class Replay(private val eventStore: EventRepository) {
@@ -62,6 +64,7 @@ class Replay(private val eventStore: EventRepository) {
         var assemblyStarted = false
         var assemblyValidated = false
         var assemblyCompleted = false
+        var assemblyFailed = false
         var icsStarted = false
         var icsCompleted = false
         var commitContractExists = false
@@ -92,6 +95,7 @@ class Replay(private val eventStore: EventRepository) {
                 EventTypes.ASSEMBLY_STARTED    -> assemblyStarted = true
                 EventTypes.ASSEMBLY_VALIDATED  -> assemblyValidated = true
                 EventTypes.ASSEMBLY_COMPLETED  -> assemblyCompleted = true
+                EventTypes.ASSEMBLY_FAILED     -> assemblyFailed = true
                 EventTypes.ICS_STARTED         -> icsStarted = true
                 EventTypes.ICS_COMPLETED       -> icsCompleted = true
                 EventTypes.COMMIT_CONTRACT     -> commitContractExists = true
@@ -142,9 +146,10 @@ class Replay(private val eventStore: EventRepository) {
                 successfulTasks = successfulTaskExecutions
             ),
             assembly = AssemblyStructuralState(
-                assemblyStarted = assemblyStarted,
+                assemblyStarted   = assemblyStarted,
                 assemblyValidated = assemblyValidated,
                 assemblyCompleted = assemblyCompleted,
+                assemblyFailed    = assemblyFailed,
                 // This field uses the legacy fullyExecuted gate for backward compatibility
                 // with tests and existing consumers of AssemblyStructuralState.assemblyValid.
                 // The canonical truth-layer assemblyValid is the top-level field below.

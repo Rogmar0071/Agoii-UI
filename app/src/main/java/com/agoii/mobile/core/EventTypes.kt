@@ -38,6 +38,12 @@ object EventTypes {
     const val RECOVERY_CONTRACT       = "recovery_contract"
     const val DELTA_CONTRACT_CREATED  = "delta_contract_created"
 
+    // ── Assembly failure (AGOII-CLC-1F) ──────────────────────────────────────
+    // Emitted by ExecutionAuthority when AERP-1 validation of the assembled
+    // report fails.  Triggers a RECOVERY_CONTRACT; MUST NOT coexist with
+    // ASSEMBLY_COMPLETED for the same report_reference.
+    const val ASSEMBLY_FAILED         = "assembly_failed"
+
     // ── UCS-1 contract ingestion lifecycle events ─────────────────────────────
     // Emitted by ExecutionAuthority.ingestUniversalContract() to replace
     // in-memory lifecycle tracking (ledger determinism — UCS-1 directive).
@@ -70,6 +76,7 @@ object EventTypes {
         CONTRACT_FAILED,
         RECOVERY_CONTRACT,
         DELTA_CONTRACT_CREATED,
+        ASSEMBLY_FAILED,
         CONTRACT_CREATED,
         CONTRACT_VALIDATED,
         CONTRACT_APPROVED,

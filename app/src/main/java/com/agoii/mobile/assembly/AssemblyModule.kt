@@ -9,7 +9,8 @@
 //   CONTRACTS_GENERATED, CONTRACT_COMPLETED (N), TASK_EXECUTED (N), EXECUTION_COMPLETED
 //
 // EXECUTION SURFACE (WRITE):
-//   ASSEMBLY_STARTED → ASSEMBLY_COMPLETED
+//   ASSEMBLY_STARTED only (AERP-1 validation and ASSEMBLY_VALIDATED/ASSEMBLY_COMPLETED
+//   are written by ExecutionAuthority)
 //
 // AUTHORITY RULES:
 //   - Ordering and contract identity: CONTRACT_COMPLETED events             (spec §6.5)
@@ -33,7 +34,7 @@
 
 package com.agoii.mobile.assembly
 
-import com.agoii.mobile.core.EventLedger
+import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 
 /**
@@ -41,10 +42,10 @@ import com.agoii.mobile.core.EventTypes
  *
  * Single public entry point: [assemble].
  *
- * Pipeline (happy path):
+ * Pipeline (happy path — ASSEMBLY_STARTED only; AERP-1 validation and final writes owned by ExecutionAuthority):
  *  1. Verify EXECUTION_COMPLETED exists (internal gate — spec §6.1)
  *  2. Derive metadata (RRID, contractSetId, totalContracts) from CONTRACTS_GENERATED
- *  3. Idempotency guard — no duplicate ASSEMBLY_COMPLETED for same RRID
+ *  3. Idempotency guard — block duplicate runs unless previous run failed (delta re-execution allowed)
  *  4. Reconstruct ordered contracts from CONTRACT_COMPLETED events (spec §6.5)
  *  5. Enforce RRID lineage on every CONTRACT_COMPLETED (spec §6.3)
  *  6. Enforce position completeness: [1..N], no gaps, no duplicates (spec §6.2)
@@ -53,9 +54,10 @@ import com.agoii.mobile.core.EventTypes
  *  8. Pre-flight: verify every contract has a SUCCESS execution surface (spec §6.4)
  *  9. Append ASSEMBLY_STARTED to ledger
  * 10. Build [FinalArtifact] with traceMap (position 1 → N, spec §7.1/§7.2)
- * 11. Build [AssemblyContractReport] (AERP-1)
- * 12. Append ASSEMBLY_COMPLETED to ledger (spec §7.3)
- * 13. Return [AssemblyExecutionResult.Assembled]
+ * 11. Build [AssemblyContractReport] (AERP-1) with validationSummary="PENDING"
+ * 12. Return [AssemblyExecutionResult.ReadyForValidation] — ExecutionAuthority performs AERP-1
+ *     validation and writes ASSEMBLY_VALIDATED + ASSEMBLY_COMPLETED (pass) or ASSEMBLY_FAILED
+ *     + RECOVERY_CONTRACT (fail).
  */
 class AssemblyModule {
 
@@ -64,17 +66,17 @@ class AssemblyModule {
      *
      * Reads the full ledger for [projectId], enforces all trigger conditions
      * internally (no reliance on caller), and — when conditions are met — appends
-     * ASSEMBLY_STARTED and ASSEMBLY_COMPLETED to [ledger],
-     * then returns the [FinalArtifact].
+     * ASSEMBLY_STARTED to [ledger], then returns [AssemblyExecutionResult.ReadyForValidation]
+     * for ExecutionAuthority to validate (AERP-1) and finalize.
      *
      * This method is a pure function of the ledger state: same ledger state always
      * produces the same result.  It has no implicit inputs and performs no inference.
      *
      * @param projectId  Project ledger identifier.
-     * @param ledger     EventLedger — sole write authority.
+     * @param ledger     EventRepository — sole write authority.
      * @return [AssemblyExecutionResult] describing the pipeline outcome.
      */
-    fun assemble(projectId: String, ledger: EventLedger): AssemblyExecutionResult {
+    fun assemble(projectId: String, ledger: EventRepository): AssemblyExecutionResult {
 
         val events = ledger.loadEvents(projectId)
 
@@ -103,11 +105,26 @@ class AssemblyModule {
         if (totalContracts < 1) return AssemblyExecutionResult.NotTriggered
 
         // ── Step 3: Idempotency guard ────────────────────────────────────────
+        // Block if ASSEMBLY_COMPLETED already written (success path).
         val alreadyCompleted = events.any { ev ->
             ev.type == EventTypes.ASSEMBLY_COMPLETED &&
             ev.payload["report_reference"]?.toString() == reportReference
         }
         if (alreadyCompleted) {
+            return AssemblyExecutionResult.AlreadyCompleted(reportReference)
+        }
+
+        // Prevent double ASSEMBLY_STARTED unless the previous run ended in ASSEMBLY_FAILED
+        // (delta re-execution is permitted when ASSEMBLY_FAILED exists for this RRID).
+        val alreadyStarted = events.any { ev ->
+            ev.type == EventTypes.ASSEMBLY_STARTED &&
+            ev.payload["report_reference"]?.toString() == reportReference
+        }
+        val hasFailed = events.any { ev ->
+            ev.type == EventTypes.ASSEMBLY_FAILED &&
+            ev.payload["report_reference"]?.toString() == reportReference
+        }
+        if (alreadyStarted && !hasFailed) {
             return AssemblyExecutionResult.AlreadyCompleted(reportReference)
         }
 
@@ -213,35 +230,24 @@ class AssemblyModule {
             traceMap        = traceMap
         )
 
-        // ── Step 11: Build AssemblyContractReport (AERP-1) ───────────────────
-        val assemblyId             = "assembly_$reportReference"
-        val finalArtifactReference = "artifact_$assemblyId"
+        // ── Step 11: Build AssemblyContractReport (AERP-1, validationSummary = PENDING) ──
+        val assemblyId = "assembly_$reportReference"
 
         val assemblyReport = AssemblyContractReport(
-            reportReference = reportReference,
-            taskId          = assemblyId,
-            assemblyId      = assemblyId,
-            contractSetId   = contractSetId,
-            totalContracts  = totalContracts,
-            finalArtifact   = finalArtifact
+            reportReference   = reportReference,
+            taskId            = assemblyId,
+            assemblyId        = assemblyId,
+            contractSetId     = contractSetId,
+            totalContracts    = totalContracts,
+            finalArtifact     = finalArtifact,
+            validationSummary = "PENDING",
+            failureReasons    = emptyList()
         )
 
-        // ── Step 12: Write ASSEMBLY_COMPLETED (spec §7.3) ────────────────────
-        ledger.appendEvent(
-            projectId,
-            EventTypes.ASSEMBLY_COMPLETED,
-            mapOf(
-                "report_reference"       to reportReference,
-                "contractSetId"          to contractSetId,
-                "totalContracts"         to totalContracts,
-                "finalArtifactReference" to finalArtifactReference,
-                "taskId"                 to assemblyId,
-                "assemblyId"             to assemblyId,
-                "traceMap"               to traceMap
-            )
-        )
-
-        return AssemblyExecutionResult.Assembled(
+        // ── Step 12: Return ReadyForValidation — ExecutionAuthority performs AERP-1
+        //            validation and writes ASSEMBLY_VALIDATED + ASSEMBLY_COMPLETED
+        //            (pass) or ASSEMBLY_FAILED + RECOVERY_CONTRACT (fail). ────────
+        return AssemblyExecutionResult.ReadyForValidation(
             finalArtifact  = finalArtifact,
             assemblyReport = assemblyReport
         )
