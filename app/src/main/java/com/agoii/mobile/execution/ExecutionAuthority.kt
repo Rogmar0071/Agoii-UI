@@ -41,6 +41,8 @@ import com.agoii.mobile.contracts.ContractCapability
 import com.agoii.mobile.contracts.ContractEnforcementEngine
 import com.agoii.mobile.contracts.ContractEnforcementResult
 import com.agoii.mobile.contracts.ContractReport
+import com.agoii.mobile.contracts.FailureClass
+import com.agoii.mobile.contracts.Violation
 import com.agoii.mobile.contracts.ContractValidationResult
 import com.agoii.mobile.contracts.ContractViolation
 import com.agoii.mobile.contracts.ExecutionType
@@ -178,7 +180,9 @@ sealed class ExecutionAuthorityExecutionResult {
      */
     data class BlockedWithRecovery(
         val reason:            String,
-        val recoveryContracts: List<ExecutionRecoveryContract>
+        val recoveryContracts: List<ExecutionRecoveryContract>,
+        val violations:        List<Violation> = emptyList(),
+        val reportReference:   String = ""
     ) : ExecutionAuthorityExecutionResult()
 
     /** TASK_EXECUTED already exists with SUCCESS for this taskId — idempotent guard triggered. */
@@ -566,7 +570,15 @@ class ExecutionAuthority(
         val contractReport = generateContractReport(executionTask, executionOutput, resolved.trace, contractorId)
 
         // ── Step 5-CHV1: Enforce report completeness (CONVERGENCE_HARDENING_V1) ─
-        validateReportCompleteness(contractReport)
+        val reportViolations = validateReportCompleteness(contractReport, executionTask.contractId)
+        if (reportViolations.isNotEmpty()) {
+            return ExecutionAuthorityExecutionResult.BlockedWithRecovery(
+                reason = "REPORT_COMPLETENESS_VIOLATION",
+                recoveryContracts = emptyList(),
+                violations = reportViolations,
+                reportReference = contractReport.reportReference
+            )
+        }
 
         // ── Step 5a: Freeze report — immutable snapshot (AERP-1 / RRIL-1) ───
         val frozenReport = contractReport.copy()
@@ -1103,25 +1115,154 @@ class ExecutionAuthority(
     }
 
     /**
-     * Enforce AERP-1 report completeness (CONVERGENCE_HARDENING_V1).
+     * Enforce AERP-1 report completeness (CONVERGENCE_HARDENING_V1 / FSE-1).
      *
-     * All four AERP-1 required surfaces MUST be non-empty.
-     * Throws [IllegalArgumentException] if any surface is missing, blocking execution
-     * before validation proceeds.
+     * Returns a deterministically-ordered list of [Violation] objects — one per failing
+     * field path. An empty list means the report is complete and execution may proceed.
+     * No exception is thrown; all failures are emitted as atomic [Violation] values.
      */
-    private fun validateReportCompleteness(report: ContractReport) {
-        require(report.typeInventory.isNotEmpty()) {
-            "AERP-1 VIOLATION: typeInventory is empty — report_reference=${report.reportReference}"
+    private fun validateReportCompleteness(
+        report: ContractReport,
+        contractId: String
+    ): List<Violation> {
+        val violations = mutableListOf<Violation>()
+
+        // typeInventory — EMPTY
+        if (report.typeInventory.isEmpty()) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "typeInventory",
+                    failureClass       = FailureClass.COMPLETENESS,
+                    expected           = "non-empty list",
+                    actual             = "empty",
+                    message            = "typeInventory is empty",
+                    correctionDirective = "Add at least one type entry to typeInventory"
+                )
+            )
         }
-        require(report.functionSignatures.isNotEmpty()) {
-            "AERP-1 VIOLATION: functionSignatures is empty — report_reference=${report.reportReference}"
+
+        // functionSignatures — EMPTY
+        if (report.functionSignatures.isEmpty()) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "functionSignatures",
+                    failureClass       = FailureClass.COMPLETENESS,
+                    expected           = "non-empty list",
+                    actual             = "empty",
+                    message            = "functionSignatures is empty",
+                    correctionDirective = "Add at least one function signature"
+                )
+            )
         }
-        require(report.logicFlow.isNotEmpty()) {
-            "AERP-1 VIOLATION: logicFlow is empty — report_reference=${report.reportReference}"
+
+        // functionSignatures[i] — INVALID
+        report.functionSignatures.forEachIndexed { i, value ->
+            if (value.isBlank()) {
+                violations.add(
+                    Violation(
+                        reportReference    = report.reportReference,
+                        contractId         = contractId,
+                        fieldPath          = "functionSignatures[$i]",
+                        failureClass       = FailureClass.STRUCTURAL,
+                        expected           = "valid non-empty function signature",
+                        actual             = value,
+                        message            = "Invalid function signature at index $i",
+                        correctionDirective = "Replace with valid function signature at index $i"
+                    )
+                )
+            }
         }
-        require(report.exitCode == 0 || report.errorConditions.isNotEmpty()) {
-            "AERP-1 VIOLATION: errorConditions is empty on non-zero exitCode — report_reference=${report.reportReference}"
+
+        // logicFlow — EMPTY
+        if (report.logicFlow.isEmpty()) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "logicFlow",
+                    failureClass       = FailureClass.COMPLETENESS,
+                    expected           = "non-empty execution flow",
+                    actual             = "empty",
+                    message            = "logicFlow is empty",
+                    correctionDirective = "Add execution steps to logicFlow"
+                )
+            )
         }
+
+        // logicFlow[i] — INVALID
+        report.logicFlow.forEachIndexed { i, step ->
+            if (step.isBlank()) {
+                violations.add(
+                    Violation(
+                        reportReference    = report.reportReference,
+                        contractId         = contractId,
+                        fieldPath          = "logicFlow[$i]",
+                        failureClass       = FailureClass.LOGICAL,
+                        expected           = "valid execution step",
+                        actual             = step,
+                        message            = "Invalid logicFlow step at index $i",
+                        correctionDirective = "Replace with valid execution step at index $i"
+                    )
+                )
+            }
+        }
+
+        // errorConditions vs exitCode
+        if (report.exitCode != 0 && report.errorConditions.isEmpty()) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "errorConditions",
+                    failureClass       = FailureClass.LOGICAL,
+                    expected           = "non-empty when exitCode != 0",
+                    actual             = "empty with exitCode=${report.exitCode}",
+                    message            = "errorConditions missing for non-zero exitCode",
+                    correctionDirective = "Add errorConditions describing failure when exitCode != 0"
+                )
+            )
+        }
+
+        // exitCode constraint
+        if (report.exitCode != 0 && report.exitCode != 1) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "exitCode",
+                    failureClass       = FailureClass.CONSTRAINT,
+                    expected           = "0 or 1",
+                    actual             = report.exitCode.toString(),
+                    message            = "Invalid exitCode value",
+                    correctionDirective = "Set exitCode to 0 (success) or 1 (failure)"
+                )
+            )
+        }
+
+        // rawOutput empty on success
+        if (report.exitCode == 0 && report.rawOutput.isBlank()) {
+            violations.add(
+                Violation(
+                    reportReference    = report.reportReference,
+                    contractId         = contractId,
+                    fieldPath          = "rawOutput",
+                    failureClass       = FailureClass.COMPLETENESS,
+                    expected           = "non-empty output when execution succeeds",
+                    actual             = "blank",
+                    message            = "rawOutput is empty on successful execution",
+                    correctionDirective = "Provide execution output in rawOutput when exitCode == 0"
+                )
+            )
+        }
+
+        return violations.sortedWith(
+            compareBy<Violation> { it.fieldPath }
+                .thenBy { it.failureClass.ordinal }
+        )
     }
 
     /**
