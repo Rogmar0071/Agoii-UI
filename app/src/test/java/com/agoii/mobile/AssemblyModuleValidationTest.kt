@@ -48,16 +48,24 @@ class AssemblyModuleValidationTest {
 
     // ── Deterministic contract constants (fixed for all runs) ─────────────────
 
-    private val projectId     = "clc-1e-validation"
-    private val rrid          = "RRID-CLC-1E-001"
-    private val contractSetId = "CS-CLC-1E-001"
-    private val contractId1   = "c-001"
-    private val contractId2   = "c-002"
-    private val taskId1       = "task-001"
-    private val taskId2       = "task-002"
-    private val artifactRef1  = "artifact-ref-c-001"
-    private val artifactRef2  = "artifact-ref-c-002"
-    private val contractorId  = "contractor-deterministic-A"
+    companion object {
+        private const val PROJECT_ID      = "clc-1e-validation"
+        private const val RRID            = "RRID-CLC-1E-001"
+        private const val CONTRACT_SET_ID = "CS-CLC-1E-001"
+        private const val CONTRACTOR_ID   = "contractor-deterministic-A"
+
+        // Contract identity
+        private const val CONTRACT_ID_1  = "c-001"
+        private const val CONTRACT_ID_2  = "c-002"
+
+        // Task identity
+        private const val TASK_ID_1 = "task-001"
+        private const val TASK_ID_2 = "task-002"
+
+        // Artifact references (deterministic, bound to each contract)
+        private const val ARTIFACT_REF_1 = "artifact-ref-c-001"
+        private const val ARTIFACT_REF_2 = "artifact-ref-c-002"
+    }
 
     private val module = AssemblyModule()
 
@@ -85,112 +93,112 @@ class AssemblyModuleValidationTest {
             "objective" to "CLC-1E assembly validation target"
         )),
         Event(EventTypes.CONTRACTS_GENERATED, mapOf(
-            "report_id"     to rrid,
-            "contractSetId" to contractSetId,
+            "report_id"     to RRID,
+            "contractSetId" to CONTRACT_SET_ID,
             "total"         to 2
         )),
         Event(EventTypes.CONTRACTS_READY, mapOf(
-            "report_reference" to rrid
+            "report_reference" to RRID
         )),
         // ── Contract 1 ──────────────────────────────────────────────────────
         Event(EventTypes.CONTRACT_STARTED, mapOf(
-            "contractId"       to contractId1,
+            "contractId"       to CONTRACT_ID_1,
             "position"         to 1,
             "total"            to 2,
-            "report_reference" to rrid
+            "report_reference" to RRID
         )),
         Event(EventTypes.TASK_ASSIGNED, mapOf(
-            "taskId"           to taskId1,
-            "contractId"       to contractId1,
-            "contractorId"     to contractorId,
-            "report_reference" to rrid,
+            "taskId"           to TASK_ID_1,
+            "contractId"       to CONTRACT_ID_1,
+            "contractorId"     to CONTRACTOR_ID,
+            "report_reference" to RRID,
             "position"         to 1,
             "total"            to 2
         )),
         Event(EventTypes.TASK_STARTED, mapOf(
-            "taskId"           to taskId1,
-            "contractId"       to contractId1,
-            "contractorId"     to contractorId,
-            "report_reference" to rrid,
+            "taskId"           to TASK_ID_1,
+            "contractId"       to CONTRACT_ID_1,
+            "contractorId"     to CONTRACTOR_ID,
+            "report_reference" to RRID,
             "position"         to 1,
             "total"            to 2
         )),
         Event(EventTypes.TASK_EXECUTED, mapOf(
-            "taskId"            to taskId1,
-            "contractId"        to contractId1,
-            "contractorId"      to contractorId,
-            "artifactReference" to artifactRef1,
+            "taskId"            to TASK_ID_1,
+            "contractId"        to CONTRACT_ID_1,
+            "contractorId"      to CONTRACTOR_ID,
+            "artifactReference" to ARTIFACT_REF_1,
             "executionStatus"   to "SUCCESS",
             "validationStatus"  to "VALIDATED",
             "validationReasons" to "output meets specification",
-            "report_reference"  to rrid,
+            "report_reference"  to RRID,
             "position"          to 1,
             "total"             to 2
         )),
         Event(EventTypes.TASK_COMPLETED, mapOf(
-            "taskId"           to taskId1,
-            "contractId"       to contractId1,
-            "report_reference" to rrid,
+            "taskId"           to TASK_ID_1,
+            "contractId"       to CONTRACT_ID_1,
+            "report_reference" to RRID,
             "position"         to 1,
             "total"            to 2
         )),
         Event(EventTypes.CONTRACT_COMPLETED, mapOf(
-            "contractId"       to contractId1,
+            "contractId"       to CONTRACT_ID_1,
             "position"         to 1,
             "total"            to 2,
-            "report_reference" to rrid
+            "report_reference" to RRID
         )),
         // ── Contract 2 ──────────────────────────────────────────────────────
         Event(EventTypes.CONTRACT_STARTED, mapOf(
-            "contractId"       to contractId2,
+            "contractId"       to CONTRACT_ID_2,
             "position"         to 2,
             "total"            to 2,
-            "report_reference" to rrid
+            "report_reference" to RRID
         )),
         Event(EventTypes.TASK_ASSIGNED, mapOf(
-            "taskId"           to taskId2,
-            "contractId"       to contractId2,
-            "contractorId"     to contractorId,
-            "report_reference" to rrid,
+            "taskId"           to TASK_ID_2,
+            "contractId"       to CONTRACT_ID_2,
+            "contractorId"     to CONTRACTOR_ID,
+            "report_reference" to RRID,
             "position"         to 2,
             "total"            to 2
         )),
         Event(EventTypes.TASK_STARTED, mapOf(
-            "taskId"           to taskId2,
-            "contractId"       to contractId2,
-            "contractorId"     to contractorId,
-            "report_reference" to rrid,
+            "taskId"           to TASK_ID_2,
+            "contractId"       to CONTRACT_ID_2,
+            "contractorId"     to CONTRACTOR_ID,
+            "report_reference" to RRID,
             "position"         to 2,
             "total"            to 2
         )),
         Event(EventTypes.TASK_EXECUTED, mapOf(
-            "taskId"            to taskId2,
-            "contractId"        to contractId2,
-            "contractorId"      to contractorId,
-            "artifactReference" to artifactRef2,
+            "taskId"            to TASK_ID_2,
+            "contractId"        to CONTRACT_ID_2,
+            "contractorId"      to CONTRACTOR_ID,
+            "artifactReference" to ARTIFACT_REF_2,
             "executionStatus"   to "SUCCESS",
             "validationStatus"  to "VALIDATED",
             "validationReasons" to "output meets specification",
-            "report_reference"  to rrid,
+            "report_reference"  to RRID,
             "position"          to 2,
             "total"             to 2
         )),
         Event(EventTypes.TASK_COMPLETED, mapOf(
-            "taskId"           to taskId2,
-            "contractId"       to contractId2,
-            "report_reference" to rrid,
+            "taskId"           to TASK_ID_2,
+            "contractId"       to CONTRACT_ID_2,
+            "report_reference" to RRID,
             "position"         to 2,
             "total"            to 2
         )),
         Event(EventTypes.CONTRACT_COMPLETED, mapOf(
-            "contractId"       to contractId2,
+            "contractId"       to CONTRACT_ID_2,
             "position"         to 2,
             "total"            to 2,
-            "report_reference" to rrid
+            "report_reference" to RRID
         )),
         // ── Execution closure ────────────────────────────────────────────────
         Event(EventTypes.EXECUTION_COMPLETED, mapOf(
-            "report_reference"    to rrid,
+            "report_reference"    to RRID,
             "contracts_completed" to 2
         ))
     )
@@ -223,51 +231,51 @@ class AssemblyModuleValidationTest {
 
     @Test
     fun `A1 - assembly output contains all contracts (N=2)`() {
-        val result = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
         assertTrue("Expected Assembled but got: $result", result is AssemblyExecutionResult.Assembled)
         val outputs = (result as AssemblyExecutionResult.Assembled).finalArtifact.contractOutputs
         assertEquals("Both contracts must appear in output", 2, outputs.size)
         val ids = outputs.map { it.contractId }
-        assertTrue("c-001 missing from output", contractId1 in ids)
-        assertTrue("c-002 missing from output", contractId2 in ids)
+        assertTrue("c-001 missing from output", CONTRACT_ID_1 in ids)
+        assertTrue("c-002 missing from output", CONTRACT_ID_2 in ids)
     }
 
     @Test
     fun `A2 - no missing task artifacts in assembly output`() {
-        val result = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
         val outputs = result.finalArtifact.contractOutputs
-        val c1 = outputs.first { it.contractId == contractId1 }
-        val c2 = outputs.first { it.contractId == contractId2 }
-        assertEquals("c-001 artifact reference must match", artifactRef1, c1.artifactReference)
-        assertEquals("c-002 artifact reference must match", artifactRef2, c2.artifactReference)
+        val c1 = outputs.first { it.contractId == CONTRACT_ID_1 }
+        val c2 = outputs.first { it.contractId == CONTRACT_ID_2 }
+        assertEquals("c-001 artifact reference must match", ARTIFACT_REF_1, c1.artifactReference)
+        assertEquals("c-002 artifact reference must match", ARTIFACT_REF_2, c2.artifactReference)
     }
 
     @Test
     fun `A3 - no orphan mappings in traceMap`() {
-        val result = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
         val traceMap = result.finalArtifact.traceMap
         assertEquals("traceMap must have exactly 2 entries", 2, traceMap.size)
-        assertEquals("c-001 traceMap must point to RRID", rrid, traceMap[contractId1])
-        assertEquals("c-002 traceMap must point to RRID", rrid, traceMap[contractId2])
+        assertEquals("c-001 traceMap must point to RRID", RRID, traceMap[CONTRACT_ID_1])
+        assertEquals("c-002 traceMap must point to RRID", RRID, traceMap[CONTRACT_ID_2])
     }
 
     @Test
     fun `A4 - assembly report fields are structurally complete`() {
-        val result = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
         val report   = result.assemblyReport
         val artifact = result.finalArtifact
 
-        assertEquals("reportReference",      rrid,                    artifact.reportReference)
-        assertEquals("contractSetId",         contractSetId,           artifact.contractSetId)
-        assertEquals("totalContracts",        2,                       artifact.totalContracts)
-        assertEquals("report.reportReference", rrid,                   report.reportReference)
-        assertEquals("report.taskId",         "assembly_$rrid",        report.taskId)
-        assertEquals("report.assemblyId",     "assembly_$rrid",        report.assemblyId)
-        assertEquals("report.contractSetId",  contractSetId,           report.contractSetId)
-        assertEquals("report.totalContracts", 2,                       report.totalContracts)
+        assertEquals("artifact.reportReference",  RRID,             artifact.reportReference)
+        assertEquals("artifact.contractSetId",   CONTRACT_SET_ID,  artifact.contractSetId)
+        assertEquals("artifact.totalContracts",  2,                artifact.totalContracts)
+        assertEquals("report.reportReference",   RRID,             report.reportReference)
+        assertEquals("report.taskId",            "assembly_$RRID", report.taskId)
+        assertEquals("report.assemblyId",        "assembly_$RRID", report.assemblyId)
+        assertEquals("report.contractSetId",     CONTRACT_SET_ID,  report.contractSetId)
+        assertEquals("report.totalContracts",    2,                report.totalContracts)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -276,11 +284,11 @@ class AssemblyModuleValidationTest {
 
     @Test
     fun `B1 - three runs on identical ledger produce identical FinalArtifact`() {
-        val run1 = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val run1 = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
-        val run2 = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val run2 = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
-        val run3 = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val run3 = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
 
         // FinalArtifact fields (UUID/timestamp live in Event, not FinalArtifact)
@@ -304,11 +312,11 @@ class AssemblyModuleValidationTest {
 
     @Test
     fun `B2 - three runs on identical ledger produce identical assembly reports`() {
-        val run1 = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val run1 = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
-        val run2 = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val run2 = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
-        val run3 = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val run3 = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
 
         assertEquals("run1 vs run2: assemblyId",
@@ -329,7 +337,7 @@ class AssemblyModuleValidationTest {
 
     @Test
     fun `C1 - contractOutputs are ordered by position ascending`() {
-        val result = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
         val positions = result.finalArtifact.contractOutputs.map { it.position }
         assertEquals("Positions must be strictly ascending [1, 2]", listOf(1, 2), positions)
@@ -337,11 +345,11 @@ class AssemblyModuleValidationTest {
 
     @Test
     fun `C2 - position values match contract identity in order`() {
-        val result = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
         val outputs = result.finalArtifact.contractOutputs
-        assertEquals("Position 1 must be c-001", contractId1, outputs[0].contractId)
-        assertEquals("Position 2 must be c-002", contractId2, outputs[1].contractId)
+        assertEquals("Position 1 must be c-001", CONTRACT_ID_1, outputs[0].contractId)
+        assertEquals("Position 2 must be c-002", CONTRACT_ID_2, outputs[1].contractId)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -350,11 +358,11 @@ class AssemblyModuleValidationTest {
 
     @Test
     fun `D1 - every TASK_EXECUTED SUCCESS artifact appears in assembly output`() {
-        val result = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
         val outputRefs = result.finalArtifact.contractOutputs.map { it.artifactReference }.toSet()
-        assertTrue("artifact-ref-c-001 must not be silently dropped", artifactRef1 in outputRefs)
-        assertTrue("artifact-ref-c-002 must not be silently dropped", artifactRef2 in outputRefs)
+        assertTrue("artifact-ref-c-001 must not be silently dropped", ARTIFACT_REF_1 in outputRefs)
+        assertTrue("artifact-ref-c-002 must not be silently dropped", ARTIFACT_REF_2 in outputRefs)
     }
 
     @Test
@@ -363,7 +371,7 @@ class AssemblyModuleValidationTest {
             ev.type == EventTypes.TASK_EXECUTED &&
             ev.payload["executionStatus"] == "SUCCESS"
         }
-        val result = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
         assertEquals(
             "Output entries must equal the number of SUCCESS task executions",
@@ -377,7 +385,7 @@ class AssemblyModuleValidationTest {
 
     @Test
     fun `E1 - each contractId appears exactly once in output`() {
-        val result = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
         val ids = result.finalArtifact.contractOutputs.map { it.contractId }
         assertEquals("Duplicate contract entries detected", ids.distinct().size, ids.size)
@@ -385,7 +393,7 @@ class AssemblyModuleValidationTest {
 
     @Test
     fun `E2 - each artifactReference appears exactly once in output`() {
-        val result = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
         val refs = result.finalArtifact.contractOutputs.map { it.artifactReference }
         assertEquals("Duplicate artifact references detected", refs.distinct().size, refs.size)
@@ -393,7 +401,7 @@ class AssemblyModuleValidationTest {
 
     @Test
     fun `E3 - each position value appears exactly once in output`() {
-        val result = module.assemble(projectId, makeMockLedger(buildLedger()))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(buildLedger()))
             as AssemblyExecutionResult.Assembled
         val positions = result.finalArtifact.contractOutputs.map { it.position }
         assertEquals("Duplicate positions detected", positions.distinct().size, positions.size)
@@ -406,9 +414,9 @@ class AssemblyModuleValidationTest {
     @Test
     fun `F1 - re-running assembly on a completed ledger returns AlreadyCompleted`() {
         val sharedLedger = makeMockLedger(buildLedger())
-        val first = module.assemble(projectId, sharedLedger)
+        val first = module.assemble(PROJECT_ID, sharedLedger)
         assertTrue("First run must be Assembled", first is AssemblyExecutionResult.Assembled)
-        val second = module.assemble(projectId, sharedLedger)
+        val second = module.assemble(PROJECT_ID, sharedLedger)
         assertTrue(
             "Second run on same ledger must return AlreadyCompleted (idempotency guard), got: $second",
             second is AssemblyExecutionResult.AlreadyCompleted
@@ -418,8 +426,8 @@ class AssemblyModuleValidationTest {
     @Test
     fun `F2 - idempotent re-run does not emit additional ledger events`() {
         val sharedLedger = makeMockLedger(buildLedger())
-        module.assemble(projectId, sharedLedger)  // first run: writes ASSEMBLY_STARTED + ASSEMBLY_COMPLETED
-        module.assemble(projectId, sharedLedger)  // second run: idempotency guard fires — no writes
+        module.assemble(PROJECT_ID, sharedLedger)  // first run: writes ASSEMBLY_STARTED + ASSEMBLY_COMPLETED
+        module.assemble(PROJECT_ID, sharedLedger)  // second run: idempotency guard fires — no writes
         // appendEvent must have been called exactly twice (once per event from the first run only)
         verify(sharedLedger, times(2)).appendEvent(anyString(), anyString(), anyArg())
     }
@@ -427,10 +435,10 @@ class AssemblyModuleValidationTest {
     @Test
     fun `F3 - AlreadyCompleted carries the correct reportReference`() {
         val sharedLedger = makeMockLedger(buildLedger())
-        module.assemble(projectId, sharedLedger)
-        val second = module.assemble(projectId, sharedLedger)
+        module.assemble(PROJECT_ID, sharedLedger)
+        val second = module.assemble(PROJECT_ID, sharedLedger)
             as AssemblyExecutionResult.AlreadyCompleted
-        assertEquals("AlreadyCompleted must carry the RRID", rrid, second.reportReference)
+        assertEquals("AlreadyCompleted must carry the RRID", RRID, second.reportReference)
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -452,7 +460,7 @@ class AssemblyModuleValidationTest {
             null
         }.`when`(ledger).appendEvent(anyString(), anyString(), anyArg())
 
-        module.assemble(projectId, ledger)
+        module.assemble(PROJECT_ID, ledger)
 
         assertEquals("Must emit exactly 2 events", 2, emittedTypes.size)
         assertEquals("First emission must be ASSEMBLY_STARTED",
@@ -476,12 +484,12 @@ class AssemblyModuleValidationTest {
             null
         }.`when`(ledger).appendEvent(anyString(), anyString(), anyArg())
 
-        module.assemble(projectId, ledger)
+        module.assemble(PROJECT_ID, ledger)
 
         assertEquals("Exactly one ASSEMBLY_STARTED must be emitted", 1, startedPayloads.size)
         val p = startedPayloads[0]
-        assertEquals("ASSEMBLY_STARTED.report_reference", rrid,          p["report_reference"])
-        assertEquals("ASSEMBLY_STARTED.contractSetId",    contractSetId, p["contractSetId"])
+        assertEquals("ASSEMBLY_STARTED.report_reference", RRID,          p["report_reference"])
+        assertEquals("ASSEMBLY_STARTED.contractSetId",    CONTRACT_SET_ID, p["contractSetId"])
         assertEquals("ASSEMBLY_STARTED.totalContracts",   2,             p["totalContracts"])
     }
 
@@ -500,18 +508,18 @@ class AssemblyModuleValidationTest {
             null
         }.`when`(ledger).appendEvent(anyString(), anyString(), anyArg())
 
-        module.assemble(projectId, ledger)
+        module.assemble(PROJECT_ID, ledger)
 
         assertEquals("Exactly one ASSEMBLY_COMPLETED must be emitted", 1, completedPayloads.size)
         val p = completedPayloads[0]
-        assertEquals("ASSEMBLY_COMPLETED.report_reference",       rrid,          p["report_reference"])
-        assertEquals("ASSEMBLY_COMPLETED.contractSetId",          contractSetId, p["contractSetId"])
+        assertEquals("ASSEMBLY_COMPLETED.report_reference",       RRID,          p["report_reference"])
+        assertEquals("ASSEMBLY_COMPLETED.contractSetId",          CONTRACT_SET_ID, p["contractSetId"])
         assertEquals("ASSEMBLY_COMPLETED.totalContracts",         2,             p["totalContracts"])
         assertNotNull("ASSEMBLY_COMPLETED.finalArtifactReference must be present",
             p["finalArtifactReference"])
         assertNotNull("ASSEMBLY_COMPLETED.traceMap must be present", p["traceMap"])
         assertEquals("ASSEMBLY_COMPLETED.assemblyId",
-            "assembly_$rrid", p["assemblyId"])
+            "assembly_$RRID", p["assemblyId"])
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -521,7 +529,7 @@ class AssemblyModuleValidationTest {
     @Test
     fun `NotTriggered when EXECUTION_COMPLETED is absent`() {
         val incomplete = buildLedger().filter { it.type != EventTypes.EXECUTION_COMPLETED }
-        val result = module.assemble(projectId, makeMockLedger(incomplete))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(incomplete))
         assertTrue("Must be NotTriggered without EXECUTION_COMPLETED",
             result is AssemblyExecutionResult.NotTriggered)
     }
@@ -529,9 +537,9 @@ class AssemblyModuleValidationTest {
     @Test
     fun `Blocked when one contract has no TASK_EXECUTED SUCCESS`() {
         val missingTask2 = buildLedger().filter { ev ->
-            !(ev.type == EventTypes.TASK_EXECUTED && ev.payload["contractId"] == contractId2)
+            !(ev.type == EventTypes.TASK_EXECUTED && ev.payload["contractId"] == CONTRACT_ID_2)
         }
-        val result = module.assemble(projectId, makeMockLedger(missingTask2))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(missingTask2))
         assertTrue("Must be Blocked with missing execution surface: $result",
             result is AssemblyExecutionResult.Blocked)
         val blocked = result as AssemblyExecutionResult.Blocked
@@ -542,11 +550,11 @@ class AssemblyModuleValidationTest {
     @Test
     fun `Blocked when CONTRACT_COMPLETED has RRID mismatch`() {
         val rridMismatch = buildLedger().map { ev ->
-            if (ev.type == EventTypes.CONTRACT_COMPLETED && ev.payload["contractId"] == contractId2) {
+            if (ev.type == EventTypes.CONTRACT_COMPLETED && ev.payload["contractId"] == CONTRACT_ID_2) {
                 Event(ev.type, ev.payload + mapOf("report_reference" to "RRID-WRONG"))
             } else ev
         }
-        val result = module.assemble(projectId, makeMockLedger(rridMismatch))
+        val result = module.assemble(PROJECT_ID, makeMockLedger(rridMismatch))
         assertTrue("Must be Blocked on RRID violation: $result",
             result is AssemblyExecutionResult.Blocked)
         val blocked = result as AssemblyExecutionResult.Blocked
