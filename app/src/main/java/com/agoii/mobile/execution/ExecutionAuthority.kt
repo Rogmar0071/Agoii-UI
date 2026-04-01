@@ -52,6 +52,7 @@ import com.agoii.mobile.contracts.UniversalContract
 import com.agoii.mobile.contracts.UniversalContractNormalizer
 import com.agoii.mobile.contracts.UniversalContractValidator
 import com.agoii.mobile.core.EventLedger
+import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.LedgerValidationException
 import com.agoii.mobile.ics.IcsExecutionResult
@@ -847,11 +848,17 @@ class ExecutionAuthority(
     /**
      * Execute the assembly pipeline triggered by EXECUTION_COMPLETED.
      *
-     * Delegates exclusively to [AssemblyModule], which:
-     *  - enforces all trigger conditions (all contracts complete, no duplicate, CONTRACTS_GENERATED present)
-     *  - reads contract ordering from CONTRACT_COMPLETED events (RRIL-1)
-     *  - appends ASSEMBLY_STARTED and ASSEMBLY_COMPLETED to [ledger]
-     *  - returns the structured [com.agoii.mobile.assembly.FinalArtifact]
+     * Pipeline (AGOII-CLC-1F):
+     *  1. Invoke [AssemblyModule.assemble] — writes ASSEMBLY_STARTED and builds the
+     *     [com.agoii.mobile.assembly.FinalArtifact] + [com.agoii.mobile.assembly.AssemblyContractReport].
+     *  2. Run AERP-1 validation on the report (structural completeness, contract coverage,
+     *     artifact integrity, ordering, determinism).
+     *  3. PASS → write ASSEMBLY_VALIDATED then ASSEMBLY_COMPLETED; return [Assembled].
+     *  4. FAIL → write ASSEMBLY_FAILED then RECOVERY_CONTRACT; return [ValidationFailed].
+     *
+     * Block conditions (Phase 7):
+     *  - AssemblyReport missing  → blocked before writes
+     *  - failureReasons empty on FAIL state → blocked (invariant enforced by ValidationLayer)
      *
      * GOVERNANCE RULE: Governor MUST NOT call this method.
      * Only ExecutionAuthority is permitted to invoke assembly (via [CoreBridge]).
@@ -862,8 +869,136 @@ class ExecutionAuthority(
      */
     fun assembleFromLedger(
         projectId: String,
-        ledger:    EventLedger
-    ): AssemblyExecutionResult = assemblyModule.assemble(projectId, ledger)
+        ledger:    EventRepository
+    ): AssemblyExecutionResult {
+        val moduleResult = assemblyModule.assemble(projectId, ledger)
+
+        // Pass non-validation results directly to the caller.
+        if (moduleResult !is AssemblyExecutionResult.ReadyForValidation) return moduleResult
+
+        val report = moduleResult.assemblyReport
+        val artifact = moduleResult.finalArtifact
+
+        // Phase 7 block condition: AssemblyReport must be structurally present.
+        if (report.reportReference.isBlank() || report.assemblyId.isBlank()) {
+            return AssemblyExecutionResult.Blocked(
+                reason = "BLOCKED: AssemblyReport missing required identity fields"
+            )
+        }
+
+        // ── AERP-1 Validation ────────────────────────────────────────────────
+        val failureReasons = mutableListOf<String>()
+
+        // 1. Structural completeness
+        if (report.contractSetId.isBlank())
+            failureReasons += "STRUCTURAL: contractSetId is blank"
+        if (report.totalContracts < 1)
+            failureReasons += "STRUCTURAL: totalContracts < 1"
+        if (artifact.contractOutputs.isEmpty())
+            failureReasons += "STRUCTURAL: contractOutputs is empty"
+
+        // 2. Contract coverage — all CONTRACT_COMPLETED must be present
+        if (artifact.contractOutputs.size != report.totalContracts)
+            failureReasons += "CONTRACT_COVERAGE: expected ${report.totalContracts} outputs, " +
+                "got ${artifact.contractOutputs.size}"
+
+        // 3. Artifact integrity — artifactReference non-null and unique
+        val artifactRefs = artifact.contractOutputs.map { it.artifactReference }
+        val blankArtifacts = artifactRefs.filter { it.isBlank() }
+        if (blankArtifacts.isNotEmpty())
+            failureReasons += "ARTIFACT_INTEGRITY: blank artifactReference in contractOutputs"
+        val duplicates = artifactRefs.groupBy { it }.filter { it.value.size > 1 }.keys.toList()
+        if (duplicates.isNotEmpty())
+            failureReasons += "ARTIFACT_INTEGRITY: duplicate artifactReferences: $duplicates"
+
+        // 4. Ordering integrity — positions must be monotonically ascending (1..N)
+        val positions = artifact.contractOutputs.map { it.position }
+        val expectedPositions = (1..report.totalContracts).toList()
+        if (positions != expectedPositions)
+            failureReasons += "ORDERING: positions $positions != expected $expectedPositions"
+
+        // 5. Determinism — report_reference must be consistent across all contractOutputs
+        val inconsistentRefs = artifact.contractOutputs
+            .filter { it.reportReference != report.reportReference }
+        if (inconsistentRefs.isNotEmpty())
+            failureReasons += "DETERMINISM: inconsistent report_references in contractOutputs"
+
+        return if (failureReasons.isEmpty()) {
+            // ── PASS: emit ASSEMBLY_VALIDATED then ASSEMBLY_COMPLETED ────────
+            val validatedReport = report.copy(
+                validationSummary = "PASS",
+                failureReasons    = emptyList()
+            )
+            val finalArtifactReference = "artifact_${validatedReport.assemblyId}"
+
+            ledger.appendEvent(
+                projectId,
+                EventTypes.ASSEMBLY_VALIDATED,
+                mapOf(
+                    "report_reference" to validatedReport.reportReference,
+                    "contractSetId"    to validatedReport.contractSetId,
+                    "totalContracts"   to validatedReport.totalContracts
+                )
+            )
+            ledger.appendEvent(
+                projectId,
+                EventTypes.ASSEMBLY_COMPLETED,
+                mapOf(
+                    "report_reference"       to validatedReport.reportReference,
+                    "contractSetId"          to validatedReport.contractSetId,
+                    "totalContracts"         to validatedReport.totalContracts,
+                    "finalArtifactReference" to finalArtifactReference,
+                    "taskId"                 to validatedReport.assemblyId,
+                    "assemblyId"             to validatedReport.assemblyId,
+                    "traceMap"               to validatedReport.finalArtifact.traceMap
+                )
+            )
+            AssemblyExecutionResult.Assembled(
+                finalArtifact  = validatedReport.finalArtifact,
+                assemblyReport = validatedReport
+            )
+        } else {
+            // ── FAIL: emit ASSEMBLY_FAILED then RECOVERY_CONTRACT ────────────
+            val failedReport = report.copy(
+                validationSummary = "FAIL",
+                failureReasons    = failureReasons
+            )
+            val primaryViolation = failureReasons.first()
+
+            ledger.appendEvent(
+                projectId,
+                EventTypes.ASSEMBLY_FAILED,
+                mapOf(
+                    "report_reference"    to failedReport.reportReference,
+                    "contractSetId"       to failedReport.contractSetId,
+                    "failureReasons"      to failureReasons,
+                    "failedContracts"     to emptyList<String>(),
+                    "invariantViolations" to failureReasons
+                )
+            )
+            ledger.appendEvent(
+                projectId,
+                EventTypes.RECOVERY_CONTRACT,
+                mapOf(
+                    "contractId"          to failedReport.assemblyId,
+                    "taskId"              to failedReport.assemblyId,
+                    "contractType"        to "assembly",
+                    "executionPosition"   to "1",
+                    "report_reference"    to failedReport.reportReference,
+                    "failureClass"        to "STRUCTURAL",
+                    "violationField"      to primaryViolation,
+                    "correctionDirective" to "RE_ASSEMBLE_VIOLATING_SUBSET",
+                    "successCondition"    to "ALL_ARTIFACTS_VALID",
+                    "artifactReference"   to failedReport.assemblyId,
+                    "irs_violation_type"  to "ASSEMBLY_VALIDATION_FAILURE"
+                )
+            )
+            AssemblyExecutionResult.ValidationFailed(
+                assemblyReport = failedReport,
+                failureReasons = failureReasons
+            )
+        }
+    }
 
     // ═══════════════════════════════════════════════════════════════════════
     // PHASE 4 — ICS pipeline (post-ASSEMBLY_COMPLETED ledger state)

@@ -34,7 +34,9 @@ class ValidationLayer {
         /** True when EXECUTION_COMPLETED appears in simulated. */
         val hasExecutionCompleted: Boolean,
         /** All task lifecycle levels reached per taskId in simulated. */
-        val tasks: Map<String, Set<TaskLifecycle>>
+        val tasks: Map<String, Set<TaskLifecycle>>,
+        /** Set of report_references for which ASSEMBLY_COMPLETED exists in simulated (AGOII-CLC-1F). */
+        val assemblyCompletedReportRefs: Set<String> = emptySet()
     )
 
     // ── Public entry point ────────────────────────────────────────────────────
@@ -128,19 +130,26 @@ class ValidationLayer {
             }
         }
 
+        // Collect all report_references for ASSEMBLY_COMPLETED events (AGOII-CLC-1F Invariant 7)
+        val assemblyCompletedRefs = simulated
+            .filter { it.type == EventTypes.ASSEMBLY_COMPLETED }
+            .mapNotNull { it.payload["report_reference"]?.toString()?.takeIf { r -> r.isNotBlank() } }
+            .toSet()
+
         return ValidationState(
-            candidateType         = simulated[lastIndex].type,
-            priorEventType        = priorEventType,
-            simulatedSize         = simulated.size,
-            isSequenceValid       = isSequenceValid,
-            firstSeqViolationAt   = firstSeqViolationAt,
-            isTerminal            = isTerminal,
-            totalContracts        = totalContracts,
-            completedContracts    = completedContracts,
-            activeContractCount   = contractFreq.values.filter { it > 0 }.sum(),
-            contractNetByPosition = contractFreq.toMap(),
-            hasExecutionCompleted = hasExecutionCompleted,
-            tasks                 = taskState.mapValues { it.value.toSet() }
+            candidateType             = simulated[lastIndex].type,
+            priorEventType            = priorEventType,
+            simulatedSize             = simulated.size,
+            isSequenceValid           = isSequenceValid,
+            firstSeqViolationAt       = firstSeqViolationAt,
+            isTerminal                = isTerminal,
+            totalContracts            = totalContracts,
+            completedContracts        = completedContracts,
+            activeContractCount       = contractFreq.values.filter { it > 0 }.sum(),
+            contractNetByPosition     = contractFreq.toMap(),
+            hasExecutionCompleted     = hasExecutionCompleted,
+            tasks                     = taskState.mapValues { it.value.toSet() },
+            assemblyCompletedReportRefs = assemblyCompletedRefs
         )
     }
 
@@ -192,8 +201,9 @@ class ValidationLayer {
             EventTypes.CONTRACT_COMPLETED  -> checkContractCompleted(projectId, payload, state)
             EventTypes.EXECUTION_COMPLETED -> checkExecutionCompleted(projectId, payload, state)
             EventTypes.ASSEMBLY_STARTED    -> checkAssemblyStarted(projectId, payload)
-            EventTypes.ASSEMBLY_VALIDATED  -> checkAssemblyValidated(projectId, state)
+            EventTypes.ASSEMBLY_VALIDATED  -> checkAssemblyValidated(projectId, payload, state)
             EventTypes.ASSEMBLY_COMPLETED  -> checkAssemblyCompleted(projectId, payload)
+            EventTypes.ASSEMBLY_FAILED     -> checkAssemblyFailed(projectId, payload, state)
             EventTypes.ICS_STARTED         -> checkIcsStarted(projectId, payload)
             EventTypes.ICS_COMPLETED       -> checkIcsCompleted(projectId, payload)
             // UCS-1 ingestion lifecycle events
@@ -653,10 +663,59 @@ class ValidationLayer {
             )
     }
 
-    private fun checkAssemblyValidated(projectId: String, state: ValidationState) {
+    private fun checkAssemblyValidated(projectId: String, payload: Map<String, Any>, state: ValidationState) {
         if (!state.hasExecutionCompleted) {
             throw LedgerValidationException(
                 "ASSEMBLY_VALIDATED requires EXECUTION_COMPLETED in '$projectId'"
+            )
+        }
+        requireKeys(projectId, EventTypes.ASSEMBLY_VALIDATED, payload, ASSEMBLY_VALIDATED_KEYS)
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_VALIDATED missing or blank 'report_reference' in '$projectId'"
+            )
+        payload["contractSetId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_VALIDATED missing or blank 'contractSetId' in '$projectId'"
+            )
+        val totalRaw = payload["totalContracts"]
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_VALIDATED missing 'totalContracts' in '$projectId'"
+            )
+        val total = toInt(totalRaw)
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_VALIDATED 'totalContracts' must be an integer in '$projectId'"
+            )
+        if (total < 1) {
+            throw LedgerValidationException(
+                "ASSEMBLY_VALIDATED 'totalContracts' must be >= 1, got $total in '$projectId'"
+            )
+        }
+    }
+
+    private fun checkAssemblyFailed(projectId: String, payload: Map<String, Any>, state: ValidationState) {
+        if (!state.hasExecutionCompleted) {
+            throw LedgerValidationException(
+                "ASSEMBLY_FAILED requires EXECUTION_COMPLETED in '$projectId'"
+            )
+        }
+        requireKeys(projectId, EventTypes.ASSEMBLY_FAILED, payload, ASSEMBLY_FAILED_KEYS)
+        payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_FAILED missing or blank 'report_reference' in '$projectId'"
+            )
+        payload["contractSetId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_FAILED missing or blank 'contractSetId' in '$projectId'"
+            )
+        @Suppress("UNCHECKED_CAST")
+        val failureReasons = payload["failureReasons"] as? List<*>
+            ?: throw LedgerValidationException(
+                "ASSEMBLY_FAILED missing or invalid 'failureReasons' in '$projectId'"
+            )
+        if (failureReasons.isEmpty()) {
+            throw LedgerValidationException(
+                "ASSEMBLY_FAILED 'failureReasons' must not be empty in '$projectId'"
             )
         }
     }
@@ -784,6 +843,18 @@ class ValidationLayer {
                     "no further events are permitted in '$projectId'"
             )
         }
+
+        // Invariant 7 (AGOII-CLC-1F) — ASSEMBLY_FAILED and ASSEMBLY_COMPLETED must NOT
+        // coexist for the same report_reference.
+        if (type == EventTypes.ASSEMBLY_FAILED) {
+            val reportRef = payload["report_reference"]?.toString()
+            if (!reportRef.isNullOrBlank() && reportRef in state.assemblyCompletedReportRefs) {
+                throw LedgerValidationException(
+                    "Invariant 7: ASSEMBLY_FAILED cannot coexist with ASSEMBLY_COMPLETED " +
+                        "for report_reference '$reportRef' in '$projectId'"
+                )
+            }
+        }
     }
 
     // ── HELPERS ───────────────────────────────────────────────────────────────
@@ -898,6 +969,11 @@ class ValidationLayer {
         private val CONTRACT_COMPLETED_KEYS = setOf("position", "total", "contractId", "report_reference")
         private val EXECUTION_COMPLETED_KEYS = setOf("total")
         private val ASSEMBLY_STARTED_KEYS    = setOf("report_reference", "contractSetId", "totalContracts")
+        private val ASSEMBLY_VALIDATED_KEYS  = setOf("report_reference", "contractSetId", "totalContracts")
+        private val ASSEMBLY_FAILED_KEYS     = setOf(
+            "report_reference", "contractSetId", "failureReasons", "invariantViolations",
+            "failedContracts"
+        )
         private val ASSEMBLY_COMPLETED_KEYS  = setOf(
             "report_reference", "contractSetId", "totalContracts",
             "finalArtifactReference", "taskId", "assemblyId", "traceMap"

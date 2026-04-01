@@ -656,7 +656,7 @@ class CoreTest {
      * (11 core pipeline + 7 execution engine lifecycle types), no more, no less.
      */
     @Test
-    fun `lock - EventTypes ALL is frozen with exactly the 20 locked event types`() {
+    fun `lock - EventTypes ALL is frozen with exactly the 31 locked event types`() {
         val locked = setOf(
             // Core pipeline (original 11)
             "intent_submitted",
@@ -670,18 +670,33 @@ class CoreTest {
             "assembly_started",
             "assembly_validated",
             "assembly_completed",
+            // ICS pipeline
+            "ics_started",
+            "ics_completed",
             // Execution engine lifecycle
+            "task_created",
             "task_assigned",
             "task_started",
-            "task_executed",        // added by EXECUTION AUTHORITY EXTENSION
+            "task_executed",            // added by EXECUTION AUTHORITY EXTENSION
             "task_completed",
             "task_validated",
             "task_failed",
             "contractor_reassigned",
             "contract_failed",
-            "recovery_contract"     // added by EXECUTION AUTHORITY CORRECTION DELTA
+            "recovery_contract",        // added by EXECUTION AUTHORITY CORRECTION DELTA
+            "delta_contract_created",
+            // Assembly convergence (AGOII-CLC-1F)
+            "assembly_failed",          // added by ASSEMBLY CONVERGENCE CONTRACT
+            // UCS-1 ingestion lifecycle
+            "contract_created",
+            "contract_validated",
+            "contract_approved",
+            // Commit lifecycle
+            "commit_contract",
+            "commit_executed",
+            "commit_aborted"
         )
-        assertEquals("EventTypes.ALL must contain exactly 20 locked event types", 20, EventTypes.ALL.size)
+        assertEquals("EventTypes.ALL must contain exactly 31 locked event types", 31, EventTypes.ALL.size)
         assertEquals("EventTypes.ALL must match the locked set exactly", locked, EventTypes.ALL)
     }
 

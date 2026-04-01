@@ -71,7 +71,11 @@ class LedgerAudit(private val eventStore: EventRepository) {
             EventTypes.CONTRACTS_GENERATED to EventTypes.CONTRACTS_READY,
             EventTypes.CONTRACTS_APPROVED  to EventTypes.EXECUTION_STARTED,
             EventTypes.EXECUTION_COMPLETED to EventTypes.ASSEMBLY_STARTED,
-            EventTypes.ASSEMBLY_STARTED    to EventTypes.ASSEMBLY_COMPLETED,
+            // AGOII-CLC-1F: assembly_started → assembly_validated (AERP-1 check by EA)
+            //                              → assembly_completed (written by EA on pass)
+            //                              → ics_started
+            EventTypes.ASSEMBLY_STARTED    to EventTypes.ASSEMBLY_VALIDATED,
+            EventTypes.ASSEMBLY_VALIDATED  to EventTypes.ASSEMBLY_COMPLETED,
             EventTypes.ASSEMBLY_COMPLETED  to EventTypes.ICS_STARTED,
             EventTypes.ICS_STARTED         to EventTypes.ICS_COMPLETED
         )
@@ -132,6 +136,9 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.CONTRACT_STARTED) return true
             // Governor: all contracts completed — close the execution phase
             if (from == EventTypes.CONTRACT_COMPLETED && to == EventTypes.EXECUTION_COMPLETED) return true
+            // AGOII-CLC-1F: AERP-1 validation failure — EA writes ASSEMBLY_FAILED then RECOVERY_CONTRACT
+            if (from == EventTypes.ASSEMBLY_STARTED && to == EventTypes.ASSEMBLY_FAILED) return true
+            if (from == EventTypes.ASSEMBLY_FAILED && to == EventTypes.RECOVERY_CONTRACT) return true
             // UCS-1 ingestion: INTENT_SUBMITTED leads to CONTRACT_CREATED (ingestion path)
             if (from == EventTypes.INTENT_SUBMITTED && to == EventTypes.CONTRACT_CREATED) return true
             // UCS-1 ingestion: validation passed

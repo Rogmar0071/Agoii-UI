@@ -94,8 +94,17 @@ class Governor(
             // Governor reads from the ledger only; if it has not yet been written, wait.
             EventTypes.INTENT_SUBMITTED    -> GovernorResult.NO_EVENT
 
-            // Terminal: EXECUTION_COMPLETED closes the lifecycle — no further events.
+            // Terminal: EXECUTION_COMPLETED closes the execution lifecycle.
+            // Assembly and ICS pipelines are owned by ExecutionAuthority via CoreBridge.
             EventTypes.EXECUTION_COMPLETED -> GovernorResult.COMPLETED
+
+            // Assembly pipeline states — owned by ExecutionAuthority; Governor waits.
+            EventTypes.ASSEMBLY_STARTED,
+            EventTypes.ASSEMBLY_VALIDATED,
+            EventTypes.ASSEMBLY_COMPLETED,
+            EventTypes.ASSEMBLY_FAILED,
+            EventTypes.ICS_STARTED,
+            EventTypes.ICS_COMPLETED       -> GovernorResult.COMPLETED
 
             else -> {
                 val next = nextEvent(events)
@@ -317,6 +326,15 @@ class Governor(
             // Terminal: EXECUTION_COMPLETED is handled in runGovernor; null here ensures
             // nextEvent stays pure and side-effect-free.
             EventTypes.EXECUTION_COMPLETED -> null
+
+            // Assembly and ICS pipeline states — owned by ExecutionAuthority.
+            // Governor returns null so callers receive a clean wait signal.
+            EventTypes.ASSEMBLY_STARTED,
+            EventTypes.ASSEMBLY_VALIDATED,
+            EventTypes.ASSEMBLY_COMPLETED,
+            EventTypes.ASSEMBLY_FAILED,
+            EventTypes.ICS_STARTED,
+            EventTypes.ICS_COMPLETED       -> null
 
             else -> null
         }
