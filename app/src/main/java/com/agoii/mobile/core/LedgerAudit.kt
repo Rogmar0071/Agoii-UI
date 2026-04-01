@@ -92,6 +92,9 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.EXECUTION_STARTED && to == EventTypes.CONTRACT_STARTED) return true
             // Governor: task lifecycle — contract_started initiates task assignment
             if (from == EventTypes.CONTRACT_STARTED && to == EventTypes.TASK_ASSIGNED) return true
+            // Governor: ASSEMBLY_FAILED triggers the Governor-only recovery flow
+            if (from == EventTypes.EXECUTION_COMPLETED && to == EventTypes.ASSEMBLY_FAILED) return true
+            if (from == EventTypes.ASSEMBLY_FAILED && to == EventTypes.RECOVERY_CONTRACT) return true
             // Backward-compatible direct path (pre-task-lifecycle ledgers remain auditable)
             if (from == EventTypes.CONTRACT_STARTED && to == EventTypes.CONTRACT_COMPLETED) return true
             // Governor: task lifecycle — assignment leads to execution start

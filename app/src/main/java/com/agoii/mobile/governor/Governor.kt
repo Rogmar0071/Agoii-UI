@@ -76,12 +76,12 @@ class Governor(
     }
 
     /**
-     * Advance the ledger by exactly one step and return the outcome.
+     * Advance the ledger by one evaluation step and return the outcome.
      *
-     * Reads the current ledger state from [store], computes the next event via
-     * [nextEvent], appends it to [store], and returns [GovernorResult.ADVANCED].
-     * Returns a non-ADVANCED result for known wait states, the terminal state, or
-     * when no valid transition exists (CSL gate or drift).
+     * Reads the current ledger state from [store], computes ALL next events via
+     * [nextEvents], appends each one to [store] in order, and returns
+     * [GovernorResult.ADVANCED]. Returns a non-ADVANCED result for known wait
+     * states, the terminal state, or when no valid transition exists.
      */
     fun runGovernor(projectId: String): GovernorResult {
         val events = store.loadEvents(projectId)
@@ -98,9 +98,11 @@ class Governor(
             EventTypes.EXECUTION_COMPLETED -> GovernorResult.COMPLETED
 
             else -> {
-                val next = nextEvent(events)
-                if (next != null) {
-                    store.appendEvent(projectId, next.type, next.payload)
+                val nextList = nextEvents(events)
+                if (nextList.isNotEmpty()) {
+                    nextList.forEach { next ->
+                        store.appendEvent(projectId, next.type, next.payload)
+                    }
                     GovernorResult.ADVANCED
                 } else {
                     GovernorResult.DRIFT
@@ -110,14 +112,99 @@ class Governor(
     }
 
     /**
-     * Pure projection: given the full ordered ledger [events], returns the next [Event]
-     * to append, or null when no Governor-owned transition exists (wait state, CSL gate,
-     * terminal, or drift).
+     * Pure projection: given the full ordered ledger [events], returns the next
+     * [Event] to append, or null when no Governor-owned transition exists.
+     *
+     * For transitions that produce multiple events in a single step (e.g.
+     * ASSEMBLY_FAILED → all RECOVERY_CONTRACTs), this returns only the first.
+     * Use [nextEvents] when all events must be obtained.
+     *
+     * This function has no side effects.
+     */
+    fun nextEvent(events: List<Event>): Event? = nextEvents(events).firstOrNull()
+
+    /**
+     * Pure projection: given the full ordered ledger [events], returns ALL events
+     * to append in this evaluation step, or an empty list when no Governor-owned
+     * transition exists.
+     *
+     * For most transitions this returns a single event. For ASSEMBLY_FAILED it
+     * returns one RECOVERY_CONTRACT per failure reason — all in a single deterministic
+     * step, with no dependency on repeated Governor calls.
      *
      * This function has no side effects. The caller is responsible for persisting
-     * the returned event via [com.agoii.mobile.core.EventRepository].
+     * all returned events via [com.agoii.mobile.core.EventRepository].
      */
-    fun nextEvent(events: List<Event>): Event? {
+    fun nextEvents(events: List<Event>): List<Event> {
+        if (events.isEmpty()) return emptyList()
+        val last = events.last()
+
+        // ── GOVERNOR: deterministic recovery emission (STRICT) ───────────────────
+        // ALL failureReasons MUST be converted into RECOVERY_CONTRACTS
+        // NO silent dropping allowed
+        if (last.type == EventTypes.ASSEMBLY_FAILED) {
+            val reportReference = last.payload["report_reference"]?.toString()
+                ?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException(
+                    "GOVERNOR_INVARIANT_VIOLATION: report_reference in ASSEMBLY_FAILED is missing or blank"
+                )
+
+            @Suppress("UNCHECKED_CAST")
+            val failureReasonsList = last.payload["failureReasons"] as? List<*>
+                ?: throw IllegalStateException(
+                    "GOVERNOR_INVARIANT_VIOLATION: failureReasons missing or invalid"
+                )
+
+            val lockedSections = last.payload["lockedSections"] ?: emptyList<String>()
+
+            val recoveryContracts = failureReasonsList.mapIndexed { index, fr ->
+                val reason = fr as? Map<*, *>
+                    ?: throw IllegalStateException(
+                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index] must be a Map, got ${fr?.javaClass?.simpleName ?: "null"}"
+                    )
+
+                val contractId = reason["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException(
+                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index].contractId missing"
+                    )
+
+                val failureClass = reason["failureType"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException(
+                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index].failureType missing"
+                    )
+
+                val violationField = reason["violatedInvariant"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException(
+                        "GOVERNOR_INVARIANT_VIOLATION: failureReasons[$index].violatedInvariant missing"
+                    )
+
+                Event(
+                    type    = EventTypes.RECOVERY_CONTRACT,
+                    payload = mapOf(
+                        "contractId"          to contractId,
+                        "report_reference"    to reportReference,
+                        "failureClass"        to failureClass,
+                        "violationField"      to violationField,
+                        "correctionDirective" to "DELTA_REPAIR_REQUIRED",
+                        "successCondition"    to "VALIDATION_PASS",
+                        "artifactReference"   to contractId,
+                        "irs_violation_type"  to "ASSEMBLY_FAILURE",
+                        "lockedSections"      to lockedSections
+                    )
+                )
+            }
+            return recoveryContracts
+        }
+
+        // All other transitions produce at most one event.
+        return listOfNotNull(nextEventSingle(events))
+    }
+
+    /**
+     * Internal single-event projection for all non-ASSEMBLY_FAILED transitions.
+     * Returns null when no transition is applicable.
+     */
+    private fun nextEventSingle(events: List<Event>): Event? {
         if (events.isEmpty()) return null
         val last = events.last()
 
@@ -239,6 +326,11 @@ class Governor(
 
             // No auto-retry: task failure requires external escalation.
             EventTypes.TASK_FAILED -> null
+
+            // ASSEMBLY_FAILED is handled in nextEvents() — emits ALL recovery contracts
+            // in one deterministic step. This single-event path returns null to ensure
+            // callers use nextEvents() for ASSEMBLY_FAILED.
+            EventTypes.ASSEMBLY_FAILED -> null
 
             // CLC-1 delta loop: RECOVERY_CONTRACT → DELTA_CONTRACT_CREATED
             // Governor extracts contractId, violationField, report_reference from the
