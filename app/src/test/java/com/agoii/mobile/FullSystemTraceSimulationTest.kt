@@ -250,6 +250,7 @@ class FullSystemTraceSimulationTest {
                 projectId      = "proj-rcf",
                 type           = EventTypes.RECOVERY_CONTRACT,
                 payload        = mapOf(
+                    "recoveryId"          to "RCF::proj-rcf::c-1::task-1::5",
                     "contractId"          to "c-1",
                     "report_reference"    to "rr-1",
                     "failureClass"        to "LOGICAL_FAILURE",
@@ -281,6 +282,7 @@ class FullSystemTraceSimulationTest {
                 projectId      = "proj-rcf-wrong",
                 type           = EventTypes.RECOVERY_CONTRACT,
                 payload        = mapOf(
+                    "recoveryId"          to "RCF::proj-rcf-wrong::c-1::task-1::5",
                     "contractId"          to "c-1",
                     "report_reference"    to "rr-1",
                     "failureClass"        to "LOGICAL_FAILURE",
@@ -312,6 +314,7 @@ class FullSystemTraceSimulationTest {
             projectId      = "proj-rcf-ok",
             type           = EventTypes.RECOVERY_CONTRACT,
             payload        = mapOf(
+                "recoveryId"          to "RCF::proj-rcf-ok::c-1::task-1::5",
                 "contractId"          to "c-1",
                 "report_reference"    to "rr-1",
                 "failureClass"        to "LOGICAL_FAILURE",
@@ -796,6 +799,7 @@ class FullSystemTraceSimulationTest {
             projectId     = "proj-inv7-ok",
             type          = EventTypes.RECOVERY_CONTRACT,
             payload       = mapOf(
+                "recoveryId"          to "RCF::proj-inv7-ok::RCF_c-1_EXECUTION::task-1::5",
                 "contractId"          to "RCF_c-1_EXECUTION",
                 "report_reference"    to "rr-1",
                 "failureClass"        to "LOGICAL",
@@ -835,5 +839,12 @@ class FullSystemTraceSimulationTest {
         assertEquals("EXECUTION_AUTHORITY", recoveryEvent.payload["source"])
         assertNotNull("RECOVERY_CONTRACT must carry contractId", recoveryEvent.payload["contractId"])
         assertNotNull("RECOVERY_CONTRACT must carry report_reference", recoveryEvent.payload["report_reference"])
+        // AGOII-ALIGN-1-IDENTITY-LOCK: recoveryId must be deterministic and non-null
+        val recoveryId = recoveryEvent.payload["recoveryId"]?.toString()
+        assertNotNull("RECOVERY_CONTRACT must carry recoveryId", recoveryId)
+        assertTrue(
+            "recoveryId must follow RCF:: deterministic formula",
+            recoveryId?.startsWith("RCF::") == true
+        )
     }
 }

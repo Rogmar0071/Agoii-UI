@@ -53,7 +53,6 @@ import com.agoii.mobile.contracts.UniversalContractNormalizer
 import com.agoii.mobile.contracts.UniversalContractValidator
 import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
-import java.util.UUID
 import com.agoii.mobile.core.LedgerValidationException
 import com.agoii.mobile.ics.IcsExecutionResult
 import com.agoii.mobile.ics.IcsModule
@@ -516,12 +515,12 @@ class ExecutionAuthority(
                 val contractId = lastEvent.payload["contractId"]?.toString()
                     ?.takeIf { it.isNotBlank() }
                     ?: return ExecutionAuthorityExecutionResult.NotTriggered
-                // AGOII-ALIGN-1-FINAL-LOCK RULE 1: Recovery idempotency guard.
-                // If RECOVERY_CONTRACT already exists for this contractId, do not re-emit.
-                val recoveryId = "RCF_${contractId}_EXECUTION"
+                // AGOII-ALIGN-1-IDENTITY-LOCK RULE 2: Recovery idempotency anchored to recoveryId.
+                // recoveryId is the ONLY identity used for idempotency checks (not contractId).
+                val recoveryId = deriveRecoveryId(projectId, contractId, taskId, lastEvent.sequenceNumber)
                 val recoveryAlreadyExists = events.any {
                     it.type == EventTypes.RECOVERY_CONTRACT &&
-                    it.payload["contractId"]?.toString() == recoveryId
+                    it.payload["recoveryId"] == recoveryId
                 }
                 if (recoveryAlreadyExists) {
                     return ExecutionAuthorityExecutionResult.Idempotent
@@ -551,7 +550,7 @@ class ExecutionAuthority(
                 val recovery = issueRecoveryContract(
                     executionTaskCtx, anchorState, "LOGICAL", "TASK_EXECUTED_FAILURE"
                 )
-                writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
+                writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, recoveryId, taskId)
                 return ExecutionAuthorityExecutionResult.RecoveryEmitted(
                     contractId      = recovery.contractId,
                     reportReference = reportReference
@@ -678,9 +677,13 @@ class ExecutionAuthority(
                 val recovery = issueRecoveryContract(
                     executionTask, anchor, "DETERMINISM", "NON_CONVERGENT_SYSTEM_FAILURE"
                 )
+                val deltaArtifactRef = buildArtifactReference(executionTask.reportReference, executionTask.taskId, "NO_ARTIFACT")
+                val deltaRecoveryId = deriveRecoveryId(
+                    projectId, executionTask.contractId, executionTask.taskId,
+                    events.lastOrNull()?.sequenceNumber ?: events.size.toLong()
+                )
                 writeRecoveryContractToLedger(
-                    projectId, ledger, recovery,
-                    buildArtifactReference(executionTask.reportReference, executionTask.taskId, "NO_ARTIFACT")
+                    projectId, ledger, recovery, deltaArtifactRef, deltaRecoveryId, executionTask.taskId
                 )
                 return ExecutionAuthorityExecutionResult.BlockedWithRecovery(
                     reason            = "NON_CONVERGENT_SYSTEM_FAILURE",
@@ -1134,7 +1137,12 @@ class ExecutionAuthority(
             successCondition    = "TASK_EXECUTED written with executionStatus=SUCCESS AND validationStatus=VALIDATED"
         )
         val artifactRef = buildArtifactReference(anchor.reportReference, executionTask.taskId, "VIOLATION_SURFACE")
-        writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
+        val currentEvents = ledger.loadEvents(projectId)
+        val issueRecoveryId = deriveRecoveryId(
+            projectId, executionTask.contractId, executionTask.taskId,
+            currentEvents.lastOrNull()?.sequenceNumber ?: currentEvents.size.toLong()
+        )
+        writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, issueRecoveryId, executionTask.taskId)
         return ExecutionAuthorityExecutionResult.RecoveryIssued(
             contractId = executionTask.contractId,
             reason     = violation.reason
@@ -1326,7 +1334,14 @@ class ExecutionAuthority(
 
         val recovery = issueRecoveryContract(task, anchorState, failureClass, reason)
         // VIOLATION 3: RecoveryContract MUST be ledger-materialized (RCF-1)
-        writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
+        val blockTaskId = task?.taskId ?: knownTaskId ?: "UNKNOWN"
+        val blockContractId = task?.contractId ?: "UNKNOWN"
+        val blockEvents = ledger.loadEvents(projectId)
+        val blockRecoveryId = deriveRecoveryId(
+            projectId, blockContractId, blockTaskId,
+            blockEvents.lastOrNull()?.sequenceNumber ?: blockEvents.size.toLong()
+        )
+        writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, blockRecoveryId, blockTaskId)
         return ExecutionAuthorityExecutionResult.BlockedWithRecovery(reason, listOf(recovery))
     }
 
@@ -1622,23 +1637,45 @@ class ExecutionAuthority(
     }
 
     /**
+     * Derive a deterministic recovery identity from failure event coordinates.
+     *
+     * AGOII-ALIGN-1-IDENTITY-LOCK RULE 1: recoveryId MUST be derived from the failure event
+     * to preserve replay determinism. NO randomness is permitted in event identity.
+     *
+     * Formula: "RCF::$projectId::$contractId::$taskId::$failureSequence"
+     */
+    private fun deriveRecoveryId(
+        projectId:       String,
+        contractId:      String,
+        taskId:          String,
+        failureSequence: Long
+    ): String = "RCF::$projectId::$contractId::$taskId::$failureSequence"
+
+    /**
      * Write [ExecutionRecoveryContract] to the ledger as a RECOVERY_CONTRACT event (RCF-1).
      * All recovery MUST be ledger-materialized; in-memory recovery is PROHIBITED.
      * Includes FAILURE_REFERENCE fields (report_reference, contractId) for ledger traceability.
+     *
+     * @param recoveryId Deterministic recovery identity derived via [deriveRecoveryId].
+     *                   AGOII-ALIGN-1-IDENTITY-LOCK: recoveryId is the ONLY idempotency key.
+     * @param taskId     Task identifier carried into the event payload for trace linkage.
      */
     private fun writeRecoveryContractToLedger(
-        projectId:  String,
-        ledger:     EventRepository,
-        recovery:   ExecutionRecoveryContract,
-        artifactRef: String
+        projectId:   String,
+        ledger:      EventRepository,
+        recovery:    ExecutionRecoveryContract,
+        artifactRef: String,
+        recoveryId:  String,
+        taskId:      String
     ) {
         try {
             ledger.appendEvent(
                 projectId,
                 EventTypes.RECOVERY_CONTRACT,
                 mapOf(
-                    "recoveryId"          to UUID.randomUUID().toString(),
+                    "recoveryId"          to recoveryId,
                     "contractId"          to recovery.contractId,
+                    "taskId"              to taskId,
                     "report_reference"    to recovery.reportReference,
                     "failureClass"        to recovery.failureClass.name,
                     "violationField"      to recovery.violationField,
@@ -1905,7 +1942,12 @@ class ExecutionAuthority(
                 anchorState         = anchorState,
                 successCondition    = "Contract '${contract.contractId}' executed with SUCCESS"
             )
-            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
+            val validationFailEvents = ledger.loadEvents(projectId)
+            val validationRecoveryId = deriveRecoveryId(
+                projectId, recovery.contractId, ingestTaskId,
+                validationFailEvents.lastOrNull()?.sequenceNumber ?: validationFailEvents.size.toLong()
+            )
+            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, validationRecoveryId, ingestTaskId)
             return UniversalIngestionResult.ValidationFailed(
                 violations       = validationResult.violations,
                 recoveryContract = recovery
@@ -1946,7 +1988,12 @@ class ExecutionAuthority(
                 anchorState         = anchorState,
                 successCondition    = "Contract '${normalized.contractId}' executed with SUCCESS"
             )
-            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
+            val enforcementFailEvents = ledger.loadEvents(projectId)
+            val enforcementRecoveryId = deriveRecoveryId(
+                projectId, recovery.contractId, ingestTaskId,
+                enforcementFailEvents.lastOrNull()?.sequenceNumber ?: enforcementFailEvents.size.toLong()
+            )
+            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, enforcementRecoveryId, ingestTaskId)
             return UniversalIngestionResult.EnforcementFailed(
                 violations       = enforcementResult.violations,
                 recoveryContract = recovery

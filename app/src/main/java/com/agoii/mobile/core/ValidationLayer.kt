@@ -447,6 +447,12 @@ class ValidationLayer {
 
     private fun checkRecoveryContract(projectId: String, payload: Map<String, Any>) {
         requireKeys(projectId, EventTypes.RECOVERY_CONTRACT, payload, RECOVERY_CONTRACT_KEYS)
+        // AGOII-ALIGN-1-IDENTITY-LOCK RULE 1: recoveryId is the ONLY identity for
+        // idempotency checks, event uniqueness, and trace linkage.
+        payload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "RECOVERY_CONTRACT missing or blank 'recoveryId' in '$projectId'"
+            )
         payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw LedgerValidationException(
                 "RECOVERY_CONTRACT missing or blank 'contractId' in '$projectId'"
@@ -972,6 +978,7 @@ class ValidationLayer {
             "report_reference", "position", "total"
         )
         private val RECOVERY_CONTRACT_KEYS  = setOf(
+            "recoveryId",
             "contractId", "taskId", "contractType", "executionPosition",
             "report_reference",
             "failureClass", "violationField", "correctionDirective",
