@@ -206,10 +206,11 @@ class AssemblyModuleTest {
             singleFailurePayload()
         )
 
-        val next = Governor(MemoryRepository(events)).nextEvent(events)
+        val results = Governor(MemoryRepository(events)).nextEvents(events)
 
-        assertNotNull("Governor must emit an event for ASSEMBLY_FAILED", next)
-        assertEquals(EventTypes.RECOVERY_CONTRACT, next!!.type)
+        assertFalse("Governor must emit events for ASSEMBLY_FAILED", results.isEmpty())
+        val next = results.first()
+        assertEquals(EventTypes.RECOVERY_CONTRACT, next.type)
         assertEquals("contract_3", next.payload["contractId"])
         assertEquals("INCOMPLETE_EXECUTION_SURFACE", next.payload["failureClass"])
         assertTrue(
@@ -229,9 +230,10 @@ class AssemblyModuleTest {
             singleFailurePayload(lockedSections = listOf("contract_1", "contract_2"))
         )
 
-        val next = Governor(MemoryRepository(events)).nextEvent(events)
-        assertNotNull(next)
-        assertEquals(EventTypes.RECOVERY_CONTRACT, next!!.type)
+        val results = Governor(MemoryRepository(events)).nextEvents(events)
+        assertFalse("Governor must emit events", results.isEmpty())
+        val next = results.first()
+        assertEquals(EventTypes.RECOVERY_CONTRACT, next.type)
         @Suppress("UNCHECKED_CAST")
         val locked = next.payload["lockedSections"] as? List<*>
         assertNotNull("lockedSections must be present in RECOVERY_CONTRACT payload", locked)
@@ -240,7 +242,7 @@ class AssemblyModuleTest {
     }
 
     @Test
-    fun `Governor emits one RECOVERY_CONTRACT per failureReason (multi-failure cycling)`() {
+    fun `Governor emits ALL RECOVERY_CONTRACTs in a single deterministic step (multi-failure)`() {
         val assemblyFailedEvent = Event(
             EventTypes.ASSEMBLY_FAILED,
             mapOf(
@@ -257,32 +259,32 @@ class AssemblyModuleTest {
             )
         )
 
-        // First call: ASSEMBLY_FAILED last, no prior RECOVERY_CONTRACTs → emit for c1
-        val events1 = listOf(assemblyFailedEvent)
-        val next1   = Governor(MemoryRepository(events1)).nextEvent(events1)
-        assertNotNull("First RECOVERY_CONTRACT must be emitted", next1)
-        assertEquals(EventTypes.RECOVERY_CONTRACT, next1!!.type)
-        assertEquals("c1", next1.payload["contractId"])
+        // Single call: ASSEMBLY_FAILED is last event → emit BOTH recovery contracts atomically
+        val events  = listOf(assemblyFailedEvent)
+        val results = Governor(MemoryRepository(events)).nextEvents(events)
 
-        // Second call: c1 already recovered, ASSEMBLY_FAILED still last → emit for c2
-        val recoveryForC1 = Event(
-            EventTypes.RECOVERY_CONTRACT,
-            mapOf("contractId" to "c1", "report_reference" to "rrid-multi-001")
-        )
-        val events2 = listOf(recoveryForC1, assemblyFailedEvent)
-        val next2   = Governor(MemoryRepository(events2)).nextEvent(events2)
-        assertNotNull("Second RECOVERY_CONTRACT must be emitted", next2)
-        assertEquals(EventTypes.RECOVERY_CONTRACT, next2!!.type)
-        assertEquals("c2", next2.payload["contractId"])
+        assertEquals("Both recovery contracts must be emitted in one step", 2, results.size)
+        assertEquals(EventTypes.RECOVERY_CONTRACT, results[0].type)
+        assertEquals("c1", results[0].payload["contractId"])
+        assertEquals(EventTypes.RECOVERY_CONTRACT, results[1].type)
+        assertEquals("c2", results[1].payload["contractId"])
+    }
 
-        // Third call: both c1 and c2 already recovered → no more pending → return null
-        val recoveryForC2 = Event(
-            EventTypes.RECOVERY_CONTRACT,
-            mapOf("contractId" to "c2", "report_reference" to "rrid-multi-001")
+    @Test
+    fun `nextEvents returns empty list when ASSEMBLY_FAILED has no valid failureReasons`() {
+        val assemblyFailedEvent = Event(
+            EventTypes.ASSEMBLY_FAILED,
+            mapOf(
+                "report_reference" to "rrid-empty-001",
+                "contractSetId"    to "cset-empty",
+                "failureReasons"   to emptyList<Any>(),
+                "lockedSections"   to emptyList<String>(),
+                "violationSurface" to emptyList<String>()
+            )
         )
-        val events3 = listOf(recoveryForC1, recoveryForC2, assemblyFailedEvent)
-        val next3   = Governor(MemoryRepository(events3)).nextEvent(events3)
-        assertNull("No more RECOVERY_CONTRACTs when all failures are processed", next3)
+        val events  = listOf(assemblyFailedEvent)
+        val results = Governor(MemoryRepository(events)).nextEvents(events)
+        assertTrue("Empty failureReasons must yield empty result", results.isEmpty())
     }
 
     @Test
