@@ -887,7 +887,8 @@ class ValidationLayer {
             "contractId", "taskId", "contractType", "executionPosition",
             "report_reference",
             "failureClass", "violationField", "correctionDirective",
-            "successCondition", "artifactReference"
+            "successCondition", "artifactReference",
+            "irs_violation_type"
         )
         private val DELTA_CONTRACT_CREATED_KEYS = setOf(
             "contractId", "violationField", "report_reference", "delta_iteration_count"

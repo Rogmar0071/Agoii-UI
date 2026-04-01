@@ -56,6 +56,10 @@ import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.LedgerValidationException
 import com.agoii.mobile.ics.IcsExecutionResult
 import com.agoii.mobile.ics.IcsModule
+import com.agoii.mobile.irs.ConsensusRule
+import com.agoii.mobile.irs.IrsOrchestrator
+import com.agoii.mobile.irs.OrchestratorResult
+import com.agoii.mobile.irs.SwarmConfig
 import com.agoii.mobile.tasks.Task
 import com.agoii.mobile.tasks.TaskAssignmentStatus
 
@@ -311,6 +315,7 @@ class ExecutionAuthority(
     private val validator       = ResultValidator()
     private val assemblyModule  = AssemblyModule()
     private val icsModule       = IcsModule()
+    private val irsOrchestrator = IrsOrchestrator()
 
     // ── UCS-1 ingestion components (Surfaces 2, 3, 6) ────────────────────────
     private val contractValidator  = UniversalContractValidator()
@@ -330,6 +335,12 @@ class ExecutionAuthority(
          * When exceeded, a NON_CONVERGENT recovery contract is issued and execution halts.
          */
         const val MAX_DELTA = 3
+
+        /**
+         * Maximum IRS orchestrator steps per validation session (CLC-1B Part 2).
+         * Bounded to prevent infinite IRS validation loops.
+         */
+        const val MAX_IRS_STEPS = 10
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -507,14 +518,66 @@ class ExecutionAuthority(
 
         // ── DEE-1: Detect delta mode from contractId prefix ──────────────────
         val isDelta = executionTask.contractId.startsWith("RCF_")
-        val deltaContext: DeltaContext? = if (isDelta) {
-            DeltaContext(
-                violationField          = extractViolationFieldFromContractId(executionTask.contractId),
-                anchorState             = extractAnchorStateFromRecovery(executionTask, events),
-                previousReportReference = extractReportReferenceFromRecovery(executionTask)
-            )
-        } else null
         val executionMode = if (isDelta) ExecutionMode.DELTA else ExecutionMode.NORMAL
+        val deltaContext: DeltaContext? = if (isDelta) {
+            val dc = runCatching {
+                DeltaContext(
+                    violationField          = extractViolationFieldFromContractId(executionTask.contractId),
+                    anchorState             = extractAnchorStateFromRecovery(executionTask, events),
+                    previousReportReference = extractReportReferenceFromRecovery(executionTask)
+                )
+            }
+            if (dc.isFailure) {
+                return blockWithRecovery(
+                    projectId, ledger, executionTask,
+                    "ANCHOR_STATE_MISSING",
+                    "AnchorState extraction failed for contractId=${executionTask.contractId}"
+                )
+            }
+            dc.getOrThrow()
+        } else null
+
+        // ── CLC-1B PART 1-R1: Hard blocks for DELTA mode ─────────────────────
+        if (executionMode == ExecutionMode.DELTA) {
+            if (deltaContext == null) {
+                return blockWithRecovery(
+                    projectId, ledger, executionTask,
+                    "DELTA_CONTEXT_MISSING",
+                    "Delta context absent for delta contractId=${executionTask.contractId}"
+                )
+            }
+            if (deltaContext.anchorState.reportReference.isBlank()) {
+                return blockWithRecovery(
+                    projectId, ledger, executionTask,
+                    "ANCHOR_STATE_MISSING",
+                    "AnchorState reportReference blank for contractId=${executionTask.contractId}"
+                )
+            }
+        }
+
+        // ── CLC-1B PART 1-R2: Delta iteration count — convergence termination ─
+        if (executionMode == ExecutionMode.DELTA) {
+            val deltaIterationCount = events.count { it.type == EventTypes.DELTA_CONTRACT_CREATED }
+            if (deltaIterationCount > MAX_DELTA) {
+                val anchor = AnchorState(
+                    reportReference    = executionTask.reportReference,
+                    validatedTypes     = emptyList(),
+                    validatedStructure = emptySet(),
+                    validatedPaths     = emptyList()
+                )
+                val recovery = issueRecoveryContract(
+                    executionTask, anchor, "DETERMINISM", "NON_CONVERGENT_SYSTEM_FAILURE"
+                )
+                writeRecoveryContractToLedger(
+                    projectId, ledger, recovery,
+                    buildArtifactReference(executionTask.reportReference, executionTask.taskId, "NO_ARTIFACT")
+                )
+                return ExecutionAuthorityExecutionResult.BlockedWithRecovery(
+                    reason            = "NON_CONVERGENT_SYSTEM_FAILURE",
+                    recoveryContracts = listOf(recovery)
+                )
+            }
+        }
 
         // ── MQP-EXECUTION-INVARIANT-LOCK-01: mandatory execution closure ────────
         // Every path from here MUST produce TASK_EXECUTED (SUCCESS or FAILURE).
@@ -550,6 +613,24 @@ class ExecutionAuthority(
             enforceAnchorStateIntegrity(deltaContext)
         }
 
+        // ── CLC-1B PART 1-R3: Strict delta input — scope contractor payload ───
+        // In DELTA mode, contractor MUST NOT receive full contract input.
+        // Only DeltaExecutionInput-scoped fields are permitted.
+        val contractorTaskPayload: Map<String, Any> = if (executionMode == ExecutionMode.DELTA && deltaContext != null) {
+            mapOf(
+                "taskId"              to executionTask.taskId,
+                "violationField"      to deltaContext.violationField,
+                "correctionDirective" to "Correct violation: ${deltaContext.violationField}",
+                "anchorReportRef"     to deltaContext.anchorState.reportReference
+            )
+        } else {
+            mapOf(
+                "taskId"     to executionTask.taskId,
+                "contractId" to executionTask.contractId,
+                "userInput"  to userInput
+            )
+        }
+
         val systemResult = contractorSystem.execute(
             taskId               = executionTask.taskId,
             contractId           = executionTask.contractId,
@@ -557,11 +638,7 @@ class ExecutionAuthority(
             position             = executionTask.position,
             constraints          = executionTask.constraints,
             expectedOutput       = executionTask.expectedOutput,
-            taskPayload          = mapOf(
-                "taskId"     to executionTask.taskId,
-                "contractId" to executionTask.contractId,
-                "userInput"  to userInput
-            ),
+            taskPayload          = contractorTaskPayload,
             requiredCapabilities = requiredCapabilities,
             executionType        = domainContext.executionType,
             targetDomain         = domainContext.targetDomain,
@@ -602,27 +679,35 @@ class ExecutionAuthority(
 
         // ── Step 5-CHV1: Enforce report completeness (CONVERGENCE_HARDENING_V1 / FSE-2) ─
         val reportViolations = validateReportCompleteness(contractReport, executionTask.contractId, deltaContext)
-        if (reportViolations.isNotEmpty()) {
+
+        // ── CLC-1B PART 2: IRS semantic validation (mandatory — not optional) ──
+        // IRS is the semantic validation layer. Failures ADD violations and MUST trigger recovery.
+        val irsViolations = runIrsValidation(userInput, executionTask, contractReport)
+        val allViolations = (reportViolations + irsViolations).sortedWith(
+            compareBy<Violation> { it.fieldPath }.thenBy { it.failureClass.ordinal }
+        )
+
+        if (allViolations.isNotEmpty()) {
             // ── DEE-1 Step 5: Loop guard — block non-converging delta ─────────
             if (executionMode == ExecutionMode.DELTA) {
-                if (isNonConverging(deltaContext, reportViolations)) {
+                if (isNonConverging(deltaContext, allViolations)) {
                     return ExecutionAuthorityExecutionResult.BlockedWithRecovery(
                         reason            = "NON_CONVERGING_DELTA",
                         recoveryContracts = emptyList(),
-                        violations        = reportViolations,
+                        violations        = allViolations,
                         reportReference   = contractReport.reportReference
                     )
                 }
             }
-            val recoveryContracts = buildRecoveryContracts(reportViolations, contractReport)
-            require(recoveryContracts.size == reportViolations.size) {
+            val recoveryContracts = buildRecoveryContracts(allViolations, contractReport)
+            require(recoveryContracts.size == allViolations.size) {
                 "RCF-1 VIOLATION: Recovery contracts must map 1:1 with violations"
             }
             return ExecutionAuthorityExecutionResult.BlockedWithRecovery(
-                reason = "REPORT_VALIDATION_FAILED",
+                reason            = if (irsViolations.isNotEmpty()) "IRS_VALIDATION_FAILED" else "REPORT_VALIDATION_FAILED",
                 recoveryContracts = recoveryContracts,
-                violations = reportViolations,
-                reportReference = contractReport.reportReference
+                violations        = allViolations,
+                reportReference   = contractReport.reportReference
             )
         }
 
@@ -1873,9 +1958,80 @@ class ExecutionAuthority(
     ): Boolean {
         if (deltaContext == null) return false
 
-        return violations.any {
-            it.fieldPath == deltaContext.violationField &&
-            it.failureClass == FailureClass.COMPLETENESS
+        // NON_CONVERGING_DELTA: violation persists (any failure class) at the target field
+        return violations.any { it.fieldPath == deltaContext.violationField }
+    }
+
+    /**
+     * Run IRS intent validation (CLC-1B Part 2).
+     *
+     * Semantically validates the execution intent after structural report validation.
+     * IRS is MANDATORY — failures produce violations that trigger recovery contracts.
+     * A non-certifiable intent (Rejected or NeedsClarification) MUST block execution.
+     *
+     * @param userInput Raw intent submitted by the user.
+     * @param task      The execution task being validated.
+     * @param report    The frozen [ContractReport] for this attempt.
+     * @return          List of [Violation] objects; empty when IRS certifies the intent.
+     */
+    private fun runIrsValidation(
+        userInput: String,
+        task:      ExecutionTask,
+        report:    ContractReport
+    ): List<Violation> {
+        return try {
+            val sessionId = "irs::${task.taskId}::${report.reportReference}"
+            val rawFields = mapOf(
+                "objective"   to userInput,
+                "constraints" to task.constraints.joinToString("; ").ifBlank { "none" },
+                "environment" to "execution",
+                "resources"   to task.contractId
+            )
+            irsOrchestrator.createSession(
+                sessionId         = sessionId,
+                rawFields         = rawFields,
+                evidence          = emptyMap(),
+                swarmConfig       = SwarmConfig(agentCount = 2, consensusRule = ConsensusRule.MAJORITY),
+                availableEvidence = emptyMap()
+            )
+            var terminalResult: OrchestratorResult? = null
+            repeat(MAX_IRS_STEPS) {
+                if (terminalResult != null) return@repeat
+                val stepResult = irsOrchestrator.step(sessionId)
+                if (stepResult.terminal) {
+                    terminalResult = stepResult.orchestratorResult
+                }
+            }
+            when (val result = terminalResult) {
+                is OrchestratorResult.Certified -> emptyList()
+                is OrchestratorResult.Rejected  -> listOf(
+                    Violation(
+                        reportReference     = report.reportReference,
+                        contractId          = task.contractId,
+                        fieldPath           = "irs.intent",
+                        failureClass        = FailureClass.STRUCTURAL,
+                        expected            = "IRS_CERTIFIED",
+                        actual              = "IRS_REJECTED: ${result.reason}",
+                        message             = "IRS intent validation rejected: ${result.reason}",
+                        correctionDirective = "Resolve IRS rejection: ${result.reason}"
+                    )
+                )
+                is OrchestratorResult.NeedsClarification -> listOf(
+                    Violation(
+                        reportReference     = report.reportReference,
+                        contractId          = task.contractId,
+                        fieldPath           = "irs.intent",
+                        failureClass        = FailureClass.COMPLETENESS,
+                        expected            = "IRS_CERTIFIED",
+                        actual              = "IRS_NEEDS_CLARIFICATION: ${result.gaps.joinToString()}",
+                        message             = "IRS requires clarification for: ${result.gaps.joinToString()}",
+                        correctionDirective = "Provide missing intent context: ${result.gaps.joinToString()}"
+                    )
+                )
+                null -> emptyList()
+            }
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 }
