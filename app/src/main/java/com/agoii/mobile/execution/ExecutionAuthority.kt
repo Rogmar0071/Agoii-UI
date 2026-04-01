@@ -1471,7 +1471,7 @@ class ExecutionAuthority(
                 anchorState         = anchorState,
                 successCondition    = "FIELD_CORRECTED:${violation.fieldPath}"
             )
-        ).sortedWith(
+        }.sortedWith(
             compareBy<ExecutionRecoveryContract> { it.violationField }
                 .thenBy { it.failureClass.ordinal }
         )
