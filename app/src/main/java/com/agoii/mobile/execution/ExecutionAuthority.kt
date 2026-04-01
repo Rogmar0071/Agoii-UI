@@ -491,7 +491,7 @@ class ExecutionAuthority(
         val deltaContext: DeltaContext? = if (isDelta) {
             DeltaContext(
                 violationField          = extractViolationFieldFromContractId(executionTask.contractId),
-                anchorState             = extractAnchorStateFromRecovery(executionTask),
+                anchorState             = extractAnchorStateFromRecovery(executionTask, events),
                 previousReportReference = extractReportReferenceFromRecovery(executionTask)
             )
         } else null
@@ -1287,23 +1287,32 @@ class ExecutionAuthority(
             )
         }
 
-        // ── DEE-1 Step 4: Delta-context regression + correction checks ────────
+        // ── DEE-1-PATCH Step 3: Field-level regression check across all anchor paths ─
         if (deltaContext != null) {
 
-            // REGRESSION CHECK
-            if (report.reportReference != deltaContext.previousReportReference) {
-                violations.add(
-                    Violation(
-                        reportReference     = report.reportReference,
-                        contractId          = contractId,
-                        fieldPath           = "reportReference",
-                        failureClass        = FailureClass.DETERMINISM,
-                        expected            = deltaContext.previousReportReference,
-                        actual              = report.reportReference,
-                        message             = "REGRESSION_DETECTED",
-                        correctionDirective = "Preserve original validated report reference"
-                    )
-                )
+            val anchorPaths = deltaContext.anchorState.validatedPaths
+
+            anchorPaths.forEach { path ->
+                if (path != deltaContext.violationField) {
+
+                    val anchorValue   = extractFieldValue(deltaContext.anchorState, path)
+                    val currentValue  = extractFieldValue(report, path)
+
+                    if (anchorValue != currentValue) {
+                        violations.add(
+                            Violation(
+                                reportReference     = report.reportReference,
+                                contractId          = contractId,
+                                fieldPath           = path,
+                                failureClass        = FailureClass.DETERMINISM,
+                                expected            = anchorValue.toString(),
+                                actual              = currentValue.toString(),
+                                message             = "REGRESSION_DETECTED",
+                                correctionDirective = "Restore field: $path"
+                            )
+                        )
+                    }
+                }
             }
 
             // CORRECTION CHECK
@@ -1754,13 +1763,40 @@ class ExecutionAuthority(
         return contractId.substringAfterLast("_").replace("_", ".")
     }
 
-    private fun extractAnchorStateFromRecovery(task: ExecutionTask): AnchorState {
+    private fun extractAnchorStateFromRecovery(
+        task: ExecutionTask,
+        events: List<com.agoii.mobile.core.Event>
+    ): AnchorState {
+        val reportRef = task.reportReference
+        val reportEvent = events
+            .firstOrNull { it.payload["report_reference"] == reportRef }
+            ?: throw IllegalStateException("ANCHOR_STATE_MISSING: $reportRef")
+        val report = reconstructContractReport(reportEvent)
         return AnchorState(
-            reportReference    = task.reportReference,
-            validatedTypes     = emptyList(),
-            validatedStructure = emptySet(),
-            validatedPaths     = emptyList()
+            reportReference    = report.reportReference,
+            validatedTypes     = report.typeInventory,
+            validatedStructure = report.typeInventory.toSet(),
+            validatedPaths     = extractValidatedPaths(report),
+            validatedReport    = report
         )
+    }
+
+    private fun reconstructContractReport(event: com.agoii.mobile.core.Event): ContractReport {
+        return event.payload["contract_report"] as? ContractReport
+            ?: throw IllegalStateException(
+                "ANCHOR_STATE_MISSING: contract_report not found in event payload for report_reference=${event.payload["report_reference"]}"
+            )
+    }
+
+    private fun extractValidatedPaths(report: ContractReport): List<String> {
+        return buildList {
+            if (report.typeInventory.isNotEmpty()) add("typeInventory")
+            if (report.functionSignatures.isNotEmpty()) add("functionSignatures")
+            if (report.logicFlow.isNotEmpty()) add("logicFlow")
+            if (report.errorConditions.isNotEmpty()) add("errorConditions")
+            add("exitCode")
+            if (report.rawOutput.isNotEmpty()) add("rawOutput")
+        }
     }
 
     private fun extractReportReferenceFromRecovery(task: ExecutionTask): String {
@@ -1775,8 +1811,55 @@ class ExecutionAuthority(
         output: ContractorExecutionOutput,
         deltaContext: DeltaContext
     ): ContractorExecutionOutput {
-        // Must restrict mutation to violationField only
-        return output
+        val anchor = deltaContext.anchorState
+        val field  = deltaContext.violationField
+        return output.copy(
+            resultArtifact = enforceFieldIsolation(
+                output.resultArtifact,
+                anchor,
+                field
+            )
+        )
+    }
+
+    private fun enforceFieldIsolation(
+        artifact: Map<String, Any>,
+        anchor: AnchorState,
+        allowedField: String
+    ): Map<String, Any> {
+        val anchored = anchorToArtifact(anchor)
+        return mergeDelta(anchored, artifact, allowedField)
+    }
+
+    private fun anchorToArtifact(anchor: AnchorState): Map<String, Any> {
+        return anchor.validatedStructure.associateWith { it }
+    }
+
+    private fun mergeDelta(
+        anchor: Map<String, Any>,
+        delta: Map<String, Any>,
+        field: String
+    ): Map<String, Any> {
+        val result = anchor.toMutableMap()
+        delta[field]?.let { result[field] = it }
+        return result
+    }
+
+    private fun extractFieldValue(source: Any, field: String): Any? {
+        val report: ContractReport? = when (source) {
+            is ContractReport -> source
+            is AnchorState    -> source.validatedReport
+            else              -> null
+        }
+        return when (field) {
+            "typeInventory"      -> report?.typeInventory
+            "functionSignatures" -> report?.functionSignatures
+            "logicFlow"          -> report?.logicFlow
+            "errorConditions"    -> report?.errorConditions
+            "exitCode"           -> report?.exitCode
+            "rawOutput"          -> report?.rawOutput
+            else                 -> null
+        }
     }
 
     private fun isNonConverging(
