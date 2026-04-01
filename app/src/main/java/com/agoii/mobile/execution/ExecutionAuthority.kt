@@ -184,6 +184,24 @@ sealed class ExecutionAuthorityExecutionResult {
         val contractId: String,
         val reason:     String
     ) : ExecutionAuthorityExecutionResult()
+
+    /**
+     * RECOVERY_CONTRACT was automatically emitted after TASK_EXECUTED(FAILURE) was detected
+     * as the last ledger event (AGOII-ALIGN-1-PATCH RULE 1/2 — recovery trigger lock).
+     */
+    data class RecoveryEmitted(
+        val contractId:      String,
+        val reportReference: String
+    ) : ExecutionAuthorityExecutionResult()
+
+    /**
+     * ICS_COMPLETED was emitted automatically by [com.agoii.mobile.ics.IcsModule] after
+     * ICS_STARTED was detected as the last ledger event
+     * (AGOII-ALIGN-1-PATCH RULE 3/4 — ICS execution coupling).
+     */
+    data class IcsCompleted(
+        val reportReference: String
+    ) : ExecutionAuthorityExecutionResult()
 }
 
 // ---------- EXECUTION ROUTE (UCS-1) ----------
@@ -444,13 +462,83 @@ class ExecutionAuthority(
      */
     fun executeFromLedger(
         projectId: String,
-        ledger: EventLedger
+        ledger: EventRepository
     ): ExecutionAuthorityExecutionResult {
 
         val events = ledger.loadEvents(projectId)
+        val lastEvent = events.lastOrNull()
+
+        // ── AGOII-ALIGN-1-PATCH RULE 3/4 — ICS execution coupling ────────────
+        // ExecutionAuthority owns ICS_STARTED → ICS_COMPLETED.
+        // When ICS_STARTED is the last ledger event, IcsModule.process() is invoked
+        // automatically; no external call is required or permitted.
+        if (lastEvent?.type == EventTypes.ICS_STARTED) {
+            val result = icsModule.process(projectId, ledger)
+            return when (result) {
+                is com.agoii.mobile.ics.IcsExecutionResult.Processed ->
+                    ExecutionAuthorityExecutionResult.IcsCompleted(
+                        reportReference = lastEvent.payload["report_reference"]?.toString() ?: ""
+                    )
+                is com.agoii.mobile.ics.IcsExecutionResult.AlreadyCompleted ->
+                    ExecutionAuthorityExecutionResult.IcsCompleted(
+                        reportReference = result.reportReference
+                    )
+                else -> throw IllegalStateException(
+                    "AGOII-ALIGN-1-PATCH: ICS execution did not complete after ICS_STARTED " +
+                    "— result=${result::class.simpleName}"
+                )
+            }
+        }
+
+        // ── AGOII-ALIGN-1-PATCH RULE 1/2 — Recovery trigger lock ────────────
+        // When TASK_EXECUTED(FAILURE) is the last ledger event, ExecutionAuthority
+        // automatically emits RECOVERY_CONTRACT with source=EXECUTION_AUTHORITY.
+        // This closes the gap where TASK_EXECUTED(FAILURE) may have been written
+        // without an accompanying recovery event (e.g. the exception catch path).
+        if (lastEvent?.type == EventTypes.TASK_EXECUTED) {
+            val execStatus = lastEvent.payload["executionStatus"]?.toString()
+            if (execStatus == ExecutionStatus.FAILURE.name) {
+                val taskId = lastEvent.payload["taskId"]?.toString()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: return ExecutionAuthorityExecutionResult.NotTriggered
+                val contractId = lastEvent.payload["contractId"]?.toString()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: return ExecutionAuthorityExecutionResult.NotTriggered
+                val reportReference = lastEvent.payload["report_reference"]?.toString()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: return ExecutionAuthorityExecutionResult.NotTriggered
+                val artifactRef = lastEvent.payload["artifactReference"]?.toString()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: buildArtifactReference(reportReference, taskId, "NO_ARTIFACT")
+                val anchorState = AnchorState(
+                    reportReference    = reportReference,
+                    validatedTypes     = emptyList(),
+                    validatedStructure = emptySet(),
+                    validatedPaths     = emptyList()
+                )
+                val executionTaskCtx = ExecutionTask(
+                    taskId          = taskId,
+                    contractId      = contractId,
+                    position        = resolveInt(lastEvent.payload["position"]) ?: 0,
+                    total           = resolveInt(lastEvent.payload["total"])    ?: 0,
+                    requirements    = emptyList(),
+                    constraints     = emptyList(),
+                    expectedOutput  = "$contractId-output",
+                    reportReference = reportReference
+                )
+                val recovery = issueRecoveryContract(
+                    executionTaskCtx, anchorState, "LOGICAL", "TASK_EXECUTED_FAILURE"
+                )
+                writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef)
+                return ExecutionAuthorityExecutionResult.RecoveryEmitted(
+                    contractId      = recovery.contractId,
+                    reportReference = reportReference
+                )
+            }
+            return ExecutionAuthorityExecutionResult.NotTriggered
+        }
 
         // ── Trigger check: last event must be TASK_STARTED ──────────────────
-        val lastEvent = events.lastOrNull()
         if (lastEvent?.type != EventTypes.TASK_STARTED) {
             return ExecutionAuthorityExecutionResult.NotTriggered
         }
@@ -1003,7 +1091,7 @@ class ExecutionAuthority(
      */
     fun issueRecoveryContract(
         projectId:     String,
-        ledger:        EventLedger,
+        ledger:        EventRepository,
         executionTask: ExecutionTask,
         anchor:        AnchorState,
         violation:     ViolationSurface
@@ -1148,7 +1236,7 @@ class ExecutionAuthority(
      */
     private fun blockWithRecovery(
         projectId:     String,
-        ledger:        EventLedger,
+        ledger:        EventRepository,
         task:          ExecutionTask?,
         failureClass:  String,
         reason:        String,
@@ -1519,7 +1607,7 @@ class ExecutionAuthority(
      */
     private fun writeRecoveryContractToLedger(
         projectId:  String,
-        ledger:     EventLedger,
+        ledger:     EventRepository,
         recovery:   ExecutionRecoveryContract,
         artifactRef: String
     ) {

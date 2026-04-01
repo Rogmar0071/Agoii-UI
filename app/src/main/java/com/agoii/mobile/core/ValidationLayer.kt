@@ -15,6 +15,8 @@ class ValidationLayer {
         val candidateType: String,
         /** Type of the event immediately before the candidate; null if candidate is first. */
         val priorEventType: String?,
+        /** executionStatus value of the prior event when it is a TASK_EXECUTED event; null otherwise. */
+        val priorExecutionStatus: String?,
         /** Total number of events in the simulated ledger. */
         val simulatedSize: Int,
         /** True when every event in simulated has sequenceNumber == its index. */
@@ -79,13 +81,19 @@ class ValidationLayer {
         var hasExecutionCompleted = false
         val taskState          = mutableMapOf<String, MutableSet<TaskLifecycle>>()
         var priorEventType: String? = null
+        var priorExecutionStatus: String? = null
         val lastIndex          = simulated.size - 1
 
         for (i in simulated.indices) {
             val ev = simulated[i]
 
-            // Capture the type of the event immediately before the candidate
-            if (i == lastIndex - 1) priorEventType = ev.type
+            // Capture the type (and executionStatus when TASK_EXECUTED) of the event before the candidate
+            if (i == lastIndex - 1) {
+                priorEventType = ev.type
+                if (ev.type == EventTypes.TASK_EXECUTED) {
+                    priorExecutionStatus = ev.payload["executionStatus"]?.toString()
+                }
+            }
 
             // Sequence continuity across the full simulated ledger
             if (isSequenceValid && ev.sequenceNumber != i.toLong()) {
@@ -131,6 +139,7 @@ class ValidationLayer {
         return ValidationState(
             candidateType         = simulated[lastIndex].type,
             priorEventType        = priorEventType,
+            priorExecutionStatus  = priorExecutionStatus,
             simulatedSize         = simulated.size,
             isSequenceValid       = isSequenceValid,
             firstSeqViolationAt   = firstSeqViolationAt,
@@ -849,6 +858,18 @@ class ValidationLayer {
             throw LedgerValidationException(
                 "Invariant 6: terminal state reached (COMMIT_EXECUTED/COMMIT_ABORTED) — " +
                     "no further events are permitted in '$projectId'"
+            )
+        }
+
+        // Invariant 7 — Recovery Trigger Lock: after TASK_EXECUTED(FAILURE), the ONLY valid next
+        // event is RECOVERY_CONTRACT (AGOII-ALIGN-1-PATCH RULE 1/2).
+        if (state.priorEventType == EventTypes.TASK_EXECUTED &&
+            state.priorExecutionStatus == "FAILURE" &&
+            state.candidateType != EventTypes.RECOVERY_CONTRACT
+        ) {
+            throw LedgerValidationException(
+                "Invariant 7: after TASK_EXECUTED(FAILURE), next event must be RECOVERY_CONTRACT " +
+                    "(got '${state.candidateType}') in '$projectId'"
             )
         }
     }

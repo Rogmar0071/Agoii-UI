@@ -82,7 +82,8 @@ class CoreBridge(context: Context) {
         var cycles = 0
         var output: String? = null
         while (cycles < MAX_GOVERNOR_CYCLES) {
-            val lastType = ledger.loadEvents(projectId).lastOrNull()?.type
+            val lastEvent = ledger.loadEvents(projectId).lastOrNull()
+            val lastType  = lastEvent?.type
             when {
                 // ── CLC-1B PART 3: Assembly → ICS pipeline activation ──────────────
                 // EXECUTION_COMPLETED and ASSEMBLY_COMPLETED are handled directly by
@@ -98,11 +99,24 @@ class CoreBridge(context: Context) {
                     }
                 }
 
+                // AGOII-ALIGN-1-PATCH: Governor emits ICS_STARTED from ASSEMBLY_COMPLETED;
+                // do not call ICS directly — let Governor advance the state machine first.
                 lastType == EventTypes.ASSEMBLY_COMPLETED -> {
-                    val icsResult = executionAuthority.runIcsFromLedger(projectId, ledger)
-                    if (icsResult is IcsExecutionResult.Blocked) {
+                    val govResult = governor.runGovernor(projectId)
+                    if (govResult == Governor.GovernorResult.DRIFT) {
                         throw LedgerValidationException(
-                            "ICS BLOCKED: ICS pipeline failed — ${icsResult.reason}"
+                            "ICS BLOCKED: Governor drift at ASSEMBLY_COMPLETED"
+                        )
+                    }
+                }
+
+                // AGOII-ALIGN-1-PATCH RULE 3/4: ICS execution coupling.
+                // ExecutionAuthority owns ICS_STARTED → ICS_COMPLETED automatically.
+                lastType == EventTypes.ICS_STARTED -> {
+                    val execResult = executionAuthority.executeFromLedger(projectId, ledger)
+                    if (execResult !is ExecutionAuthorityExecutionResult.IcsCompleted) {
+                        throw LedgerValidationException(
+                            "ICS BLOCKED: ICS execution did not complete — result=${execResult::class.simpleName}"
                         )
                     }
                 }
@@ -127,6 +141,14 @@ class CoreBridge(context: Context) {
                                 "ICS BLOCKED: Unexpected execution result: ${execResult::class.simpleName}"
                             )
                     }
+                }
+
+                // AGOII-ALIGN-1-PATCH RULE 1/2: Recovery trigger lock.
+                // ExecutionAuthority auto-emits RECOVERY_CONTRACT after TASK_EXECUTED(FAILURE).
+                lastType == EventTypes.TASK_EXECUTED &&
+                lastEvent?.payload?.get("executionStatus")?.toString() == "FAILURE" -> {
+                    executionAuthority.executeFromLedger(projectId, ledger)
+                    // RECOVERY_CONTRACT is now in ledger; loop continues → Governor advances
                 }
 
                 else -> {

@@ -1,21 +1,28 @@
 // STS-1 — FULL SYSTEM TRACE SIMULATION
-// CONTRACT: AGOII-ALIGN-1 — Execution Authority & ICS Boundary Enforcement
+// CONTRACT: AGOII-ALIGN-1 / AGOII-ALIGN-1-PATCH — Execution Authority & ICS Boundary Enforcement
 //
-// Verifies that the invariant surface enforced by AGOII-ALIGN-1 holds:
+// Verifies that the invariant surface enforced by AGOII-ALIGN-1 and AGOII-ALIGN-1-PATCH holds:
 //   ✔ RECOVERY_CONTRACT may only be written with source=EXECUTION_AUTHORITY
 //   ✔ ICS_STARTED may only be written with source=GOVERNOR
 //   ✔ ICS_COMPLETED may only be written with source=ICS_MODULE
 //   ✔ Governor emits ICS_STARTED (source=GOVERNOR) after ASSEMBLY_COMPLETED
 //   ✔ Governor does NOT emit RECOVERY_CONTRACT for ASSEMBLY_FAILED
 //   ✔ IcsModule triggers on ICS_STARTED, emits ICS_COMPLETED (source=ICS_MODULE)
+//   ✔ ExecutionAuthority.executeFromLedger auto-emits RECOVERY_CONTRACT on TASK_EXECUTED(FAILURE)
+//   ✔ ExecutionAuthority.executeFromLedger auto-executes ICS on ICS_STARTED
+//   ✔ ValidationLayer blocks any non-RECOVERY_CONTRACT event after TASK_EXECUTED(FAILURE)
 
 package com.agoii.mobile
 
+import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.LedgerValidationException
 import com.agoii.mobile.core.ValidationLayer
+import com.agoii.mobile.execution.DriverRegistry
+import com.agoii.mobile.execution.ExecutionAuthority
+import com.agoii.mobile.execution.ExecutionAuthorityExecutionResult
 import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.ics.IcsExecutionResult
 import com.agoii.mobile.ics.IcsModule
@@ -29,11 +36,14 @@ import org.junit.Test
 /**
  * STS-1: Full System Trace Simulation Test
  *
- * Validates the invariant surface defined in AGOII-ALIGN-1:
+ * Validates the invariant surface defined in AGOII-ALIGN-1 and AGOII-ALIGN-1-PATCH:
  *  - Single Write Authority enforced (RECOVERY_CONTRACT, ICS_STARTED, ICS_COMPLETED)
  *  - Recovery path fully owned by ExecutionAuthority (source=EXECUTION_AUTHORITY)
  *  - Governor remains a pure state machine (emits ICS_STARTED, not RECOVERY_CONTRACT)
  *  - ICS is contract-driven (no bypass of ICS_STARTED / ICS_COMPLETED lifecycle)
+ *  - ExecutionAuthority.executeFromLedger auto-emits RECOVERY_CONTRACT on TASK_EXECUTED(FAILURE)
+ *  - ExecutionAuthority.executeFromLedger auto-executes ICS on ICS_STARTED
+ *  - ValidationLayer Invariant 7: only RECOVERY_CONTRACT may follow TASK_EXECUTED(FAILURE)
  *
  * All tests run on the JVM — no Android framework or network access required.
  */
@@ -599,5 +609,231 @@ class FullSystemTraceSimulationTest {
         val icsCompleted = allEvents[icsCompletedIndex]
         assertEquals("GOVERNOR", icsStarted.payload["source"])
         assertEquals("ICS_MODULE", icsCompleted.payload["source"])
+    }
+
+    // ── AGOII-ALIGN-1-PATCH: RECOVERY TRIGGER LOCK ───────────────────────────
+
+    @Test
+    fun `executeFromLedger auto-emits RECOVERY_CONTRACT when TASK_EXECUTED(FAILURE) is last event`() {
+        val prior = ledgerEndingWithTaskExecutedFailure("proj-auto-rcf")
+        val store = InMemoryEventRepository(prior)
+        val ea    = ExecutionAuthority(ContractorRegistry(), DriverRegistry())
+
+        val result = ea.executeFromLedger("proj-auto-rcf", store)
+
+        assertTrue(
+            "executeFromLedger must return RecoveryEmitted for TASK_EXECUTED(FAILURE)",
+            result is ExecutionAuthorityExecutionResult.RecoveryEmitted
+        )
+
+        val allEvents = store.loadEvents("proj-auto-rcf")
+        val lastEvent = allEvents.last()
+        assertEquals(
+            "Last event must be RECOVERY_CONTRACT after auto-recovery",
+            EventTypes.RECOVERY_CONTRACT,
+            lastEvent.type
+        )
+        assertEquals(
+            "RECOVERY_CONTRACT must carry source=EXECUTION_AUTHORITY",
+            "EXECUTION_AUTHORITY",
+            lastEvent.payload["source"]
+        )
+    }
+
+    @Test
+    fun `executeFromLedger returns NotTriggered for TASK_EXECUTED(SUCCESS)`() {
+        // Build a ledger ending with TASK_EXECUTED(SUCCESS)
+        val priorWithSuccess = ledgerEndingWithTaskExecutedFailure("proj-te-success").dropLast(1) +
+            Event(
+                type           = EventTypes.TASK_EXECUTED,
+                payload        = mapOf(
+                    "taskId"            to "task-1",
+                    "contractId"        to "c-1",
+                    "contractorId"      to "contractor-1",
+                    "artifactReference" to "artifact-1",
+                    "executionStatus"   to "SUCCESS",
+                    "validationStatus"  to "VALIDATED",
+                    "validationReasons" to emptyList<Any>(),
+                    "report_reference"  to "rr-1",
+                    "position"          to 1,
+                    "total"             to 1
+                ),
+                sequenceNumber = 6L
+            )
+        val store  = InMemoryEventRepository(priorWithSuccess)
+        val ea     = ExecutionAuthority(ContractorRegistry(), DriverRegistry())
+        val result = ea.executeFromLedger("proj-te-success", store)
+
+        assertTrue(
+            "executeFromLedger must return NotTriggered for TASK_EXECUTED(SUCCESS) — Governor handles this",
+            result is ExecutionAuthorityExecutionResult.NotTriggered
+        )
+        assertEquals(
+            "No new events must be appended for TASK_EXECUTED(SUCCESS)",
+            priorWithSuccess.size,
+            store.loadEvents("proj-te-success").size
+        )
+    }
+
+    // ── AGOII-ALIGN-1-PATCH: ICS EXECUTION COUPLING ──────────────────────────
+
+    @Test
+    fun `executeFromLedger auto-executes ICS and returns IcsCompleted when ICS_STARTED is last event`() {
+        val baseEvents = ledgerEndingWithAssemblyCompleted()
+        val store      = InMemoryEventRepository(baseEvents)
+        val governor   = Governor(store)
+
+        // Governor writes ICS_STARTED
+        assertEquals(Governor.GovernorResult.ADVANCED, governor.runGovernor("proj-ics-ea"))
+
+        // Now last event is ICS_STARTED → executeFromLedger should auto-run ICS
+        val ea     = ExecutionAuthority(ContractorRegistry(), DriverRegistry())
+        val result = ea.executeFromLedger("proj-ics-ea", store)
+
+        assertTrue(
+            "executeFromLedger must return IcsCompleted for ICS_STARTED trigger",
+            result is ExecutionAuthorityExecutionResult.IcsCompleted
+        )
+
+        val allEvents = store.loadEvents("proj-ics-ea")
+        val lastEvent = allEvents.last()
+        assertEquals(
+            "Last event must be ICS_COMPLETED after auto-ICS execution",
+            EventTypes.ICS_COMPLETED,
+            lastEvent.type
+        )
+        assertEquals(
+            "ICS_COMPLETED must carry source=ICS_MODULE",
+            "ICS_MODULE",
+            lastEvent.payload["source"]
+        )
+    }
+
+    @Test
+    fun `executeFromLedger throws if IcsModule cannot complete after ICS_STARTED`() {
+        // Build a ledger with ICS_STARTED but missing ASSEMBLY_COMPLETED
+        // so IcsModule cannot reconstruct the FinalArtifact and returns Blocked.
+        val minimalIcsStarted = listOf(
+            Event(
+                type           = EventTypes.INTENT_SUBMITTED,
+                payload        = mapOf("objective" to "minimal"),
+                sequenceNumber = 0L
+            ),
+            Event(
+                type           = EventTypes.ICS_STARTED,
+                payload        = mapOf(
+                    "report_reference"       to "rr-minimal",
+                    "finalArtifactReference" to "far-minimal",
+                    "taskId"                 to "ICS::rr-minimal",
+                    "source"                 to "GOVERNOR"
+                ),
+                sequenceNumber = 1L
+            )
+        )
+        val store = InMemoryEventRepository(minimalIcsStarted)
+        val ea    = ExecutionAuthority(ContractorRegistry(), DriverRegistry())
+
+        try {
+            ea.executeFromLedger("proj-ics-blocked", store)
+            fail("Expected IllegalStateException when ICS cannot complete")
+        } catch (e: IllegalStateException) {
+            assertTrue(
+                "Exception message must reference AGOII-ALIGN-1-PATCH",
+                e.message?.contains("AGOII-ALIGN-1-PATCH") == true ||
+                e.message?.contains("ICS") == true
+            )
+        }
+    }
+
+    // ── AGOII-ALIGN-1-PATCH: VALIDATION LAYER INVARIANT 7 ────────────────────
+
+    @Test
+    fun `ValidationLayer blocks TASK_FAILED after TASK_EXECUTED(FAILURE) - Invariant 7`() {
+        val prior = ledgerEndingWithTaskExecutedFailure("proj-inv7-fail")
+        val layer = ValidationLayer()
+        try {
+            layer.validate(
+                projectId     = "proj-inv7-fail",
+                type          = EventTypes.TASK_FAILED,
+                payload       = mapOf("taskId" to "task-1", "position" to 1, "total" to 1),
+                currentEvents = prior
+            )
+            fail("Expected LedgerValidationException — Invariant 7 must block TASK_FAILED after TASK_EXECUTED(FAILURE)")
+        } catch (e: LedgerValidationException) {
+            assertTrue(
+                "Exception must reference Invariant 7 or RECOVERY_CONTRACT",
+                e.message?.contains("Invariant 7") == true || e.message?.contains("RECOVERY_CONTRACT") == true
+            )
+        }
+    }
+
+    @Test
+    fun `ValidationLayer blocks TASK_COMPLETED after TASK_EXECUTED(FAILURE) - Invariant 7`() {
+        val prior = ledgerEndingWithTaskExecutedFailure("proj-inv7-tc")
+        val layer = ValidationLayer()
+        try {
+            layer.validate(
+                projectId     = "proj-inv7-tc",
+                type          = EventTypes.TASK_COMPLETED,
+                payload       = mapOf("taskId" to "task-1", "position" to 1, "total" to 1),
+                currentEvents = prior
+            )
+            fail("Expected LedgerValidationException — Invariant 7 must block TASK_COMPLETED after TASK_EXECUTED(FAILURE)")
+        } catch (e: LedgerValidationException) {
+            assertTrue(
+                "Exception must reference Invariant 7 or RECOVERY_CONTRACT",
+                e.message?.contains("Invariant 7") == true || e.message?.contains("RECOVERY_CONTRACT") == true
+            )
+        }
+    }
+
+    @Test
+    fun `ValidationLayer allows RECOVERY_CONTRACT after TASK_EXECUTED(FAILURE) - Invariant 7`() {
+        val prior = ledgerEndingWithTaskExecutedFailure("proj-inv7-ok")
+        val layer = ValidationLayer()
+        // Should NOT throw — RECOVERY_CONTRACT is the only permitted event after TASK_EXECUTED(FAILURE)
+        layer.validate(
+            projectId     = "proj-inv7-ok",
+            type          = EventTypes.RECOVERY_CONTRACT,
+            payload       = mapOf(
+                "contractId"          to "RCF_c-1_EXECUTION",
+                "report_reference"    to "rr-1",
+                "failureClass"        to "LOGICAL",
+                "violationField"      to "TASK_EXECUTED_FAILURE",
+                "correctionDirective" to "Resolve LOGICAL for task task-1",
+                "successCondition"    to "TASK_EXECUTED written with executionStatus=SUCCESS",
+                "artifactReference"   to "artifact-1",
+                "source"              to "EXECUTION_AUTHORITY"
+            ),
+            currentEvents = prior
+        )
+    }
+
+    @Test
+    fun `Full auto-recovery trace TASK_EXECUTED(FAILURE) → RECOVERY_CONTRACT via executeFromLedger`() {
+        val prior = ledgerEndingWithTaskExecutedFailure("proj-auto-trace")
+        val store = InMemoryEventRepository(prior)
+        val ea    = ExecutionAuthority(ContractorRegistry(), DriverRegistry())
+
+        // ExecutionAuthority auto-emits RECOVERY_CONTRACT
+        val result = ea.executeFromLedger("proj-auto-trace", store)
+
+        assertTrue(result is ExecutionAuthorityExecutionResult.RecoveryEmitted)
+
+        val allEvents = store.loadEvents("proj-auto-trace")
+        val types     = allEvents.map { it.type }
+        assertTrue("Trace must contain RECOVERY_CONTRACT", EventTypes.RECOVERY_CONTRACT in types)
+
+        val teIndex  = types.lastIndexOf(EventTypes.TASK_EXECUTED)
+        val rcfIndex = types.indexOf(EventTypes.RECOVERY_CONTRACT)
+        assertTrue(
+            "RECOVERY_CONTRACT must immediately follow TASK_EXECUTED(FAILURE)",
+            rcfIndex == teIndex + 1
+        )
+
+        val recoveryEvent = allEvents[rcfIndex]
+        assertEquals("EXECUTION_AUTHORITY", recoveryEvent.payload["source"])
+        assertNotNull("RECOVERY_CONTRACT must carry contractId", recoveryEvent.payload["contractId"])
+        assertNotNull("RECOVERY_CONTRACT must carry report_reference", recoveryEvent.payload["report_reference"])
     }
 }
