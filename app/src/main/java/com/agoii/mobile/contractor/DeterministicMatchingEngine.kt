@@ -13,15 +13,19 @@ import com.agoii.mobile.contracts.ContractCapability
  *                          capabilities; execution cannot proceed.
  *  STEP 1 — DIRECT_MATCH : exactly one path — select the single best contractor that
  *                          satisfies all requirements.
- *                          Selection: reliabilityRatio DESC, id ASC (tiebreaker).
+ *                          Selection: score DESC, id ASC (tiebreaker — smallest id wins).
+ *                          score = reliability + structuralAccuracy + constraintObedience
  *
  * Rules:
  *  - Works directly with [ContractorProfile]; no adapter or internal translation layer.
  *  - [ContractorRegistry] is the sole contractor source — no synthetic generation.
  *  - Every call with the same inputs produces the same result (deterministic).
  *  - No fallback. No swarm. One path only.
+ *  - Scoring is LOCKED to exactly 3 dimensions: reliability, structuralAccuracy,
+ *    constraintObedience. No additional dimensions, weights, or dynamic changes.
  *
- * CONTRACT: RECOVERY_MATCHING_ENGINE_V1
+ * CONTRACT: RECOVERY_MATCHING_ENGINE_V1 (resolution model) /
+ *           REGISTER_CONTRACTORS_V1 (scoring lock)
  */
 class DeterministicMatchingEngine {
 
@@ -94,7 +98,7 @@ class DeterministicMatchingEngine {
 
         // ─── STEP 1 — DIRECT MATCH ───────────────────────────────────────────
         val best = valid.maxWithOrNull(
-            compareBy<ContractorProfile> { it.reliabilityRatio }
+            compareBy<ContractorProfile> { score(it) }
                 .thenByDescending { it.id }
         )!!
         return TaskAssignedContract(
@@ -107,6 +111,20 @@ class DeterministicMatchingEngine {
     }
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
+
+    /**
+     * LOCKED scoring function (REGISTER_CONTRACTORS_V1).
+     *
+     * score = reliability + structuralAccuracy + constraintObedience
+     *
+     * HARD RULES:
+     *  - Exactly 3 dimensions. No additions, no removals.
+     *  - No weighting. No dynamic scoring.
+     */
+    private fun score(contractor: ContractorProfile): Int =
+        contractor.capabilities.reliability +
+        contractor.capabilities.structuralAccuracy +
+        contractor.capabilities.constraintObedience
 
     private fun capabilityLevel(cap: ContractorCapabilityVector, dimension: String): Int? = when (dimension) {
         "constraintObedience" -> cap.constraintObedience

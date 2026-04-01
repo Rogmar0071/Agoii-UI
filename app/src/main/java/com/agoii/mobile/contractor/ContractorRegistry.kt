@@ -1,5 +1,8 @@
 package com.agoii.mobile.contractor
 
+import com.agoii.mobile.contractor.registry.HumanCommunicationContractor
+import com.agoii.mobile.contractor.registry.NemoclawContractor
+
 // ─── ContractorRegistry ───────────────────────────────────────────────────────
 
 /**
@@ -103,6 +106,18 @@ class ContractorRegistry(
                     { it.reliabilityRatio }
                 )
             )
+    }
+
+    // ─── Default registration ─────────────────────────────────────────────────
+
+    /**
+     * Register the default system contractors (NemoClaw + HumanCommunication).
+     *
+     * Must be called before any matching is attempted.
+     */
+    fun registerDefaults() {
+        register(NemoclawContractor.PROFILE)
+        register(HumanCommunicationContractor.PROFILE)
     }
 
     // ─── Profile update ───────────────────────────────────────────────────────

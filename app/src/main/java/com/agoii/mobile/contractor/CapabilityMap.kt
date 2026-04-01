@@ -63,6 +63,22 @@ object CapabilityMap {
             outputTypes = listOf("consistent_output"),
             guarantees  = listOf("output_determinism", "reproducibility"),
             limitations = listOf("depends_on_input_stability")
+        ),
+
+        "external_execution" to CapabilityDefinition(
+            name        = "external_execution",
+            inputTypes  = listOf("TaskPayload"),
+            outputTypes = listOf("ContractReport"),
+            guarantees  = listOf("Sandboxed execution", "Policy enforcement"),
+            limitations = listOf("No autonomy", "No persistence")
+        ),
+
+        "human_interaction" to CapabilityDefinition(
+            name        = "human_interaction",
+            inputTypes  = listOf("Intent"),
+            outputTypes = listOf("HumanResponse"),
+            guarantees  = listOf("Natural language interpretation"),
+            limitations = listOf("Non-deterministic input")
         )
     )
 }

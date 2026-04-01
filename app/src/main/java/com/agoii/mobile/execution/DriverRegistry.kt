@@ -53,4 +53,17 @@ class DriverRegistry {
     fun registerLLMContractor() {
         register("llm", LLMContractor(OpenAIClient()))
     }
+
+    /**
+     * Register a NemoClaw [ExecutionDriver] under the `"nemoclaw"` source key.
+     *
+     * RULES:
+     *  - No automatic registration occurs; this must be called explicitly.
+     *  - If no driver is registered for "nemoclaw", resolution is BLOCKED.
+     *
+     * CONTRACT: REGISTER_CONTRACTORS_V1
+     */
+    fun registerNemoclawDriver(driver: ExecutionDriver) {
+        register("nemoclaw", driver)
+    }
 }

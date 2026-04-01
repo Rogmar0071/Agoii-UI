@@ -32,12 +32,15 @@ package com.agoii.mobile.execution
 
 import com.agoii.mobile.assembly.AssemblyExecutionResult
 import com.agoii.mobile.assembly.AssemblyModule
+import com.agoii.mobile.contractor.ContractorInitialization
 import com.agoii.mobile.contractor.ContractorRegistry
 import com.agoii.mobile.contractor.ContractorSystem
 import com.agoii.mobile.contractor.ContractorSystemResult
+import com.agoii.mobile.contractor.ResolutionTrace
 import com.agoii.mobile.contracts.ContractCapability
 import com.agoii.mobile.contracts.ContractEnforcementEngine
 import com.agoii.mobile.contracts.ContractEnforcementResult
+import com.agoii.mobile.contracts.ContractReport
 import com.agoii.mobile.contracts.ContractValidationResult
 import com.agoii.mobile.contracts.ContractViolation
 import com.agoii.mobile.contracts.ExecutionType
@@ -94,31 +97,6 @@ data class ExecutionTask(
     val constraints:     List<String>,
     val expectedOutput:  String,
     val reportReference: String
-)
-
-/**
- * Structured contract report produced after execution (AERP-1).
- * Validation operates only against this report, not against raw execution output.
- *
- * Mandatory fields (AERP-1 hard enforcement):
- *  - reportReference  (RRID)
- *  - taskId
- *  - contractId
- *  - contractorId
- *  - typeInventory
- *  - executionSteps
- *  - artifactStructure
- */
-data class ContractReport(
-    val reportReference:   String,
-    val taskId:            String,
-    val contractId:        String,
-    val contractorId:      String,
-    val typeInventory:     List<String>,
-    val executionSteps:    List<String>,
-    val artifactStructure: Map<String, Any>,
-    val errorConditions:   List<String>,
-    val traceStructure:    Map<String, Any>
 )
 
 /**
@@ -530,6 +508,10 @@ class ExecutionAuthority(
 
         // ── Step 2: Registry check ───────────────────────────────────────────
         val registry = contractorRegistry
+        ContractorInitialization.enforce(
+            registry       = contractorRegistry,
+            driverRegistry = driverRegistry
+        )
 
         // ── Step 2a: Domain context lookup (from CONTRACT_CREATED, if present) ─
         val domainContext = lookupDomainContext(executionTask.contractId, events)
@@ -583,6 +565,9 @@ class ExecutionAuthority(
         // ── Step 5: Generate ContractReport (AERP-1) ─────────────────────────
         val contractReport = generateContractReport(executionTask, executionOutput, resolved.trace, contractorId)
 
+        // ── Step 5-CHV1: Enforce report completeness (CONVERGENCE_HARDENING_V1) ─
+        validateReportCompleteness(contractReport)
+
         // ── Step 5a: Freeze report — immutable snapshot (AERP-1 / RRIL-1) ───
         val frozenReport = contractReport.copy()
 
@@ -615,10 +600,10 @@ class ExecutionAuthority(
             assignmentStatus     = TaskAssignmentStatus.ASSIGNED
         )
 
-        // Wrap artifact through frozen report for AERP-1 compliance: validation is against frozen snapshot
+        // Wrap artifact for AERP-1 compliance: validation is against execution output
         val reportBackedOutput = ContractorExecutionOutput(
             taskId         = executionOutput.taskId,
-            resultArtifact = frozenReport.artifactStructure,
+            resultArtifact = executionOutput.resultArtifact,
             status         = executionOutput.status,
             error          = executionOutput.error
         )
@@ -816,9 +801,8 @@ class ExecutionAuthority(
     fun buildAnchorState(frozenReport: ContractReport): AnchorState = AnchorState(
         reportReference    = frozenReport.reportReference,
         validatedTypes     = frozenReport.typeInventory.toList(),
-        validatedStructure = frozenReport.artifactStructure.keys.toSet(),
-        validatedPaths     = frozenReport.executionSteps.toList(),
-        contractId         = frozenReport.contractId,
+        validatedStructure = frozenReport.typeInventory.toSet(),
+        validatedPaths     = frozenReport.logicFlow.toList(),
         validatedReport    = frozenReport
     )
 
@@ -927,7 +911,7 @@ class ExecutionAuthority(
         for (field in mutation.keys) {
             enforceMutationBoundary(anchor, field)
         }
-        val base = anchor.validatedReport?.artifactStructure ?: emptyMap()
+        val base = emptyMap<String, Any>()
         return base + mutation
     }
 
@@ -1093,31 +1077,51 @@ class ExecutionAuthority(
         return ExecutionAuthorityExecutionResult.BlockedWithRecovery(reason, listOf(recovery))
     }
 
-    /** Generate [ContractReport] from execution output (AERP-1 compliance). */
+    /** Generate [ContractReport] from execution output (AERP-1 / CONVERGENCE_HARDENING_V1). */
     private fun generateContractReport(
         task:         ExecutionTask,
         output:       ContractorExecutionOutput,
         trace:        com.agoii.mobile.contractors.ResolutionTrace,
         contractorId: String
     ): ContractReport {
-        val artifact = output.resultArtifact + mapOf("taskId" to task.taskId)
+        val steps       = listOf("MATCHING_RESOLVED", "EXECUTION_INVOKED", "ARTIFACT_PRODUCED")
+        val rawOut      = output.resultArtifact["response"]?.toString() ?: output.error ?: ""
+        val exitCodeVal = if (output.status == ExecutionStatus.SUCCESS) 0 else 1
         return ContractReport(
-            reportReference   = task.reportReference,
-            taskId            = task.taskId,
-            contractId        = task.contractId,
-            contractorId      = contractorId,
-            typeInventory     = artifact.keys.toList(),
-            executionSteps    = listOf("MATCHING_RESOLVED", "EXECUTION_INVOKED", "ARTIFACT_PRODUCED"),
-            artifactStructure = artifact,
-            errorConditions   = listOfNotNull(output.error),
-            traceStructure    = mapOf(
-                "taskId"          to task.taskId,
-                "contractId"      to task.contractId,
-                "evaluated"       to trace.evaluated,
-                "matched"         to trace.matched,
-                "executionStatus" to output.status.name
-            )
+            reportReference    = task.reportReference,
+            typeInventory      = output.resultArtifact.keys.toList(),
+            functionSignatures = task.requirements.map { it.toString() }.ifEmpty { listOf(task.contractId) },
+            logicFlow          = steps,
+            errorConditions    = listOfNotNull(output.error),
+            traceStructure     = trace,
+            rawOutput          = rawOut,
+            normalizedOutput   = if (output.status == ExecutionStatus.SUCCESS) rawOut else null,
+            exitCode           = exitCodeVal,
+            failureSurface     = listOfNotNull(output.error),
+            policyViolations   = emptyList()
         )
+    }
+
+    /**
+     * Enforce AERP-1 report completeness (CONVERGENCE_HARDENING_V1).
+     *
+     * All four AERP-1 required surfaces MUST be non-empty.
+     * Throws [IllegalArgumentException] if any surface is missing, blocking execution
+     * before validation proceeds.
+     */
+    private fun validateReportCompleteness(report: ContractReport) {
+        require(report.typeInventory.isNotEmpty()) {
+            "AERP-1 VIOLATION: typeInventory is empty — report_reference=${report.reportReference}"
+        }
+        require(report.functionSignatures.isNotEmpty()) {
+            "AERP-1 VIOLATION: functionSignatures is empty — report_reference=${report.reportReference}"
+        }
+        require(report.logicFlow.isNotEmpty()) {
+            "AERP-1 VIOLATION: logicFlow is empty — report_reference=${report.reportReference}"
+        }
+        require(report.exitCode == 0 || report.errorConditions.isNotEmpty()) {
+            "AERP-1 VIOLATION: errorConditions is empty on non-zero exitCode — report_reference=${report.reportReference}"
+        }
     }
 
     /**
@@ -1129,8 +1133,8 @@ class ExecutionAuthority(
     private fun extractAnchorState(report: ContractReport): AnchorState = AnchorState(
         reportReference    = report.reportReference,
         validatedTypes     = report.typeInventory.toList(),
-        validatedStructure = report.artifactStructure.keys.toSet(),
-        validatedPaths     = report.executionSteps.toList()
+        validatedStructure = report.typeInventory.toSet(),
+        validatedPaths     = report.logicFlow.toList()
     )
 
     /** Issue [ExecutionRecoveryContract] (RCF-1) for a SINGLE violation surface. */
