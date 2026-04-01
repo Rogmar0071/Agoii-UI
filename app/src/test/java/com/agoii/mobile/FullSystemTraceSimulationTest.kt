@@ -60,11 +60,13 @@ class FullSystemTraceSimulationTest {
     // ── In-memory EventRepository (no Android Context required) ──────────────
 
     private class MemoryRepository : EventRepository {
-        private val events = mutableListOf<Event>()
+        private val ledgers = mutableMapOf<String, MutableList<Event>>()
         override fun appendEvent(projectId: String, type: String, payload: Map<String, Any>) {
-            events.add(Event(type = type, payload = payload))
+            ledgers.getOrPut(projectId) { mutableListOf() }
+                .add(Event(type = type, payload = payload))
         }
-        override fun loadEvents(projectId: String): List<Event> = events.toList()
+        override fun loadEvents(projectId: String): List<Event> =
+            ledgers[projectId]?.toList() ?: emptyList()
     }
 
     // ── Simulation report ──────────────────────────────────────────────────────
@@ -334,10 +336,11 @@ class FullSystemTraceSimulationTest {
         val invariantErrors = mutableListOf<String>()
 
         // INV-1: Ledger starts with INTENT_SUBMITTED
-        if (events.first().type != EventTypes.INTENT_SUBMITTED) {
+        val firstEvent = events.firstOrNull()
+        if (firstEvent == null || firstEvent.type != EventTypes.INTENT_SUBMITTED) {
             invariantErrors.add(
                 "STS-1-INV-1: First event must be INTENT_SUBMITTED, " +
-                "got '${events.first().type}'"
+                "got '${firstEvent?.type ?: "<empty ledger>"}'"
             )
         }
 
@@ -519,7 +522,7 @@ class FullSystemTraceSimulationTest {
         val report = simulateFullTrace("sts1-first-evt", MemoryRepository())
         assertEquals(
             "First event must be INTENT_SUBMITTED",
-            EventTypes.INTENT_SUBMITTED, report.events.first().type
+            EventTypes.INTENT_SUBMITTED, report.events.firstOrNull()?.type
         )
     }
 
@@ -601,10 +604,12 @@ class FullSystemTraceSimulationTest {
     @Test
     fun `case A — RECOVERY_CONTRACT payload contains required fields`() {
         val report = simulateFullTrace("sts1-case-a-payload", MemoryRepository())
-        val rc = report.events.first {
+        val rc = report.events.firstOrNull {
             it.type == EventTypes.RECOVERY_CONTRACT &&
             it.payload["contractId"]?.toString() == "contract_2"
         }
+        assertNotNull("RECOVERY_CONTRACT for contract_2 must exist", rc)
+        rc!!
         assertEquals("EXECUTION_FAILURE", rc.payload["failureClass"])
         assertEquals("DELTA_REPAIR_REQUIRED", rc.payload["correctionDirective"])
         assertEquals("VALIDATION_PASS", rc.payload["successCondition"])
@@ -738,7 +743,9 @@ class FullSystemTraceSimulationTest {
             events.any { it.type == EventTypes.ASSEMBLY_FAILED }
         )
 
-        val asmFailed = events.first { it.type == EventTypes.ASSEMBLY_FAILED }
+        val asmFailed = events.firstOrNull { it.type == EventTypes.ASSEMBLY_FAILED }
+        assertNotNull("Case C: ASSEMBLY_FAILED must be emitted", asmFailed)
+        asmFailed!!
         @Suppress("UNCHECKED_CAST")
         val failureReasons = asmFailed.payload["failureReasons"] as? List<*>
         assertNotNull("Case C: failureReasons must be present", failureReasons)
@@ -762,7 +769,9 @@ class FullSystemTraceSimulationTest {
     @Test
     fun `case C — lockedSections in ASSEMBLY_FAILED contains contract_1 and contract_2`() {
         val report = simulateFullTrace("sts1-case-c-locked", MemoryRepository())
-        val asmFailed = report.events.first { it.type == EventTypes.ASSEMBLY_FAILED }
+        val asmFailed = report.events.firstOrNull { it.type == EventTypes.ASSEMBLY_FAILED }
+        assertNotNull("ASSEMBLY_FAILED must exist", asmFailed)
+        asmFailed!!
 
         @Suppress("UNCHECKED_CAST")
         val lockedSections = asmFailed.payload["lockedSections"] as? List<*>
@@ -780,7 +789,9 @@ class FullSystemTraceSimulationTest {
     @Test
     fun `case C — violationSurface in ASSEMBLY_FAILED contains only contract_3`() {
         val report = simulateFullTrace("sts1-case-c-violation", MemoryRepository())
-        val asmFailed = report.events.first { it.type == EventTypes.ASSEMBLY_FAILED }
+        val asmFailed = report.events.firstOrNull { it.type == EventTypes.ASSEMBLY_FAILED }
+        assertNotNull("ASSEMBLY_FAILED must exist", asmFailed)
+        asmFailed!!
 
         @Suppress("UNCHECKED_CAST")
         val violationSurface = asmFailed.payload["violationSurface"] as? List<*>
@@ -863,7 +874,9 @@ class FullSystemTraceSimulationTest {
 
         AssemblyModule().assemble("proj-d2", store)
 
-        val asmFailed = store.loadEvents("proj-d2").first { it.type == EventTypes.ASSEMBLY_FAILED }
+        val asmFailed = store.loadEvents("proj-d2").firstOrNull { it.type == EventTypes.ASSEMBLY_FAILED }
+        assertNotNull("ASSEMBLY_FAILED must be written to ledger for Case D (2)", asmFailed)
+        asmFailed!!
         @Suppress("UNCHECKED_CAST")
         val reasons = asmFailed.payload["failureReasons"] as? List<*>
         assertNotNull("failureReasons must be present", reasons)
@@ -882,10 +895,11 @@ class FullSystemTraceSimulationTest {
     @Test
     fun `AGOII-STS-1 system converges to stable terminal state — last event is ICS_COMPLETED`() {
         val report = simulateFullTrace("sts1-convergence", MemoryRepository())
+        val lastType = report.events.lastOrNull()?.type
         assertEquals(
             "Terminal state: last event must be ICS_COMPLETED",
             EventTypes.ICS_COMPLETED,
-            report.events.last().type
+            lastType
         )
     }
 
@@ -1018,6 +1032,6 @@ class FullSystemTraceSimulationTest {
         val store = MemoryRepository()
         simulateFullTrace("sts1-first-check", store)
         val events = store.loadEvents("sts1-first-check")
-        assertEquals(EventTypes.INTENT_SUBMITTED, events.first().type)
+        assertEquals(EventTypes.INTENT_SUBMITTED, events.firstOrNull()?.type)
     }
 }
