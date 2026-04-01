@@ -230,7 +230,7 @@ class AssemblyModuleTest {
 
     @Test
     fun `re-entry blocked when contractSetId mismatches after ASSEMBLY_FAILED`() {
-        val failureEvent = Event(
+        val mismatchFailureEvent = Event(
             EventTypes.ASSEMBLY_FAILED,
             mapOf(
                 "report_reference"        to "rrid-mix-001",
@@ -242,7 +242,7 @@ class AssemblyModuleTest {
                 "violationSurface"        to listOf("contract_3")
             )
         )
-        val repo = MemoryRepository(mixedValidityLedger() + failureEvent)
+        val repo = MemoryRepository(mixedValidityLedger() + mismatchFailureEvent)
 
         try {
             AssemblyModule().assemble("proj", repo)
@@ -254,7 +254,7 @@ class AssemblyModuleTest {
 
     @Test
     fun `re-entry blocked when new CONTRACTS_GENERATED appears after ASSEMBLY_FAILED`() {
-        val failureEvent = Event(
+        val priorFailureEvent = Event(
             EventTypes.ASSEMBLY_FAILED,
             mapOf(
                 "report_reference"        to "rrid-mix-001",
@@ -275,7 +275,7 @@ class AssemblyModuleTest {
                 "total"            to 3
             )
         )
-        val repo = MemoryRepository(mixedValidityLedger() + failureEvent + newContractsGen)
+        val repo = MemoryRepository(mixedValidityLedger() + priorFailureEvent + newContractsGen)
 
         try {
             AssemblyModule().assemble("proj", repo)
@@ -289,7 +289,7 @@ class AssemblyModuleTest {
     fun `re-entry allowed when conditions are satisfied after ASSEMBLY_FAILED`() {
         // After a previous ASSEMBLY_FAILED, fix the ledger (add SUCCESS for contract_3)
         // and retry — the re-entry guard must allow it.
-        val failureEvent = Event(
+        val allowedReentryFailureEvent = Event(
             EventTypes.ASSEMBLY_FAILED,
             mapOf(
                 "report_reference"        to "rrid-mix-001",
@@ -309,7 +309,7 @@ class AssemblyModuleTest {
                 "report_reference"  to "rrid-mix-001"
             )
         )
-        val repo = MemoryRepository(mixedValidityLedger() + failureEvent + fixEvent)
+        val repo = MemoryRepository(mixedValidityLedger() + allowedReentryFailureEvent + fixEvent)
 
         val result = AssemblyModule().assemble("proj", repo)
         assertTrue(

@@ -255,11 +255,13 @@ class AssemblyModule {
         }
 
         // ── Step 7: Build traceMap (contractId → artifactReference) ──────────
-        // Trace completeness: every SUCCESS TASK_EXECUTED must have a non-blank
-        // artifactReference tracked in the traceMap (AERP-1 §3 / spec §7.2).
-        val traceMap: Map<String, String> = assemblyContracts.associate { c ->
-            c.contractId to (successTaskExecutions[c.contractId]?.artifactReference ?: "")
-        }
+        // Only non-blank artifactReferences are entered; missing entries signal
+        // TRACE_INCOMPLETE. Trace completeness: every SUCCESS TASK_EXECUTED must
+        // have a non-blank artifactReference tracked in the traceMap (AERP-1 §3 / spec §7.2).
+        val traceMap: Map<String, String> = successTaskExecutions
+            .filterValues { it.artifactReference.isNotBlank() }
+            .mapKeys { (contractId, _) -> contractId }
+            .mapValues { (_, data) -> data.artifactReference }
 
         events.filter { ev ->
             ev.type == EventTypes.TASK_EXECUTED &&
@@ -269,7 +271,7 @@ class AssemblyModule {
         }.forEach { ev ->
             val contractId  = ev.payload["contractId"]?.toString() ?: return@forEach
             val artifactRef = ev.payload["artifactReference"]?.toString() ?: ""
-            if (artifactRef.isBlank() || traceMap[contractId].isNullOrBlank()) {
+            if (artifactRef.isBlank()) {
                 val alreadyReported = failureReasons.any {
                     it.contractId == contractId && it.failureType == "TRACE_INCOMPLETE"
                 }
