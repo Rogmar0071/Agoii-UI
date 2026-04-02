@@ -293,46 +293,63 @@ class Governor(
                 )
             }
 
-            // CLC-1 delta loop: RECOVERY_CONTRACT → DELTA_CONTRACT_CREATED
-            // Governor extracts contractId, violationField, report_reference from the
-            // recovery payload and issues DELTA_CONTRACT_CREATED with the iteration count.
+            // ── RECOVERY → DELTA LOOP (RCF-1 → DEE-1) ───────────────────────────
+            // RECOVERY_CONTRACT → DELTA_CONTRACT_CREATED
+            // Extracts recoveryId, contractId, taskId, report_reference and emits
+            // DELTA_CONTRACT_CREATED; idempotency is guarded by recoveryId.
             EventTypes.RECOVERY_CONTRACT -> {
+                val recoveryId      = last.payload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException("GOVERNOR: recoveryId missing")
                 val contractId      = last.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: return null
-                val violationField  = last.payload["violationField"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: return null
+                    ?: throw IllegalStateException("GOVERNOR: contractId missing")
+                val taskId          = last.payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException("GOVERNOR: taskId missing")
                 val reportReference = last.payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: return null
-                val iterationCount  = deriveDeltaIterationCount(events, reportReference) + 1
+                    ?: throw IllegalStateException("GOVERNOR: report_reference missing")
+
+                val deltaAlreadyExists = events.any { event ->
+                    event.type == EventTypes.DELTA_CONTRACT_CREATED &&
+                    event.payload["recoveryId"]?.toString() == recoveryId
+                }
+                if (deltaAlreadyExists) return null
+
                 Event(
                     type    = EventTypes.DELTA_CONTRACT_CREATED,
                     payload = mapOf(
-                        "contractId"            to contractId,
-                        "violationField"        to violationField,
-                        "report_reference"      to reportReference,
-                        "delta_iteration_count" to iterationCount
+                        "recoveryId"       to recoveryId,
+                        "contractId"       to contractId,
+                        "taskId"           to taskId,
+                        "report_reference" to reportReference,
+                        "source"           to "GOVERNOR"
                     )
                 )
             }
 
-            // CLC-1 delta loop: DELTA_CONTRACT_CREATED → TASK_ASSIGNED
-            // Reuses the recovery contractId as taskId; position+total are derived from the
-            // original TASK_ASSIGNED for this report_reference, preserving contract lineage.
+            // DELTA_CONTRACT_CREATED → TASK_ASSIGNED
+            // Uses taskId from the delta payload; idempotency guard prevents duplicate assignment.
             EventTypes.DELTA_CONTRACT_CREATED -> {
                 val contractId      = last.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: return null
+                    ?: throw IllegalStateException("DELTA: contractId missing")
+                val taskId          = last.payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: throw IllegalStateException("DELTA: taskId missing")
                 val reportReference = last.payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: return null
-                val (position, total) = derivePositionAndTotalForDelta(events, reportReference)
-                    ?: return null
+                    ?: throw IllegalStateException("DELTA: report_reference missing")
+
+                val alreadyAssigned = events.any { event ->
+                    event.type == EventTypes.TASK_ASSIGNED &&
+                    event.payload["taskId"]?.toString() == taskId &&
+                    event.payload["contractId"]?.toString() == contractId
+                }
+                if (alreadyAssigned) return null
+
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
-                        "taskId"           to contractId,
+                        "taskId"           to taskId,
                         "contractId"       to contractId,
-                        "position"         to position,
-                        "total"            to total,
                         "report_reference" to reportReference,
+                        "position"         to 1,
+                        "total"            to 1,
                         "requirements"     to emptyList<Any>(),
                         "constraints"      to emptyList<Any>()
                     )
@@ -434,47 +451,4 @@ class Governor(
         return contractsGen.payload["total"]?.let { resolveInt(it) }
     }
 
-    /**
-     * CLC-1: Derives position and total for a delta TASK_ASSIGNED by looking up the last
-     * TASK_ASSIGNED event for the given [reportReference].
-     *
-     * Preserves contract lineage: the delta task runs at the same position as the original
-     * failed task so that the execution spine remains consistent.
-     *
-     * Falls back to position=1 with total derived from CONTRACTS_GENERATED if no prior
-     * TASK_ASSIGNED exists for this report reference.
-     *
-     * Returns null if neither source can provide valid position + total.
-     */
-    private fun derivePositionAndTotalForDelta(
-        events:          List<Event>,
-        reportReference: String
-    ): Pair<Int, Int>? {
-        val lastTaskAssigned = events.lastOrNull {
-            it.type == EventTypes.TASK_ASSIGNED &&
-            it.payload["report_reference"]?.toString() == reportReference
-        }
-        if (lastTaskAssigned != null) {
-            val pos = resolveInt(lastTaskAssigned.payload["position"]) ?: return null
-            val tot = resolveInt(lastTaskAssigned.payload["total"])    ?: return null
-            return pos to tot
-        }
-        val total = deriveTotal(events) ?: return null
-        return 1 to total
-    }
-
-    /**
-     * CLC-1: Counts the number of [EventTypes.DELTA_CONTRACT_CREATED] events already in the
-     * ledger for the given [reportReference].
-     *
-     * Used to derive the deterministic iteration count written into the next
-     * DELTA_CONTRACT_CREATED payload (Governor does not hold in-memory state).
-     */
-    private fun deriveDeltaIterationCount(
-        events:          List<Event>,
-        reportReference: String
-    ): Int = events.count {
-        it.type == EventTypes.DELTA_CONTRACT_CREATED &&
-        it.payload["report_reference"]?.toString() == reportReference
-    }
 }

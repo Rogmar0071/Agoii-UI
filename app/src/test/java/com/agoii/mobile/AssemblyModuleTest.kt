@@ -334,11 +334,13 @@ class AssemblyModuleTest {
         val recoveryEvent = Event(
             EventTypes.RECOVERY_CONTRACT,
             mapOf(
-                "contractId"       to "contract_3",
-                "failureClass"     to "INCOMPLETE_EXECUTION_SURFACE",
-                "violationField"   to "no SUCCESS TASK_EXECUTED",
+                "recoveryId"        to "RCF::proj::contract_3::task-1::5",
+                "contractId"        to "contract_3",
+                "taskId"            to "task-1",
+                "failureClass"      to "INCOMPLETE_EXECUTION_SURFACE",
+                "violationField"    to "no SUCCESS TASK_EXECUTED",
                 "artifactReference" to "assembly_failed_contract_3",
-                "report_reference" to "rrid-mix-001"
+                "report_reference"  to "rrid-mix-001"
             )
         )
         val events = mixedValidityLedger() + recoveryEvent
