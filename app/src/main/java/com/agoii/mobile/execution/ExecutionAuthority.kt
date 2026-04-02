@@ -1,7 +1,18 @@
 // ONLY showing modified patterns — rest of your file remains EXACTLY the same
 
-// ✅ ADD THIS IMPORT (top of file)
-import com.agoii.mobile.core.EventRepository
+// =========================
+// 🔧 CONVERGENCE AUTHORITY
+// =========================
+
+companion object {
+    /**
+     * Maximum number of DELTA_CONTRACT_CREATED attempts allowed
+     * for a single taskId before the system is declared non-convergent.
+     *
+     * This is the single source of truth for convergence control.
+     */
+    const val MAX_DELTA: Int = 3
+}
 
 // =========================
 // 🔧 GLOBAL LAMBDA FIXES
