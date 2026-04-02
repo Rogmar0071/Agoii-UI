@@ -15,6 +15,8 @@ class ValidationLayer {
         val candidateType: String,
         /** Type of the event immediately before the candidate; null if candidate is first. */
         val priorEventType: String?,
+        /** executionStatus value of the prior event when it is a TASK_EXECUTED event; null otherwise. */
+        val priorExecutionStatus: String?,
         /** Total number of events in the simulated ledger. */
         val simulatedSize: Int,
         /** True when every event in simulated has sequenceNumber == its index. */
@@ -79,13 +81,19 @@ class ValidationLayer {
         var hasExecutionCompleted = false
         val taskState          = mutableMapOf<String, MutableSet<TaskLifecycle>>()
         var priorEventType: String? = null
+        var priorExecutionStatus: String? = null
         val lastIndex          = simulated.size - 1
 
         for (i in simulated.indices) {
             val ev = simulated[i]
 
-            // Capture the type of the event immediately before the candidate
-            if (i == lastIndex - 1) priorEventType = ev.type
+            // Capture the type (and executionStatus when TASK_EXECUTED) of the event before the candidate
+            if (i == lastIndex - 1) {
+                priorEventType = ev.type
+                if (ev.type == EventTypes.TASK_EXECUTED) {
+                    priorExecutionStatus = ev.payload["executionStatus"]?.toString()
+                }
+            }
 
             // Sequence continuity across the full simulated ledger
             if (isSequenceValid && ev.sequenceNumber != i.toLong()) {
@@ -131,6 +139,7 @@ class ValidationLayer {
         return ValidationState(
             candidateType         = simulated[lastIndex].type,
             priorEventType        = priorEventType,
+            priorExecutionStatus  = priorExecutionStatus,
             simulatedSize         = simulated.size,
             isSequenceValid       = isSequenceValid,
             firstSeqViolationAt   = firstSeqViolationAt,
@@ -438,6 +447,12 @@ class ValidationLayer {
 
     private fun checkRecoveryContract(projectId: String, payload: Map<String, Any>) {
         requireKeys(projectId, EventTypes.RECOVERY_CONTRACT, payload, RECOVERY_CONTRACT_KEYS)
+        // AGOII-ALIGN-1-IDENTITY-LOCK RULE 1: recoveryId is the ONLY identity for
+        // idempotency checks, event uniqueness, and trace linkage.
+        payload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "RECOVERY_CONTRACT missing or blank 'recoveryId' in '$projectId'"
+            )
         payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw LedgerValidationException(
                 "RECOVERY_CONTRACT missing or blank 'contractId' in '$projectId'"
@@ -454,6 +469,13 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "RECOVERY_CONTRACT missing or blank 'artifactReference' in '$projectId'"
             )
+        // RULE 1 — RECOVERY ORIGIN LOCK: source must be EXECUTION_AUTHORITY (AGOII-ALIGN-1)
+        val source = payload["source"]?.toString()
+        if (source != "EXECUTION_AUTHORITY") {
+            throw LedgerValidationException(
+                "RECOVERY_CONTRACT requires source=EXECUTION_AUTHORITY in '$projectId' (got '$source')"
+            )
+        }
     }
 
     private fun checkDeltaContractCreated(projectId: String, payload: Map<String, Any>) {
@@ -574,6 +596,13 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "ICS_STARTED missing or blank 'taskId' in '$projectId'"
             )
+        // RULE 3 — ICS ENTRY LOCK: source must be GOVERNOR (AGOII-ALIGN-1)
+        val source = payload["source"]?.toString()
+        if (source != "GOVERNOR") {
+            throw LedgerValidationException(
+                "ICS_STARTED requires source=GOVERNOR in '$projectId' (got '$source')"
+            )
+        }
     }
 
     private fun checkIcsCompleted(projectId: String, payload: Map<String, Any>) {
@@ -590,6 +619,13 @@ class ValidationLayer {
             ?: throw LedgerValidationException(
                 "ICS_COMPLETED missing or blank 'icsOutputReference' in '$projectId'"
             )
+        // RULE 5 — MODULE OWNERSHIP: source must be ICS_MODULE (AGOII-ALIGN-1)
+        val source = payload["source"]?.toString()
+        if (source != "ICS_MODULE") {
+            throw LedgerValidationException(
+                "ICS_COMPLETED requires source=ICS_MODULE in '$projectId' (got '$source')"
+            )
+        }
     }
 
     private fun checkAssemblyStarted(projectId: String, payload: Map<String, Any>) {
@@ -830,6 +866,18 @@ class ValidationLayer {
                     "no further events are permitted in '$projectId'"
             )
         }
+
+        // Invariant 7 — Recovery Trigger Lock: after TASK_EXECUTED(FAILURE), the ONLY valid next
+        // event is RECOVERY_CONTRACT (AGOII-ALIGN-1-PATCH RULE 1/2).
+        if (state.priorEventType == EventTypes.TASK_EXECUTED &&
+            state.priorExecutionStatus == "FAILURE" &&
+            state.candidateType != EventTypes.RECOVERY_CONTRACT
+        ) {
+            throw LedgerValidationException(
+                "Invariant 7: after TASK_EXECUTED(FAILURE), next event must be RECOVERY_CONTRACT " +
+                    "(got '${state.candidateType}') in '$projectId'"
+            )
+        }
     }
 
     // ── HELPERS ───────────────────────────────────────────────────────────────
@@ -930,11 +978,13 @@ class ValidationLayer {
             "report_reference", "position", "total"
         )
         private val RECOVERY_CONTRACT_KEYS  = setOf(
+            "recoveryId",
             "contractId", "taskId", "contractType", "executionPosition",
             "report_reference",
             "failureClass", "violationField", "correctionDirective",
             "successCondition", "artifactReference",
-            "irs_violation_type", "lockedSections"
+            "irs_violation_type", "lockedSections",
+            "source"  // AGOII-ALIGN-1: origin authority field (must be EXECUTION_AUTHORITY)
         )
         private val DELTA_CONTRACT_CREATED_KEYS = setOf(
             "contractId", "violationField", "report_reference", "delta_iteration_count"
@@ -953,8 +1003,14 @@ class ValidationLayer {
             "failureReasons",   // List<Map> — each with contractId, failureType, violatedInvariant
             "lockedSections", "violationSurface"
         )
-        private val ICS_STARTED_KEYS         = setOf("report_reference", "finalArtifactReference", "taskId")
-        private val ICS_COMPLETED_KEYS       = setOf("report_reference", "taskId", "icsOutputReference")
+        private val ICS_STARTED_KEYS         = setOf(
+            "report_reference", "finalArtifactReference", "taskId",
+            "source"  // AGOII-ALIGN-1: origin authority field (must be GOVERNOR)
+        )
+        private val ICS_COMPLETED_KEYS       = setOf(
+            "report_reference", "taskId", "icsOutputReference",
+            "source"  // AGOII-ALIGN-1: origin authority field (must be ICS_MODULE)
+        )
         // UCS-1 ingestion lifecycle event key sets
         private val CONTRACT_CREATED_KEYS    = setOf(
             "contractId", "intentId", "report_reference",
