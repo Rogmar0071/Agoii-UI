@@ -1913,6 +1913,14 @@ class ExecutionAuthority(
         // Always written first — NO partial ingestion, NO silent drops (RCF-1).
         // If this write fails (wrong ledger state), the exception propagates to the
         // caller; the ingestion cannot proceed without the audit anchor event.
+        //
+        // AGOII-ALIGN-1-IDENTITY-ANCHOR: Compute the sequence number that will be assigned to
+        // CONTRACT_CREATED before the append so no extra ledger load is required afterwards.
+        // EventLedger assigns: last().sequenceNumber + 1 (or 0 if empty). This value becomes the
+        // causal anchor for all recovery IDs emitted during ingestion.
+        val priorEvents = ledger.loadEvents(projectId)
+        val ingestionSequence = if (priorEvents.isEmpty()) 0L else priorEvents.last().sequenceNumber + 1L
+
         ledger.appendEvent(
             projectId,
             EventTypes.CONTRACT_CREATED,
@@ -1949,11 +1957,8 @@ class ExecutionAuthority(
                 anchorState         = anchorState,
                 successCondition    = "Contract '${contract.contractId}' executed with SUCCESS"
             )
-            // AGOII-ALIGN-1-IDENTITY-ANCHOR: ingestUniversalContract has no TASK_EXECUTED(FAILURE)
-            // trigger event. Use -1L as a stable sentinel so recoveryId is still deterministic:
-            // same contract + same ingest taskId → same recoveryId on every replay.
             val validationRecoveryId = deriveRecoveryId(
-                projectId, recovery.contractId, ingestTaskId, -1L
+                projectId, recovery.contractId, ingestTaskId, ingestionSequence
             )
             writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, validationRecoveryId, ingestTaskId)
             return UniversalIngestionResult.ValidationFailed(
@@ -1996,9 +2001,8 @@ class ExecutionAuthority(
                 anchorState         = anchorState,
                 successCondition    = "Contract '${normalized.contractId}' executed with SUCCESS"
             )
-            // AGOII-ALIGN-1-IDENTITY-ANCHOR: same sentinel rationale as validation path above.
             val enforcementRecoveryId = deriveRecoveryId(
-                projectId, recovery.contractId, ingestTaskId, -1L
+                projectId, recovery.contractId, ingestTaskId, ingestionSequence
             )
             writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, enforcementRecoveryId, ingestTaskId)
             return UniversalIngestionResult.EnforcementFailed(
