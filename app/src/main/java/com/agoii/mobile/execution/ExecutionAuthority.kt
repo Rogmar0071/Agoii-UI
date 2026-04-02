@@ -244,9 +244,12 @@ sealed class ExecutionRoute {
  *
  * [Ingested]          — all three lifecycle events written to ledger; contract is ready for
  *                        the execution spine.
- * [ValidationFailed]  — Surface 2 structural/semantic validation failed; RECOVERY_CONTRACT
- *                        written to ledger.
- * [EnforcementFailed] — Surface 6 enforcement gate failed; RECOVERY_CONTRACT written to ledger.
+ * [ValidationFailed]  — Surface 2 structural/semantic validation failed; CONTRACT_CREATED and
+ *                        TASK_EXECUTED(FAILURE) written to ledger. RECOVERY_CONTRACT is emitted
+ *                        by P1 (executeFromLedger TASK_EXECUTED(FAILURE) trigger).
+ * [EnforcementFailed] — Surface 6 enforcement gate failed; CONTRACT_CREATED, CONTRACT_VALIDATED,
+ *                        and TASK_EXECUTED(FAILURE) written to ledger. RECOVERY_CONTRACT is
+ *                        emitted by P1 (executeFromLedger TASK_EXECUTED(FAILURE) trigger).
  *
  * GOVERNANCE RULE: no variant implies execution. [UniversalContract] is a GOVERNANCE INPUT
  * only. Execution occurs exclusively via [executeFromLedger] when TASK_STARTED is the latest
