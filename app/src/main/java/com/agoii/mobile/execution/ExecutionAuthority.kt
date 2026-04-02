@@ -1929,6 +1929,10 @@ class ExecutionAuthority(
             )
         )
 
+        // AGOII-ALIGN-1-IDENTITY-ANCHOR: Read the committed CONTRACT_CREATED sequence number
+        // directly from the ledger — identity is observed, never predicted.
+        val ingestionSequence = ledger.loadEvents(projectId).last().sequenceNumber
+
         // ── Surface 2: Structural + Semantic Validation (AERP-1 pre-ledger gate) ──
         val validationResult = contractValidator.validate(contract)
         if (validationResult is ContractValidationResult.Invalid) {
@@ -1949,11 +1953,8 @@ class ExecutionAuthority(
                 anchorState         = anchorState,
                 successCondition    = "Contract '${contract.contractId}' executed with SUCCESS"
             )
-            // AGOII-ALIGN-1-IDENTITY-ANCHOR: ingestUniversalContract has no TASK_EXECUTED(FAILURE)
-            // trigger event. Use -1L as a stable sentinel so recoveryId is still deterministic:
-            // same contract + same ingest taskId → same recoveryId on every replay.
             val validationRecoveryId = deriveRecoveryId(
-                projectId, recovery.contractId, ingestTaskId, -1L
+                projectId, recovery.contractId, ingestTaskId, ingestionSequence
             )
             writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, validationRecoveryId, ingestTaskId)
             return UniversalIngestionResult.ValidationFailed(
@@ -1996,9 +1997,8 @@ class ExecutionAuthority(
                 anchorState         = anchorState,
                 successCondition    = "Contract '${normalized.contractId}' executed with SUCCESS"
             )
-            // AGOII-ALIGN-1-IDENTITY-ANCHOR: same sentinel rationale as validation path above.
             val enforcementRecoveryId = deriveRecoveryId(
-                projectId, recovery.contractId, ingestTaskId, -1L
+                projectId, recovery.contractId, ingestTaskId, ingestionSequence
             )
             writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, enforcementRecoveryId, ingestTaskId)
             return UniversalIngestionResult.EnforcementFailed(
