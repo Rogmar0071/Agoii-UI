@@ -187,6 +187,44 @@ class CoreBridge(context: Context) {
     fun verifyReplay(projectId: String): ReplayVerification =
         replayTest.verifyReplay(projectId)
 
+    // ─────────────────────────────────────────────────────────────
+    // UNIVERSAL CONTRACT INGESTION (UCS-1)
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Ingest a [UniversalContract] through the UCS-1 pipeline.
+     *
+     * Calls [ExecutionAuthority.ingestUniversalContract] and — on a
+     * [UniversalIngestionResult.ValidationFailed] or [UniversalIngestionResult.EnforcementFailed]
+     * result — immediately calls [ExecutionAuthority.executeFromLedger] so that the P1
+     * TASK_EXECUTED(FAILURE) handler emits the RECOVERY_CONTRACT.  Without this call the
+     * RECOVERY_CONTRACT would never be written because the normal TASK_STARTED-driven loop
+     * in [processInteractionInternal] is not active during a governance ingestion request.
+     *
+     * AGOII-ALIGN-1-RECOVERY-SINGULARITY: RECOVERY_CONTRACT is the sole responsibility of P1.
+     * This method does NOT write RECOVERY_CONTRACT directly.
+     *
+     * @param projectId Project ledger identifier.
+     * @param contract  The [UniversalContract] to ingest.
+     * @return [UniversalIngestionResult] describing the outcome.
+     */
+    fun ingestContract(
+        projectId: String,
+        contract: UniversalContract
+    ): UniversalIngestionResult {
+        val result = executionAuthority.ingestUniversalContract(contract, projectId, ledger)
+        when (result) {
+            is UniversalIngestionResult.ValidationFailed,
+            is UniversalIngestionResult.EnforcementFailed -> {
+                // P1 recovery trigger: TASK_EXECUTED(FAILURE) is now the last ledger event.
+                // executeFromLedger detects it and emits RECOVERY_CONTRACT (source=EXECUTION_AUTHORITY).
+                executionAuthority.executeFromLedger(projectId, ledger)
+            }
+            else -> {}
+        }
+        return result
+    }
+
     fun approveContracts(projectId: String) {
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
     }
