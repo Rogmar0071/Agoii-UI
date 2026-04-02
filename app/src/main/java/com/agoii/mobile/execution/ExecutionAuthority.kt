@@ -1331,8 +1331,8 @@ class ExecutionAuthority(
                     it.type == EventTypes.TASK_STARTED && it.payload["taskId"]?.toString() == knownTaskId
                 }
             }.getOrNull()
-            val knownPosition = resolveInt(taskStartedEvent?.payload?.get("position")) ?: 1
-            val knownTotal    = resolveInt(taskStartedEvent?.payload?.get("total")) ?: 1
+            val knownPosition = resolveInt(taskStartedEvent?.payload?.get("position")) ?: 1  // 1 = minimum valid value; ValidationLayer requires position >= 1. This degenerate path exists only when the TASK_STARTED event is unreachable — lifecycle closure is the priority.
+            val knownTotal    = resolveInt(taskStartedEvent?.payload?.get("total")) ?: 1      // 1 = minimum valid value; ValidationLayer requires total >= 1. Position==Total==1 is semantically: single-task fallback, which is acceptable for a lifecycle-closure TASK_EXECUTED(FAILURE).
             try {
                 ledger.appendEvent(
                     projectId,
@@ -1961,11 +1961,9 @@ class ExecutionAuthority(
             )
         )
 
-        // AGOII-ALIGN-1-IDENTITY-ANCHOR: Read the committed CONTRACT_CREATED sequence number
-        // directly from the ledger — identity is observed, never predicted.
-        // (Retained for audit/trace purposes; recovery identity uses stable non-sequence key above.)
-        @Suppress("UNUSED_VARIABLE")
-        val ingestionSequence = ledger.loadEvents(projectId).last().sequenceNumber
+        // AGOII-ALIGN-1-IDENTITY-ANCHOR: ingestionSequence previously used for recoveryId derivation.
+        // No longer needed — stable non-sequence recoveryIds are used above.
+        // CONTRACT_CREATED is confirmed written at this point; ingestion continues.
 
         // ── Surface 2: Structural + Semantic Validation (AERP-1 pre-ledger gate) ──
         val validationResult = contractValidator.validate(contract)
@@ -1995,20 +1993,32 @@ class ExecutionAuthority(
                     recoveryContract = recovery
                 )
             }
-            // Idempotent: recovery already in ledger — reconstruct result without re-writing.
+            // Idempotent: recovery already in ledger — reconstruct result from existing event payload.
+            // Use lastOrNull() with graceful fallback: the guard above ensures the event exists,
+            // but lastOrNull() prevents NoSuchElementException on any unexpected evaluation path.
+            val existingValidationEvent = priorEvents.lastOrNull {
+                it.type == EventTypes.RECOVERY_CONTRACT && it.payload["recoveryId"] == stableValidationRecoveryId
+            }
             val existingRecovery = ExecutionRecoveryContract(
-                reportReference     = contract.reportReference,
-                contractId          = "RCF_${contract.contractId}_VALIDATION",
-                failureClass        = FailureClass.STRUCTURAL,
-                violationField      = "VALIDATION_FAILED (idempotent)",
-                correctionDirective = "Already emitted — idempotent re-entry",
+                reportReference     = existingValidationEvent?.payload?.get("report_reference")?.toString()
+                    ?: contract.reportReference,
+                contractId          = existingValidationEvent?.payload?.get("contractId")?.toString()
+                    ?: "RCF_${contract.contractId}_VALIDATION",
+                failureClass        = runCatching {
+                    FailureClass.valueOf(existingValidationEvent?.payload?.get("failureClass")?.toString() ?: "")
+                }.getOrElse { FailureClass.STRUCTURAL },
+                violationField      = existingValidationEvent?.payload?.get("violationField")?.toString()
+                    ?: "VALIDATION_FAILED (idempotent)",
+                correctionDirective = existingValidationEvent?.payload?.get("correctionDirective")?.toString()
+                    ?: "Already emitted — idempotent re-entry",
                 anchorState         = AnchorState(
                     reportReference    = contract.reportReference,
                     validatedTypes     = emptyList(),
                     validatedStructure = emptySet(),
                     validatedPaths     = emptyList()
                 ),
-                successCondition    = "Contract '${contract.contractId}' executed with SUCCESS"
+                successCondition    = existingValidationEvent?.payload?.get("successCondition")?.toString()
+                    ?: "Contract '${contract.contractId}' executed with SUCCESS"
             )
             return UniversalIngestionResult.ValidationFailed(
                 violations       = validationResult.violations,
@@ -2058,20 +2068,32 @@ class ExecutionAuthority(
                     recoveryContract = recovery
                 )
             }
-            // Idempotent: recovery already in ledger — reconstruct result without re-writing.
+            // Idempotent: recovery already in ledger — reconstruct result from existing event payload.
+            // Use lastOrNull() with graceful fallback: the guard above ensures the event exists,
+            // but lastOrNull() prevents NoSuchElementException on any unexpected evaluation path.
+            val existingEnforcementEvent = priorEvents.lastOrNull {
+                it.type == EventTypes.RECOVERY_CONTRACT && it.payload["recoveryId"] == stableEnforcementRecoveryId
+            }
             val existingRecovery = ExecutionRecoveryContract(
-                reportReference     = normalized.reportReference,
-                contractId          = "RCF_${normalized.contractId}_ENFORCEMENT",
-                failureClass        = FailureClass.STRUCTURAL,
-                violationField      = "ENFORCEMENT_FAILED (idempotent)",
-                correctionDirective = "Already emitted — idempotent re-entry",
+                reportReference     = existingEnforcementEvent?.payload?.get("report_reference")?.toString()
+                    ?: normalized.reportReference,
+                contractId          = existingEnforcementEvent?.payload?.get("contractId")?.toString()
+                    ?: "RCF_${normalized.contractId}_ENFORCEMENT",
+                failureClass        = runCatching {
+                    FailureClass.valueOf(existingEnforcementEvent?.payload?.get("failureClass")?.toString() ?: "")
+                }.getOrElse { FailureClass.STRUCTURAL },
+                violationField      = existingEnforcementEvent?.payload?.get("violationField")?.toString()
+                    ?: "ENFORCEMENT_FAILED (idempotent)",
+                correctionDirective = existingEnforcementEvent?.payload?.get("correctionDirective")?.toString()
+                    ?: "Already emitted — idempotent re-entry",
                 anchorState         = AnchorState(
                     reportReference    = normalized.reportReference,
                     validatedTypes     = emptyList(),
                     validatedStructure = emptySet(),
                     validatedPaths     = emptyList()
                 ),
-                successCondition    = "Contract '${normalized.contractId}' executed with SUCCESS"
+                successCondition    = existingEnforcementEvent?.payload?.get("successCondition")?.toString()
+                    ?: "Contract '${normalized.contractId}' executed with SUCCESS"
             )
             return UniversalIngestionResult.EnforcementFailed(
                 violations       = enforcementResult.violations,
