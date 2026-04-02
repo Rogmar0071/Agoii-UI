@@ -349,7 +349,8 @@ class Governor(
             // against the pre-computed taskAssignedTaskIds set in ReplayStructuralState.
             EventTypes.DELTA_CONTRACT_CREATED -> {
                 // recoveryId required in payload (contract enforcement — mirrors ValidationLayer).
-                lastPayload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() } ?: return null
+                val recoveryId  = lastPayload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: return null
                 val contractId  = lastPayload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
                 val taskId      = lastPayload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
@@ -370,9 +371,8 @@ class Governor(
             }
 
             EventTypes.CONTRACTOR_REASSIGNED -> {
-                val taskId = lastPayload["taskId"] as? String ?: return null
-                // Require newContractorId in the payload to validate the reassignment event.
-                lastPayload["newContractorId"] as? String ?: return null
+                val taskId          = lastPayload["taskId"]          as? String ?: return null
+                val newContractorId = lastPayload["newContractorId"] as? String ?: return null
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf("taskId" to taskId)
