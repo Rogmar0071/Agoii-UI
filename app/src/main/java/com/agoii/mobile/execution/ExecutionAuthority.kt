@@ -265,20 +265,18 @@ sealed class UniversalIngestionResult {
 
     /**
      * Structural or semantic validation failed (Surface 2); CONTRACT_CREATED and
-     * RECOVERY_CONTRACT written to ledger.
+     * TASK_EXECUTED(FAILURE) written to ledger. RECOVERY_CONTRACT is emitted by P1.
      */
     data class ValidationFailed(
-        val violations:       List<String>,
-        val recoveryContract: ExecutionRecoveryContract
+        val violations: List<String>
     ) : UniversalIngestionResult()
 
     /**
      * Enforcement gate failed (Surface 6); CONTRACT_CREATED, CONTRACT_VALIDATED, and
-     * RECOVERY_CONTRACT written to ledger.
+     * TASK_EXECUTED(FAILURE) written to ledger. RECOVERY_CONTRACT is emitted by P1.
      */
     data class EnforcementFailed(
-        val violations:       List<ContractViolation>,
-        val recoveryContract: ExecutionRecoveryContract
+        val violations: List<ContractViolation>
     ) : UniversalIngestionResult()
 }
 
@@ -1901,17 +1899,21 @@ class ExecutionAuthority(
      * Pipeline (locked — all phases run in full before any write except CONTRACT_CREATED):
      *  Phase 1 — CONTRACT_CREATED written (records ingestion attempt unconditionally)
      *  Surface 2 — [UniversalContractValidator]: structural + semantic validation (AERP-1)
-     *              → on failure: RECOVERY_CONTRACT written; returns [UniversalIngestionResult.ValidationFailed]
+     *              → on failure: TASK_EXECUTED(FAILURE) written; returns [UniversalIngestionResult.ValidationFailed]
+     *                            RECOVERY_CONTRACT is emitted by P1 (executeFromLedger TASK_EXECUTED(FAILURE) trigger)
      *  Surface 3 — [UniversalContractNormalizer]: canonical form production
      *  Surface 6 — [ContractEnforcementEngine]: pre-execution enforcement gate
      *              → on pass:   CONTRACT_VALIDATED written
-     *              → on failure: CONTRACT_VALIDATED written, then RECOVERY_CONTRACT; returns
+     *              → on failure: CONTRACT_VALIDATED written, then TASK_EXECUTED(FAILURE); returns
      *                            [UniversalIngestionResult.EnforcementFailed]
+     *                            RECOVERY_CONTRACT is emitted by P1 (executeFromLedger TASK_EXECUTED(FAILURE) trigger)
      *  Surface 4 — [route]: pure route classification (no ledger write, no side effects)
      *  Phase end — CONTRACT_APPROVED written; returns [UniversalIngestionResult.Ingested]
      *
      * RRIL-1: [contract.reportReference] is propagated unchanged through every ledger event.
-     * RCF-1: any failure produces exactly one RECOVERY_CONTRACT (one violation surface).
+     * AGOII-ALIGN-1-RECOVERY-SINGULARITY: RECOVERY_CONTRACT is SINGLE-AUTHORITY — emitted ONLY
+     *   by P1 (TASK_EXECUTED(FAILURE) trigger in executeFromLedger). All failure paths here
+     *   terminate with TASK_EXECUTED(FAILURE); no RECOVERY_CONTRACT is written directly.
      * NO partial ingestion: CONTRACT_CREATED is always written (audit trail).
      *
      * @param contract  The [UniversalContract] to ingest (governance input).
@@ -1947,37 +1949,30 @@ class ExecutionAuthority(
             )
         )
 
-        // AGOII-ALIGN-1-IDENTITY-ANCHOR: Read the committed CONTRACT_CREATED sequence number
-        // directly from the ledger — identity is observed, never predicted.
-        val ingestionSequence = ledger.loadEvents(projectId).last().sequenceNumber
 
         // ── Surface 2: Structural + Semantic Validation (AERP-1 pre-ledger gate) ──
         val validationResult = contractValidator.validate(contract)
         if (validationResult is ContractValidationResult.Invalid) {
-            val anchorState = AnchorState(
-                reportReference    = contract.reportReference,
-                validatedTypes     = emptyList(),
-                validatedStructure = emptySet(),
-                validatedPaths     = emptyList()
-            )
             val artifactRef      = buildArtifactReference(contract.reportReference, ingestTaskId, "NO_ARTIFACT")
             val violationSurface = "VALIDATION_FAILED: ${validationResult.violations.joinToString("; ")}"
-            val recovery = ExecutionRecoveryContract(
-                reportReference     = contract.reportReference,
-                contractId          = "RCF_${contract.contractId}_VALIDATION",
-                failureClass        = FailureClass.STRUCTURAL,
-                violationField      = violationSurface,
-                correctionDirective = "Resolve STRUCTURAL failure for contract '${contract.contractId}': $violationSurface",
-                anchorState         = anchorState,
-                successCondition    = "Contract '${contract.contractId}' executed with SUCCESS"
+            // AGOII-ALIGN-1-RECOVERY-SINGULARITY: TASK_EXECUTED(FAILURE) is the lifecycle closure.
+            // RECOVERY_CONTRACT is emitted exclusively by P1 (executeFromLedger TASK_EXECUTED(FAILURE) trigger).
+            ledger.appendEvent(
+                projectId,
+                EventTypes.TASK_EXECUTED,
+                mapOf(
+                    "taskId"            to ingestTaskId,
+                    "contractId"        to contract.contractId,
+                    "contractorId"      to "NO_CONTRACTOR_MATCH",
+                    "artifactReference" to artifactRef,
+                    "executionStatus"   to "FAILURE",
+                    "validationStatus"  to "FAILED",
+                    "validationReasons" to listOf(violationSurface),
+                    "report_reference"  to contract.reportReference
+                )
             )
-            val validationRecoveryId = deriveRecoveryId(
-                projectId, contract.contractId, ingestTaskId, ingestionSequence
-            )
-            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, validationRecoveryId, ingestTaskId)
             return UniversalIngestionResult.ValidationFailed(
-                violations       = validationResult.violations,
-                recoveryContract = recovery
+                violations = validationResult.violations
             )
         }
 
@@ -1998,30 +1993,26 @@ class ExecutionAuthority(
         )
 
         if (enforcementResult is ContractEnforcementResult.Violated) {
-            val anchorState = AnchorState(
-                reportReference    = normalized.reportReference,
-                validatedTypes     = emptyList(),
-                validatedStructure = emptySet(),
-                validatedPaths     = emptyList()
-            )
             val artifactRef      = buildArtifactReference(normalized.reportReference, ingestTaskId, "NO_ARTIFACT")
             val violationSurface = "ENFORCEMENT_FAILED: ${enforcementResult.violations.joinToString("; ") { it.description }}"
-            val recovery = ExecutionRecoveryContract(
-                reportReference     = normalized.reportReference,
-                contractId          = "RCF_${normalized.contractId}_ENFORCEMENT",
-                failureClass        = FailureClass.STRUCTURAL,
-                violationField      = violationSurface,
-                correctionDirective = "Resolve STRUCTURAL enforcement failure for contract '${normalized.contractId}': $violationSurface",
-                anchorState         = anchorState,
-                successCondition    = "Contract '${normalized.contractId}' executed with SUCCESS"
+            // AGOII-ALIGN-1-RECOVERY-SINGULARITY: TASK_EXECUTED(FAILURE) is the lifecycle closure.
+            // RECOVERY_CONTRACT is emitted exclusively by P1 (executeFromLedger TASK_EXECUTED(FAILURE) trigger).
+            ledger.appendEvent(
+                projectId,
+                EventTypes.TASK_EXECUTED,
+                mapOf(
+                    "taskId"            to ingestTaskId,
+                    "contractId"        to normalized.contractId,
+                    "contractorId"      to "NO_CONTRACTOR_MATCH",
+                    "artifactReference" to artifactRef,
+                    "executionStatus"   to "FAILURE",
+                    "validationStatus"  to "FAILED",
+                    "validationReasons" to listOf(violationSurface),
+                    "report_reference"  to normalized.reportReference
+                )
             )
-            val enforcementRecoveryId = deriveRecoveryId(
-                projectId, normalized.contractId, ingestTaskId, ingestionSequence
-            )
-            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, enforcementRecoveryId, ingestTaskId)
             return UniversalIngestionResult.EnforcementFailed(
-                violations       = enforcementResult.violations,
-                recoveryContract = recovery
+                violations = enforcementResult.violations
             )
         }
 
