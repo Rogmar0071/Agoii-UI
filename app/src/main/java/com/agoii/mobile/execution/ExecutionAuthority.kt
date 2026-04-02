@@ -52,6 +52,7 @@ import com.agoii.mobile.contracts.UniversalContract
 import com.agoii.mobile.contracts.UniversalContractNormalizer
 import com.agoii.mobile.contracts.UniversalContractValidator
 import com.agoii.mobile.core.EventLedger
+import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.LedgerValidationException
 import com.agoii.mobile.ics.IcsExecutionResult
