@@ -1326,13 +1326,19 @@ class ExecutionAuthority(
         } else if (knownTaskId != null) {
             // Pre-extraction failure: task context is unavailable but taskId is known.
             // Load the triggering TASK_STARTED event to retrieve position/total for lifecycle closure.
+            // Note: the EventLedger API does not support filtered or reverse iteration — loadEvents()
+            // returns the full event list, and lastOrNull() is the most targeted traversal available.
             val taskStartedEvent = runCatching {
                 ledger.loadEvents(projectId).lastOrNull {
                     it.type == EventTypes.TASK_STARTED && it.payload["taskId"]?.toString() == knownTaskId
                 }
             }.getOrNull()
-            val knownPosition = resolveInt(taskStartedEvent?.payload?.get("position")) ?: 1  // 1 = minimum valid value; ValidationLayer requires position >= 1. This degenerate path exists only when the TASK_STARTED event is unreachable — lifecycle closure is the priority.
-            val knownTotal    = resolveInt(taskStartedEvent?.payload?.get("total")) ?: 1      // 1 = minimum valid value; ValidationLayer requires total >= 1. Position==Total==1 is semantically: single-task fallback, which is acceptable for a lifecycle-closure TASK_EXECUTED(FAILURE).
+            // Fallback to 1 (minimum valid value per ValidationLayer: position >= 1, total >= 1).
+            // This degenerate path occurs only when the TASK_STARTED event is unreachable;
+            // lifecycle closure via TASK_EXECUTED(FAILURE) takes priority over precise position data.
+            // position==total==1 is semantically equivalent to a single-task fallback — acceptable here.
+            val knownPosition = resolveInt(taskStartedEvent?.payload?.get("position")) ?: 1
+            val knownTotal    = resolveInt(taskStartedEvent?.payload?.get("total")) ?: 1
             try {
                 ledger.appendEvent(
                     projectId,
@@ -1933,12 +1939,17 @@ class ExecutionAuthority(
         // Idempotency: read existing events BEFORE writing CONTRACT_CREATED so the check
         // is stable across re-ingestion attempts (ingestionSequence changes on each replay
         // because CONTRACT_CREATED is always appended, making sequence-based keys unstable).
+        // Single-pass over priorEvents to check both recovery surfaces simultaneously.
         val priorEvents = ledger.loadEvents(projectId)
-        val validationRecoveryExists  = priorEvents.any {
-            it.type == EventTypes.RECOVERY_CONTRACT && it.payload["recoveryId"] == stableValidationRecoveryId
-        }
-        val enforcementRecoveryExists = priorEvents.any {
-            it.type == EventTypes.RECOVERY_CONTRACT && it.payload["recoveryId"] == stableEnforcementRecoveryId
+        var validationRecoveryExists  = false
+        var enforcementRecoveryExists = false
+        for (event in priorEvents) {
+            if (event.type == EventTypes.RECOVERY_CONTRACT) {
+                val rid = event.payload["recoveryId"]
+                if (rid == stableValidationRecoveryId)  validationRecoveryExists  = true
+                if (rid == stableEnforcementRecoveryId) enforcementRecoveryExists = true
+                if (validationRecoveryExists && enforcementRecoveryExists) break
+            }
         }
 
         // ── Phase 1: Record ingestion attempt (CONTRACT_CREATED) ─────────────
@@ -1994,31 +2005,14 @@ class ExecutionAuthority(
                 )
             }
             // Idempotent: recovery already in ledger — reconstruct result from existing event payload.
-            // Use lastOrNull() with graceful fallback: the guard above ensures the event exists,
-            // but lastOrNull() prevents NoSuchElementException on any unexpected evaluation path.
             val existingValidationEvent = priorEvents.lastOrNull {
                 it.type == EventTypes.RECOVERY_CONTRACT && it.payload["recoveryId"] == stableValidationRecoveryId
             }
-            val existingRecovery = ExecutionRecoveryContract(
-                reportReference     = existingValidationEvent?.payload?.get("report_reference")?.toString()
-                    ?: contract.reportReference,
-                contractId          = existingValidationEvent?.payload?.get("contractId")?.toString()
-                    ?: "RCF_${contract.contractId}_VALIDATION",
-                failureClass        = runCatching {
-                    FailureClass.valueOf(existingValidationEvent?.payload?.get("failureClass")?.toString() ?: "")
-                }.getOrElse { FailureClass.STRUCTURAL },
-                violationField      = existingValidationEvent?.payload?.get("violationField")?.toString()
-                    ?: "VALIDATION_FAILED (idempotent)",
-                correctionDirective = existingValidationEvent?.payload?.get("correctionDirective")?.toString()
-                    ?: "Already emitted — idempotent re-entry",
-                anchorState         = AnchorState(
-                    reportReference    = contract.reportReference,
-                    validatedTypes     = emptyList(),
-                    validatedStructure = emptySet(),
-                    validatedPaths     = emptyList()
-                ),
-                successCondition    = existingValidationEvent?.payload?.get("successCondition")?.toString()
-                    ?: "Contract '${contract.contractId}' executed with SUCCESS"
+            val existingRecovery = reconstructRecoveryFromEvent(
+                event                    = existingValidationEvent,
+                fallbackReportRef        = contract.reportReference,
+                fallbackContractId       = "RCF_${contract.contractId}_VALIDATION",
+                fallbackSuccessCondition = "Contract '${contract.contractId}' executed with SUCCESS"
             )
             return UniversalIngestionResult.ValidationFailed(
                 violations       = validationResult.violations,
@@ -2069,31 +2063,14 @@ class ExecutionAuthority(
                 )
             }
             // Idempotent: recovery already in ledger — reconstruct result from existing event payload.
-            // Use lastOrNull() with graceful fallback: the guard above ensures the event exists,
-            // but lastOrNull() prevents NoSuchElementException on any unexpected evaluation path.
             val existingEnforcementEvent = priorEvents.lastOrNull {
                 it.type == EventTypes.RECOVERY_CONTRACT && it.payload["recoveryId"] == stableEnforcementRecoveryId
             }
-            val existingRecovery = ExecutionRecoveryContract(
-                reportReference     = existingEnforcementEvent?.payload?.get("report_reference")?.toString()
-                    ?: normalized.reportReference,
-                contractId          = existingEnforcementEvent?.payload?.get("contractId")?.toString()
-                    ?: "RCF_${normalized.contractId}_ENFORCEMENT",
-                failureClass        = runCatching {
-                    FailureClass.valueOf(existingEnforcementEvent?.payload?.get("failureClass")?.toString() ?: "")
-                }.getOrElse { FailureClass.STRUCTURAL },
-                violationField      = existingEnforcementEvent?.payload?.get("violationField")?.toString()
-                    ?: "ENFORCEMENT_FAILED (idempotent)",
-                correctionDirective = existingEnforcementEvent?.payload?.get("correctionDirective")?.toString()
-                    ?: "Already emitted — idempotent re-entry",
-                anchorState         = AnchorState(
-                    reportReference    = normalized.reportReference,
-                    validatedTypes     = emptyList(),
-                    validatedStructure = emptySet(),
-                    validatedPaths     = emptyList()
-                ),
-                successCondition    = existingEnforcementEvent?.payload?.get("successCondition")?.toString()
-                    ?: "Contract '${normalized.contractId}' executed with SUCCESS"
+            val existingRecovery = reconstructRecoveryFromEvent(
+                event                    = existingEnforcementEvent,
+                fallbackReportRef        = normalized.reportReference,
+                fallbackContractId       = "RCF_${normalized.contractId}_ENFORCEMENT",
+                fallbackSuccessCondition = "Contract '${normalized.contractId}' executed with SUCCESS"
             )
             return UniversalIngestionResult.EnforcementFailed(
                 violations       = enforcementResult.violations,
@@ -2122,6 +2099,43 @@ class ExecutionAuthority(
     }
 
     // ── DEE-1 Step 6: Helper functions ────────────────────────────────────────
+
+    /**
+     * Reconstruct an [ExecutionRecoveryContract] from a stored RECOVERY_CONTRACT ledger event.
+     *
+     * Used to produce idempotent results for [ingestUniversalContract] when a recovery event
+     * for the same contract was already written in a prior attempt.  All violation fields are
+     * read from the event payload; safe fallbacks are applied when any field is absent.
+     *
+     * @param event                  The existing RECOVERY_CONTRACT event (may be null if lookup failed).
+     * @param fallbackReportRef      Report reference to use when the event carries none.
+     * @param fallbackContractId     ContractId to use when the event carries none.
+     * @param fallbackSuccessCondition Success condition to use when the event carries none.
+     */
+    private fun reconstructRecoveryFromEvent(
+        event:                    com.agoii.mobile.core.Event?,
+        fallbackReportRef:        String,
+        fallbackContractId:       String,
+        fallbackSuccessCondition: String
+    ): ExecutionRecoveryContract = ExecutionRecoveryContract(
+        reportReference     = event?.payload?.get("report_reference")?.toString() ?: fallbackReportRef,
+        contractId          = event?.payload?.get("contractId")?.toString() ?: fallbackContractId,
+        failureClass        = event?.payload?.get("failureClass")?.toString()
+            ?.let { name -> runCatching { FailureClass.valueOf(name) }.getOrElse { FailureClass.STRUCTURAL } }
+            ?: FailureClass.STRUCTURAL,
+        violationField      = event?.payload?.get("violationField")?.toString()
+            ?: "$fallbackContractId (idempotent)",
+        correctionDirective = event?.payload?.get("correctionDirective")?.toString()
+            ?: "Already emitted — idempotent re-entry",
+        anchorState         = AnchorState(
+            reportReference    = fallbackReportRef,
+            validatedTypes     = emptyList(),
+            validatedStructure = emptySet(),
+            validatedPaths     = emptyList()
+        ),
+        successCondition    = event?.payload?.get("successCondition")?.toString()
+            ?: fallbackSuccessCondition
+    )
 
     private fun extractViolationFieldFromContractId(contractId: String): String {
         return contractId.substringAfterLast("_").replace("_", ".")
