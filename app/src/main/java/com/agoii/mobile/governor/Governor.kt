@@ -3,6 +3,7 @@ package com.agoii.mobile.governor
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.execution.ExecutionAuthority
 
 /**
  * Governor — deterministic ledger-driven state machine.
@@ -45,14 +46,6 @@ class Governor(
 
         /** Base execution load contributed by every contract regardless of position. */
         const val CONTRACT_BASE_LOAD = 2
-
-        /**
-         * Maximum number of delta-retry attempts before a task is declared non-convergent.
-         * When [RECOVERY_CONTRACT] processing detects this many [DELTA_CONTRACT_CREATED]
-         * events for the same taskId, the Governor emits [EventTypes.CONTRACT_FAILED] with
-         * reason=NON_CONVERGENT_SYSTEM instead of producing another delta.
-         */
-        const val MAX_DELTA_ATTEMPTS = 3
 
         /**
          * Simple passthrough transitions driven automatically by the Governor.
@@ -349,7 +342,7 @@ class Governor(
     /**
      * RECOVERY → DELTA (RCF-1 → DEE-1)
      *
-     * Convergence ceiling: if the ledger already contains [MAX_DELTA_ATTEMPTS]
+     * Convergence ceiling: if the ledger already contains [ExecutionAuthority.MAX_DELTA]
      * [EventTypes.DELTA_CONTRACT_CREATED] events for this taskId the system is
      * declared non-convergent and [EventTypes.CONTRACT_FAILED] is emitted instead
      * of another delta, preventing an infinite retry loop.
@@ -372,7 +365,7 @@ class Governor(
             it.type == EventTypes.DELTA_CONTRACT_CREATED &&
             it.payload["taskId"]?.toString() == taskId
         }
-        if (attemptCount >= MAX_DELTA_ATTEMPTS) {
+        if (attemptCount >= ExecutionAuthority.MAX_DELTA) {
             return listOf(
                 Event(
                     type    = EventTypes.CONTRACT_FAILED,
