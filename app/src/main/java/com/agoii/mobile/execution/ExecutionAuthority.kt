@@ -564,6 +564,10 @@ class ExecutionAuthority(
             return ExecutionAuthorityExecutionResult.NotTriggered
         }
 
+        // AGOII-ALIGN-1-IDENTITY-ANCHOR: failureSequence is extracted ONCE from the trigger event
+        // and propagated downstream — never re-derived from ledger state.
+        val taskStartedSequence = lastEvent.sequenceNumber
+
         val taskId = lastEvent.payload["taskId"] as? String
             ?: return ExecutionAuthorityExecutionResult.NotTriggered
 
@@ -615,14 +619,14 @@ class ExecutionAuthority(
         } ?: return blockWithRecovery(
             projectId, ledger, null, "NO_TASK_ASSIGNED",
             "No TASK_ASSIGNED event found for taskId=$taskId",
-            knownTaskId = taskId
+            taskStartedSequence, knownTaskId = taskId
         )
 
         val executionTask = extractExecutionTask(taskId, taskAssignedEvent)
             ?: return blockWithRecovery(
                 projectId, ledger, null, "MISSING_REQUIRED_FIELD",
                 "ExecutionTask cannot be reconstructed: required field absent in TASK_ASSIGNED",
-                knownTaskId = taskId
+                taskStartedSequence, knownTaskId = taskId
             )
 
         // ── DEE-1: Detect delta mode from contractId prefix ──────────────────
@@ -640,7 +644,8 @@ class ExecutionAuthority(
                 return blockWithRecovery(
                     projectId, ledger, executionTask,
                     "ANCHOR_STATE_MISSING",
-                    "AnchorState extraction failed for contractId=${executionTask.contractId}"
+                    "AnchorState extraction failed for contractId=${executionTask.contractId}",
+                    taskStartedSequence
                 )
             }
             dc.getOrThrow()
@@ -652,14 +657,16 @@ class ExecutionAuthority(
                 return blockWithRecovery(
                     projectId, ledger, executionTask,
                     "DELTA_CONTEXT_MISSING",
-                    "Delta context absent for delta contractId=${executionTask.contractId}"
+                    "Delta context absent for delta contractId=${executionTask.contractId}",
+                    taskStartedSequence
                 )
             }
             if (deltaContext.anchorState.reportReference.isBlank()) {
                 return blockWithRecovery(
                     projectId, ledger, executionTask,
                     "ANCHOR_STATE_MISSING",
-                    "AnchorState reportReference blank for contractId=${executionTask.contractId}"
+                    "AnchorState reportReference blank for contractId=${executionTask.contractId}",
+                    taskStartedSequence
                 )
             }
         }
@@ -680,7 +687,7 @@ class ExecutionAuthority(
                 val deltaArtifactRef = buildArtifactReference(executionTask.reportReference, executionTask.taskId, "NO_ARTIFACT")
                 val deltaRecoveryId = deriveRecoveryId(
                     projectId, executionTask.contractId, executionTask.taskId,
-                    events.lastOrNull()?.sequenceNumber ?: events.size.toLong()
+                    lastEvent.sequenceNumber
                 )
                 writeRecoveryContractToLedger(
                     projectId, ledger, recovery, deltaArtifactRef, deltaRecoveryId, executionTask.taskId
@@ -703,7 +710,8 @@ class ExecutionAuthority(
             ?.payload?.get("objective")?.toString()
             ?: return blockWithRecovery(
                 projectId, ledger, executionTask, "MISSING_INTENT_SUBMITTED",
-                "INTENT_SUBMITTED event or 'objective' field absent — cannot inject userInput"
+                "INTENT_SUBMITTED event or 'objective' field absent — cannot inject userInput",
+                taskStartedSequence
             )
 
         // ── Step 2: Registry check ───────────────────────────────────────────
@@ -761,7 +769,7 @@ class ExecutionAuthority(
         when (systemResult) {
             is ContractorSystemResult.Blocked -> return blockWithRecovery(
                 projectId, ledger, executionTask, "MATCHING_FAILED",
-                systemResult.reason
+                systemResult.reason, taskStartedSequence
             )
             is ContractorSystemResult.Resolved -> { /* pipeline continues below */ }
         }
@@ -832,7 +840,8 @@ class ExecutionAuthority(
             return blockWithRecovery(
                 projectId, ledger, executionTask,
                 "RRID_VIOLATION",
-                "Report reference mismatch (RRIL-1 breach)"
+                "Report reference mismatch (RRIL-1 breach)",
+                taskStartedSequence
             )
         }
 
@@ -874,7 +883,8 @@ class ExecutionAuthority(
             return blockWithRecovery(
                 projectId, ledger, executionTask,
                 "AERP1_AUTHORIZATION_FAILURE",
-                "Execution not authorized after validation"
+                "Execution not authorized after validation",
+                taskStartedSequence
             )
         }
 
@@ -892,7 +902,8 @@ class ExecutionAuthority(
             return blockWithRecovery(
                 projectId, ledger, executionTask,
                 "HARD_BLOCK_VIOLATION",
-                "Execution blocked by AERP-1 hard block enforcement"
+                "Execution blocked by AERP-1 hard block enforcement",
+                taskStartedSequence
             )
         }
 
@@ -1115,11 +1126,12 @@ class ExecutionAuthority(
      * @return              [ExecutionAuthorityExecutionResult.RecoveryIssued].
      */
     fun issueRecoveryContract(
-        projectId:     String,
-        ledger:        EventRepository,
-        executionTask: ExecutionTask,
-        anchor:        AnchorState,
-        violation:     ViolationSurface
+        projectId:       String,
+        ledger:          EventRepository,
+        executionTask:   ExecutionTask,
+        anchor:          AnchorState,
+        violation:       ViolationSurface,
+        failureSequence: Long
     ): ExecutionAuthorityExecutionResult.RecoveryIssued {
         // AGOII-ALIGN-1-FINAL-LOCK RULE 1: Recovery singularity.
         // All RECOVERY_CONTRACT writes MUST route through writeRecoveryContractToLedger —
@@ -1137,10 +1149,8 @@ class ExecutionAuthority(
             successCondition    = "TASK_EXECUTED written with executionStatus=SUCCESS AND validationStatus=VALIDATED"
         )
         val artifactRef = buildArtifactReference(anchor.reportReference, executionTask.taskId, "VIOLATION_SURFACE")
-        val currentEvents = ledger.loadEvents(projectId)
         val issueRecoveryId = deriveRecoveryId(
-            projectId, executionTask.contractId, executionTask.taskId,
-            currentEvents.lastOrNull()?.sequenceNumber ?: currentEvents.size.toLong()
+            projectId, executionTask.contractId, executionTask.taskId, failureSequence
         )
         writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, issueRecoveryId, executionTask.taskId)
         return ExecutionAuthorityExecutionResult.RecoveryIssued(
@@ -1264,12 +1274,13 @@ class ExecutionAuthority(
      * AnchorState is minimal (no validated artifact fields exist yet).
      */
     private fun blockWithRecovery(
-        projectId:     String,
-        ledger:        EventRepository,
-        task:          ExecutionTask?,
-        failureClass:  String,
-        reason:        String,
-        knownTaskId:   String? = null
+        projectId:       String,
+        ledger:          EventRepository,
+        task:            ExecutionTask?,
+        failureClass:    String,
+        reason:          String,
+        failureSequence: Long,
+        knownTaskId:     String? = null
     ): ExecutionAuthorityExecutionResult.BlockedWithRecovery {
 
         // VIOLATION 4: artifactReference must always be deterministic and referenceable — never "NONE"
@@ -1336,11 +1347,7 @@ class ExecutionAuthority(
         // VIOLATION 3: RecoveryContract MUST be ledger-materialized (RCF-1)
         val blockTaskId = task?.taskId ?: knownTaskId ?: "UNKNOWN"
         val blockContractId = task?.contractId ?: "UNKNOWN"
-        val blockEvents = ledger.loadEvents(projectId)
-        val blockRecoveryId = deriveRecoveryId(
-            projectId, blockContractId, blockTaskId,
-            blockEvents.lastOrNull()?.sequenceNumber ?: blockEvents.size.toLong()
-        )
+        val blockRecoveryId = deriveRecoveryId(projectId, blockContractId, blockTaskId, failureSequence)
         writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, blockRecoveryId, blockTaskId)
         return ExecutionAuthorityExecutionResult.BlockedWithRecovery(reason, listOf(recovery))
     }
@@ -1942,10 +1949,8 @@ class ExecutionAuthority(
                 anchorState         = anchorState,
                 successCondition    = "Contract '${contract.contractId}' executed with SUCCESS"
             )
-            val validationFailEvents = ledger.loadEvents(projectId)
             val validationRecoveryId = deriveRecoveryId(
-                projectId, recovery.contractId, ingestTaskId,
-                validationFailEvents.lastOrNull()?.sequenceNumber ?: validationFailEvents.size.toLong()
+                projectId, recovery.contractId, ingestTaskId, -1L
             )
             writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, validationRecoveryId, ingestTaskId)
             return UniversalIngestionResult.ValidationFailed(
@@ -1988,10 +1993,8 @@ class ExecutionAuthority(
                 anchorState         = anchorState,
                 successCondition    = "Contract '${normalized.contractId}' executed with SUCCESS"
             )
-            val enforcementFailEvents = ledger.loadEvents(projectId)
             val enforcementRecoveryId = deriveRecoveryId(
-                projectId, recovery.contractId, ingestTaskId,
-                enforcementFailEvents.lastOrNull()?.sequenceNumber ?: enforcementFailEvents.size.toLong()
+                projectId, recovery.contractId, ingestTaskId, -1L
             )
             writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, enforcementRecoveryId, ingestTaskId)
             return UniversalIngestionResult.EnforcementFailed(
