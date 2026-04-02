@@ -1913,14 +1913,6 @@ class ExecutionAuthority(
         // Always written first — NO partial ingestion, NO silent drops (RCF-1).
         // If this write fails (wrong ledger state), the exception propagates to the
         // caller; the ingestion cannot proceed without the audit anchor event.
-        //
-        // AGOII-ALIGN-1-IDENTITY-ANCHOR: Compute the sequence number that will be assigned to
-        // CONTRACT_CREATED before the append so no extra ledger load is required afterwards.
-        // EventLedger assigns: last().sequenceNumber + 1 (or 0 if empty). This value becomes the
-        // causal anchor for all recovery IDs emitted during ingestion.
-        val priorEvents = ledger.loadEvents(projectId)
-        val ingestionSequence = if (priorEvents.isEmpty()) 0L else priorEvents.last().sequenceNumber + 1L
-
         ledger.appendEvent(
             projectId,
             EventTypes.CONTRACT_CREATED,
@@ -1936,6 +1928,10 @@ class ExecutionAuthority(
                 "requiredCapabilities"  to contract.requiredCapabilities.map { it.name }
             )
         )
+
+        // AGOII-ALIGN-1-IDENTITY-ANCHOR: Read the committed CONTRACT_CREATED sequence number
+        // directly from the ledger — identity is observed, never predicted.
+        val ingestionSequence = ledger.loadEvents(projectId).last().sequenceNumber
 
         // ── Surface 2: Structural + Semantic Validation (AERP-1 pre-ledger gate) ──
         val validationResult = contractValidator.validate(contract)
