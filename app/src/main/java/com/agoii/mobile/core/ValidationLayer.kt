@@ -480,29 +480,25 @@ class ValidationLayer {
 
     private fun checkDeltaContractCreated(projectId: String, payload: Map<String, Any>) {
         requireKeys(projectId, EventTypes.DELTA_CONTRACT_CREATED, payload, DELTA_CONTRACT_CREATED_KEYS)
+        payload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw LedgerValidationException(
+                "DELTA_CONTRACT_CREATED missing or blank 'recoveryId' in '$projectId'"
+            )
         payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw LedgerValidationException(
                 "DELTA_CONTRACT_CREATED missing or blank 'contractId' in '$projectId'"
             )
-        payload["violationField"]?.toString()?.takeIf { it.isNotBlank() }
+        payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw LedgerValidationException(
-                "DELTA_CONTRACT_CREATED missing or blank 'violationField' in '$projectId'"
+                "DELTA_CONTRACT_CREATED missing or blank 'taskId' in '$projectId'"
             )
         payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
             ?: throw LedgerValidationException(
                 "DELTA_CONTRACT_CREATED missing or blank 'report_reference' in '$projectId'"
             )
-        val countRaw = payload["delta_iteration_count"]
-            ?: throw LedgerValidationException(
-                "DELTA_CONTRACT_CREATED missing 'delta_iteration_count' in '$projectId'"
-            )
-        val count = toInt(countRaw)
-            ?: throw LedgerValidationException(
-                "DELTA_CONTRACT_CREATED 'delta_iteration_count' must be an integer in '$projectId'"
-            )
-        if (count < 1) {
+        if (payload["source"]?.toString() != "GOVERNOR") {
             throw LedgerValidationException(
-                "DELTA_CONTRACT_CREATED 'delta_iteration_count' must be >= 1, got $count in '$projectId'"
+                "DELTA_CONTRACT_CREATED 'source' must be 'GOVERNOR' in '$projectId'"
             )
         }
     }
@@ -987,7 +983,7 @@ class ValidationLayer {
             "source"  // AGOII-ALIGN-1: origin authority field (must be EXECUTION_AUTHORITY)
         )
         private val DELTA_CONTRACT_CREATED_KEYS = setOf(
-            "contractId", "violationField", "report_reference", "delta_iteration_count"
+            "recoveryId", "contractId", "taskId", "report_reference", "source"
         )
         private val TASK_ID_ONLY            = setOf("taskId")
         private val TASK_WITH_POSITION_KEYS = setOf("taskId", "position", "total")

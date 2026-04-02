@@ -47,6 +47,14 @@ class Governor(
         const val CONTRACT_BASE_LOAD = 2
 
         /**
+         * Maximum number of delta-retry attempts before a task is declared non-convergent.
+         * When [RECOVERY_CONTRACT] processing detects this many [DELTA_CONTRACT_CREATED]
+         * events for the same taskId, the Governor emits [EventTypes.CONTRACT_FAILED] with
+         * reason=NON_CONVERGENT_SYSTEM instead of producing another delta.
+         */
+        const val MAX_DELTA_ATTEMPTS = 3
+
+        /**
          * Simple passthrough transitions driven automatically by the Governor.
          * Each entry maps a terminal event type to the single event type that follows it,
          * with an empty payload. Transitions requiring payload logic are handled
@@ -128,19 +136,21 @@ class Governor(
      * to append in this evaluation step, or an empty list when no Governor-owned
      * transition exists.
      *
-     * For most transitions this returns a single event. For ASSEMBLY_FAILED the
-     * Governor no longer emits RECOVERY_CONTRACT — recovery is exclusively owned
-     * by [com.agoii.mobile.execution.ExecutionAuthority] (AGOII-ALIGN-1 RULE 4).
+     * RECOVERY_CONTRACT and DELTA_CONTRACT_CREATED may each produce multiple events
+     * in a single step (convergence guard / closed execution loop). All other
+     * transitions produce at most one event via [nextEventSingle].
      *
      * This function has no side effects. The caller is responsible for persisting
      * all returned events via [com.agoii.mobile.core.EventRepository].
      */
     fun nextEvents(events: List<Event>): List<Event> {
         if (events.isEmpty()) return emptyList()
-
-        // All transitions produce at most one event; multi-event steps have been removed
-        // as part of AGOII-ALIGN-1 (ASSEMBLY_FAILED recovery is now owned by ExecutionAuthority).
-        return listOfNotNull(nextEventSingle(events))
+        val last = events.last()
+        return when (last.type) {
+            EventTypes.RECOVERY_CONTRACT      -> nextEventsForRecovery(events, last)
+            EventTypes.DELTA_CONTRACT_CREATED -> nextEventsForDelta(events, last)
+            else                              -> listOfNotNull(nextEventSingle(events))
+        }
     }
 
     /**
@@ -293,68 +303,10 @@ class Governor(
                 )
             }
 
-            // ── RECOVERY → DELTA LOOP (RCF-1 → DEE-1) ───────────────────────────
-            // RECOVERY_CONTRACT → DELTA_CONTRACT_CREATED
-            // Extracts recoveryId, contractId, taskId, report_reference and emits
-            // DELTA_CONTRACT_CREATED; idempotency is guarded by recoveryId.
-            EventTypes.RECOVERY_CONTRACT -> {
-                val recoveryId      = last.payload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("GOVERNOR: recoveryId missing")
-                val contractId      = last.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("GOVERNOR: contractId missing")
-                val taskId          = last.payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("GOVERNOR: taskId missing")
-                val reportReference = last.payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("GOVERNOR: report_reference missing")
-
-                val deltaAlreadyExists = events.any { event ->
-                    event.type == EventTypes.DELTA_CONTRACT_CREATED &&
-                    event.payload["recoveryId"]?.toString() == recoveryId
-                }
-                if (deltaAlreadyExists) return null
-
-                Event(
-                    type    = EventTypes.DELTA_CONTRACT_CREATED,
-                    payload = mapOf(
-                        "recoveryId"       to recoveryId,
-                        "contractId"       to contractId,
-                        "taskId"           to taskId,
-                        "report_reference" to reportReference,
-                        "source"           to "GOVERNOR"
-                    )
-                )
-            }
-
-            // DELTA_CONTRACT_CREATED → TASK_ASSIGNED
-            // Uses taskId from the delta payload; idempotency guard prevents duplicate assignment.
-            EventTypes.DELTA_CONTRACT_CREATED -> {
-                val contractId      = last.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("DELTA: contractId missing")
-                val taskId          = last.payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("DELTA: taskId missing")
-                val reportReference = last.payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("DELTA: report_reference missing")
-
-                val alreadyAssigned = events.any { event ->
-                    event.type == EventTypes.TASK_ASSIGNED &&
-                    event.payload["taskId"]?.toString() == taskId &&
-                    event.payload["contractId"]?.toString() == contractId
-                }
-                if (alreadyAssigned) return null
-
-                Event(
-                    type    = EventTypes.TASK_ASSIGNED,
-                    payload = mapOf(
-                        "taskId"           to taskId,
-                        "contractId"       to contractId,
-                        "report_reference" to reportReference,
-                        "position"         to 1,
-                        "total"            to 1,
-                        "requirements"     to emptyList<Any>(),
-                        "constraints"      to emptyList<Any>()
-                    )
-                )
-            }
+            // RECOVERY_CONTRACT and DELTA_CONTRACT_CREATED are handled by nextEventsForRecovery
+            // and nextEventsForDelta respectively (both may produce multiple events in one step).
+            EventTypes.RECOVERY_CONTRACT,
+            EventTypes.DELTA_CONTRACT_CREATED -> null
 
             EventTypes.CONTRACTOR_REASSIGNED -> {
                 val taskId          = last.payload["taskId"]          as? String ?: return null
@@ -390,6 +342,128 @@ class Governor(
 
             else -> null
         }
+    }
+
+    // ── Recovery / Delta multi-event handlers ─────────────────────────────────
+
+    /**
+     * RECOVERY → DELTA (RCF-1 → DEE-1)
+     *
+     * Convergence ceiling: if the ledger already contains [MAX_DELTA_ATTEMPTS]
+     * [EventTypes.DELTA_CONTRACT_CREATED] events for this taskId the system is
+     * declared non-convergent and [EventTypes.CONTRACT_FAILED] is emitted instead
+     * of another delta, preventing an infinite retry loop.
+     *
+     * Idempotency: if a [EventTypes.DELTA_CONTRACT_CREATED] for this recoveryId
+     * already exists the handler returns an empty list (no-op).
+     */
+    private fun nextEventsForRecovery(events: List<Event>, last: Event): List<Event> {
+        val recoveryId = last.payload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("GOVERNOR: recoveryId missing")
+        val contractId = last.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("GOVERNOR: contractId missing")
+        val taskId = last.payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("GOVERNOR: taskId missing")
+        val reportReference = last.payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("GOVERNOR: report_reference missing")
+
+        // ── CONVERGENCE GUARD ──────────────────────────────────────────────────
+        val attemptCount = events.count {
+            it.type == EventTypes.DELTA_CONTRACT_CREATED &&
+            it.payload["taskId"]?.toString() == taskId
+        }
+        if (attemptCount >= MAX_DELTA_ATTEMPTS) {
+            return listOf(
+                Event(
+                    type    = EventTypes.CONTRACT_FAILED,
+                    payload = mapOf(
+                        "taskId"           to taskId,
+                        "contractId"       to contractId,
+                        "report_reference" to reportReference,
+                        "reason"           to "NON_CONVERGENT_SYSTEM",
+                        "attempts"         to attemptCount
+                    )
+                )
+            )
+        }
+
+        // ── IDEMPOTENCY (recoveryId anchored) ──────────────────────────────────
+        val alreadyExists = events.any {
+            it.type == EventTypes.DELTA_CONTRACT_CREATED &&
+            it.payload["recoveryId"]?.toString() == recoveryId
+        }
+        if (alreadyExists) return emptyList()
+
+        return listOf(
+            Event(
+                type    = EventTypes.DELTA_CONTRACT_CREATED,
+                payload = mapOf(
+                    "recoveryId"       to recoveryId,
+                    "contractId"       to contractId,
+                    "taskId"           to taskId,
+                    "report_reference" to reportReference,
+                    "source"           to "GOVERNOR"
+                )
+            )
+        )
+    }
+
+    /**
+     * DELTA → EXECUTION LOOP (closed, self-contained)
+     *
+     * Emits [EventTypes.TASK_ASSIGNED] and [EventTypes.TASK_STARTED] together in a
+     * single Governor step, closing the execution loop without requiring a second
+     * [runGovernor] call. Each event is guarded by its own idempotency check so
+     * replaying is safe.
+     */
+    private fun nextEventsForDelta(events: List<Event>, last: Event): List<Event> {
+        val contractId = last.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("DELTA: contractId missing")
+        val taskId = last.payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("DELTA: taskId missing")
+        val reportReference = last.payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("DELTA: report_reference missing")
+
+        val newEvents = mutableListOf<Event>()
+
+        // ── TASK_ASSIGNED (idempotent) ─────────────────────────────────────────
+        val alreadyAssigned = events.any {
+            it.type == EventTypes.TASK_ASSIGNED &&
+            it.payload["taskId"]?.toString() == taskId &&
+            it.payload["contractId"]?.toString() == contractId
+        }
+        if (!alreadyAssigned) {
+            newEvents += Event(
+                type    = EventTypes.TASK_ASSIGNED,
+                payload = mapOf(
+                    "taskId"           to taskId,
+                    "contractId"       to contractId,
+                    "report_reference" to reportReference,
+                    "position"         to 1,
+                    "total"            to 1,
+                    "requirements"     to emptyList<Any>(),
+                    "constraints"      to emptyList<Any>()
+                )
+            )
+        }
+
+        // ── TASK_STARTED (idempotent, explicit loop closure) ───────────────────
+        val alreadyStarted = events.any {
+            it.type == EventTypes.TASK_STARTED &&
+            it.payload["taskId"]?.toString() == taskId
+        }
+        if (!alreadyStarted) {
+            newEvents += Event(
+                type    = EventTypes.TASK_STARTED,
+                payload = mapOf(
+                    "taskId"   to taskId,
+                    "position" to 1,
+                    "total"    to 1
+                )
+            )
+        }
+
+        return newEvents
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
