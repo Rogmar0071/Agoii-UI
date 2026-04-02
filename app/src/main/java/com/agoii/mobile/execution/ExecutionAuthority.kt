@@ -626,7 +626,8 @@ class ExecutionAuthority(
             ?: return blockWithRecovery(
                 projectId, ledger, null, "MISSING_REQUIRED_FIELD",
                 "ExecutionTask cannot be reconstructed: required field absent in TASK_ASSIGNED",
-                taskStartedSequence, knownTaskId = taskId
+                taskStartedSequence, knownTaskId = taskId,
+                knownContractId = taskAssignedEvent.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
             )
 
         // ── DEE-1: Detect delta mode from contractId prefix ──────────────────
@@ -1280,7 +1281,8 @@ class ExecutionAuthority(
         failureClass:    String,
         reason:          String,
         failureSequence: Long,
-        knownTaskId:     String? = null
+        knownTaskId:     String? = null,
+        knownContractId: String? = null
     ): ExecutionAuthorityExecutionResult.BlockedWithRecovery {
 
         // VIOLATION 4: artifactReference must always be deterministic and referenceable — never "NONE"
@@ -1344,9 +1346,25 @@ class ExecutionAuthority(
         )
 
         val recovery = issueRecoveryContract(task, anchorState, failureClass, reason)
-        // VIOLATION 3: RecoveryContract MUST be ledger-materialized (RCF-1)
-        val blockTaskId = task?.taskId ?: knownTaskId ?: "UNKNOWN"
-        val blockContractId = task?.contractId ?: "UNKNOWN"
+        // AGOII-ALIGN-1-IDENTITY-CONSISTENCY-FIX: identity MUST originate from the original
+        // execution context. "UNKNOWN" is prohibited. Unresolvable identity fails fast.
+        val blockTaskId: String
+        val blockContractId: String
+        when {
+            task != null -> {
+                blockTaskId     = task.taskId
+                blockContractId = task.contractId
+            }
+            knownTaskId != null -> {
+                blockTaskId     = knownTaskId
+                blockContractId = knownContractId ?: throw IllegalStateException(
+                    "AGOII-ALIGN-1-IDENTITY-CONSISTENCY-FIX: contractId unresolved for taskId=$knownTaskId"
+                )
+            }
+            else -> throw IllegalStateException(
+                "AGOII-ALIGN-1-IDENTITY-CONSISTENCY-FIX: taskId and contractId both missing — cannot derive recovery identity"
+            )
+        }
         val blockRecoveryId = deriveRecoveryId(projectId, blockContractId, blockTaskId, failureSequence)
         writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, blockRecoveryId, blockTaskId)
         return ExecutionAuthorityExecutionResult.BlockedWithRecovery(reason, listOf(recovery))
@@ -1954,7 +1972,7 @@ class ExecutionAuthority(
                 successCondition    = "Contract '${contract.contractId}' executed with SUCCESS"
             )
             val validationRecoveryId = deriveRecoveryId(
-                projectId, recovery.contractId, ingestTaskId, ingestionSequence
+                projectId, contract.contractId, ingestTaskId, ingestionSequence
             )
             writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, validationRecoveryId, ingestTaskId)
             return UniversalIngestionResult.ValidationFailed(
@@ -1998,7 +2016,7 @@ class ExecutionAuthority(
                 successCondition    = "Contract '${normalized.contractId}' executed with SUCCESS"
             )
             val enforcementRecoveryId = deriveRecoveryId(
-                projectId, recovery.contractId, ingestTaskId, ingestionSequence
+                projectId, normalized.contractId, ingestTaskId, ingestionSequence
             )
             writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, enforcementRecoveryId, ingestTaskId)
             return UniversalIngestionResult.EnforcementFailed(
