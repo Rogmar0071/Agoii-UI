@@ -202,6 +202,13 @@ sealed class ExecutionAuthorityExecutionResult {
     data class IcsCompleted(
         val reportReference: String
     ) : ExecutionAuthorityExecutionResult()
+
+    /**
+     * AGOII-ALIGN-1-RECOVERY-SINGULARITY: TASK_EXECUTED(FAILURE) was written to the ledger.
+     * Recovery will be emitted by the P1 handler on re-entry via executeFromLedger().
+     * All failure paths MUST converge to this result (never emit RECOVERY_CONTRACT directly).
+     */
+    object FailureRecorded : ExecutionAuthorityExecutionResult()
 }
 
 // ---------- EXECUTION ROUTE (UCS-1) ----------
@@ -673,29 +680,16 @@ class ExecutionAuthority(
         }
 
         // ── CLC-1B PART 1-R2: Delta iteration count — convergence termination ─
+        // AGOII-ALIGN-1-RECOVERY-SINGULARITY: do NOT write RECOVERY_CONTRACT here.
+        // Route through blockWithRecovery() to write TASK_EXECUTED(FAILURE) and return
+        // FailureRecorded. P1 will emit RECOVERY_CONTRACT on re-entry.
         if (executionMode == ExecutionMode.DELTA) {
             val deltaIterationCount = events.count { it.type == EventTypes.DELTA_CONTRACT_CREATED }
             if (deltaIterationCount > MAX_DELTA) {
-                val anchor = AnchorState(
-                    reportReference    = executionTask.reportReference,
-                    validatedTypes     = emptyList(),
-                    validatedStructure = emptySet(),
-                    validatedPaths     = emptyList()
-                )
-                val recovery = issueRecoveryContract(
-                    executionTask, anchor, "DETERMINISM", "NON_CONVERGENT_SYSTEM_FAILURE"
-                )
-                val deltaArtifactRef = buildArtifactReference(executionTask.reportReference, executionTask.taskId, "NO_ARTIFACT")
-                val deltaRecoveryId = deriveRecoveryId(
-                    projectId, executionTask.contractId, executionTask.taskId,
-                    lastEvent.sequenceNumber
-                )
-                writeRecoveryContractToLedger(
-                    projectId, ledger, recovery, deltaArtifactRef, deltaRecoveryId, executionTask.taskId
-                )
-                return ExecutionAuthorityExecutionResult.BlockedWithRecovery(
-                    reason            = "NON_CONVERGENT_SYSTEM_FAILURE",
-                    recoveryContracts = listOf(recovery)
+                return blockWithRecovery(
+                    projectId, ledger, executionTask,
+                    "DETERMINISM", "NON_CONVERGENT_SYSTEM_FAILURE",
+                    taskStartedSequence
                 )
             }
         }
@@ -810,27 +804,36 @@ class ExecutionAuthority(
         )
 
         if (allViolations.isNotEmpty()) {
-            // ── DEE-1 Step 5: Loop guard — block non-converging delta ─────────
-            if (executionMode == ExecutionMode.DELTA) {
-                if (isNonConverging(deltaContext, allViolations)) {
-                    return ExecutionAuthorityExecutionResult.BlockedWithRecovery(
-                        reason            = "NON_CONVERGING_DELTA",
-                        recoveryContracts = emptyList(),
-                        violations        = allViolations,
-                        reportReference   = contractReport.reportReference
+            // AGOII-ALIGN-1-RECOVERY-SINGULARITY: ALL violation paths MUST write TASK_EXECUTED(FAILURE)
+            // and return FailureRecorded. P1 will emit RECOVERY_CONTRACT on re-entry.
+            // Do NOT call buildRecoveryContracts() for ledger emission — in-memory only is prohibited.
+            val violationReason = when {
+                executionMode == ExecutionMode.DELTA && isNonConverging(deltaContext, allViolations) ->
+                    "NON_CONVERGING_DELTA"
+                irsViolations.isNotEmpty() -> "IRS_VALIDATION_FAILED"
+                else -> "REPORT_VALIDATION_FAILED"
+            }
+            try {
+                ledger.appendEvent(
+                    projectId,
+                    EventTypes.TASK_EXECUTED,
+                    mapOf(
+                        "taskId"            to executionTask.taskId,
+                        "contractId"        to executionTask.contractId,
+                        "contractorId"      to contractorId,
+                        "artifactReference" to buildArtifactReference(executionTask.reportReference, executionTask.taskId, "NO_ARTIFACT"),
+                        "executionStatus"   to "FAILURE",
+                        "validationStatus"  to "FAILED",
+                        "validationReasons" to allViolations.map { it.message },
+                        "report_reference"  to executionTask.reportReference,
+                        "position"          to executionTask.position,
+                        "total"             to executionTask.total
                     )
-                }
+                )
+            } catch (_: Exception) {
+                // Ledger write failure does not suppress FailureRecorded; P1 will attempt recovery
             }
-            val recoveryContracts = buildRecoveryContracts(allViolations, contractReport)
-            require(recoveryContracts.size == allViolations.size) {
-                "RCF-1 VIOLATION: Recovery contracts must map 1:1 with violations"
-            }
-            return ExecutionAuthorityExecutionResult.BlockedWithRecovery(
-                reason            = if (irsViolations.isNotEmpty()) "IRS_VALIDATION_FAILED" else "REPORT_VALIDATION_FAILED",
-                recoveryContracts = recoveryContracts,
-                violations        = allViolations,
-                reportReference   = contractReport.reportReference
-            )
+            return ExecutionAuthorityExecutionResult.FailureRecorded
         }
 
         // ── Step 5a: Freeze report — immutable snapshot (AERP-1 / RRIL-1) ───
@@ -961,7 +964,7 @@ class ExecutionAuthority(
             } catch (_: Exception) {
                 // Ledger write failure does not suppress the block result
             }
-            ExecutionAuthorityExecutionResult.BlockedWithRecovery("EXECUTION_FAILED", emptyList())
+            ExecutionAuthorityExecutionResult.FailureRecorded
         }
     }
 
@@ -1273,6 +1276,10 @@ class ExecutionAuthority(
      * Build a BLOCKED result: emits TASK_EXECUTED(FAILURE) and issues RCF-1.
      * Used for all hard-block conditions before ContractReport is available.
      * AnchorState is minimal (no validated artifact fields exist yet).
+     *
+     * AGOII-ALIGN-1-RECOVERY-SINGULARITY: this function writes TASK_EXECUTED(FAILURE) only.
+     * RECOVERY_CONTRACT is emitted exclusively by the P1 handler (TASK_EXECUTED(FAILURE) trigger)
+     * on the next executeFromLedger() re-entry. No writeRecoveryContractToLedger() here.
      */
     private fun blockWithRecovery(
         projectId:       String,
@@ -1283,7 +1290,7 @@ class ExecutionAuthority(
         failureSequence: Long,
         knownTaskId:     String? = null,
         knownContractId: String? = null
-    ): ExecutionAuthorityExecutionResult.BlockedWithRecovery {
+    ): ExecutionAuthorityExecutionResult {
 
         // VIOLATION 4: artifactReference must always be deterministic and referenceable — never "NONE"
         val artifactRef = if (task != null)
@@ -1293,6 +1300,8 @@ class ExecutionAuthority(
 
         // Emit TASK_EXECUTED(FAILURE) — mandatory lifecycle closure regardless of available context.
         // MQP-EXECUTION-INVARIANT-LOCK-01: every TASK_STARTED must produce TASK_EXECUTED.
+        // AGOII-ALIGN-1-RECOVERY-SINGULARITY: NO writeRecoveryContractToLedger() here.
+        // P1 fires on re-entry to emit RECOVERY_CONTRACT.
         if (task != null) {
             try {
                 ledger.appendEvent(
@@ -1312,62 +1321,46 @@ class ExecutionAuthority(
                     )
                 )
             } catch (_: Exception) {
-                // Ledger write failure does not suppress the block result
+                // Ledger write failure does not suppress FailureRecorded
             }
         } else if (knownTaskId != null) {
             // Pre-extraction failure: task context is unavailable but taskId is known.
-            // Emit minimal TASK_EXECUTED(FAILURE) to satisfy lifecycle closure invariant.
+            // Load the triggering TASK_STARTED event to retrieve position/total for lifecycle closure.
+            val taskStartedEvent = runCatching {
+                ledger.loadEvents(projectId).lastOrNull {
+                    it.type == EventTypes.TASK_STARTED && it.payload["taskId"]?.toString() == knownTaskId
+                }
+            }.getOrNull()
+            val knownPosition = resolveInt(taskStartedEvent?.payload?.get("position")) ?: 1
+            val knownTotal    = resolveInt(taskStartedEvent?.payload?.get("total")) ?: 1
             try {
                 ledger.appendEvent(
                     projectId,
                     EventTypes.TASK_EXECUTED,
                     mapOf(
                         "taskId"            to knownTaskId,
-                        "contractId"        to "UNKNOWN",
+                        "contractId"        to (knownContractId ?: "UNKNOWN"),
                         "contractorId"      to "NO_CONTRACTOR_MATCH",
                         "artifactReference" to artifactRef,
                         "executionStatus"   to "FAILURE",
                         "validationStatus"  to "FAILED",
                         "validationReasons" to listOf(reason),
-                        "report_reference"  to "UNKNOWN"
+                        "report_reference"  to "UNKNOWN",
+                        "position"          to knownPosition,
+                        "total"             to knownTotal
                     )
                 )
             } catch (_: Exception) {
-                // Ledger write failure does not suppress the block result
+                // Ledger write failure does not suppress FailureRecorded
             }
-        }
-
-        // Minimal AnchorState — no ContractReport available at this stage
-        val anchorState = AnchorState(
-            reportReference    = task?.reportReference ?: "UNKNOWN",
-            validatedTypes     = emptyList(),
-            validatedStructure = emptySet(),
-            validatedPaths     = emptyList()
-        )
-
-        val recovery = issueRecoveryContract(task, anchorState, failureClass, reason)
-        // AGOII-ALIGN-1-IDENTITY-CONSISTENCY-FIX: identity MUST originate from the original
-        // execution context. "UNKNOWN" is prohibited. Unresolvable identity fails fast.
-        val blockTaskId: String
-        val blockContractId: String
-        when {
-            task != null -> {
-                blockTaskId     = task.taskId
-                blockContractId = task.contractId
-            }
-            knownTaskId != null -> {
-                blockTaskId     = knownTaskId
-                blockContractId = knownContractId ?: throw IllegalStateException(
-                    "AGOII-ALIGN-1-IDENTITY-CONSISTENCY-FIX: contractId unresolved for taskId=$knownTaskId"
-                )
-            }
-            else -> throw IllegalStateException(
-                "AGOII-ALIGN-1-IDENTITY-CONSISTENCY-FIX: taskId and contractId both missing — cannot derive recovery identity"
+        } else {
+            // Defensive: unreachable — all call sites provide either task or knownTaskId.
+            throw IllegalStateException(
+                "AGOII-ALIGN-1-RECOVERY-SINGULARITY: taskId and task both missing — cannot write TASK_EXECUTED(FAILURE)"
             )
         }
-        val blockRecoveryId = deriveRecoveryId(projectId, blockContractId, blockTaskId, failureSequence)
-        writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, blockRecoveryId, blockTaskId)
-        return ExecutionAuthorityExecutionResult.BlockedWithRecovery(reason, listOf(recovery))
+
+        return ExecutionAuthorityExecutionResult.FailureRecorded
     }
 
     /** Generate [ContractReport] from execution output (AERP-1 / CONVERGENCE_HARDENING_V1). */
@@ -1927,6 +1920,27 @@ class ExecutionAuthority(
 
         val ingestTaskId = "ingest::${contract.contractId}"
 
+        // AGOII-ALIGN-1-RECOVERY-SINGULARITY: ingestUniversalContract cannot use the
+        // TASK_EXECUTED(FAILURE) → P1 mechanism (no TASK_STARTED in the ingestion pipeline).
+        // Recovery is written directly here, but MUST be idempotency-guarded with a stable
+        // (non-sequence-based) recoveryId to prevent replay duplication.
+        //
+        // Stable recoveryId formula: "RCF::$projectId::$contractId::$ingestTaskId::INGEST_<SURFACE>"
+        // This key is deterministic across all replays for the same contract + project.
+        val stableValidationRecoveryId  = "RCF::$projectId::${contract.contractId}::$ingestTaskId::INGEST_VALIDATION"
+        val stableEnforcementRecoveryId = "RCF::$projectId::${contract.contractId}::$ingestTaskId::INGEST_ENFORCEMENT"
+
+        // Idempotency: read existing events BEFORE writing CONTRACT_CREATED so the check
+        // is stable across re-ingestion attempts (ingestionSequence changes on each replay
+        // because CONTRACT_CREATED is always appended, making sequence-based keys unstable).
+        val priorEvents = ledger.loadEvents(projectId)
+        val validationRecoveryExists  = priorEvents.any {
+            it.type == EventTypes.RECOVERY_CONTRACT && it.payload["recoveryId"] == stableValidationRecoveryId
+        }
+        val enforcementRecoveryExists = priorEvents.any {
+            it.type == EventTypes.RECOVERY_CONTRACT && it.payload["recoveryId"] == stableEnforcementRecoveryId
+        }
+
         // ── Phase 1: Record ingestion attempt (CONTRACT_CREATED) ─────────────
         // Always written first — NO partial ingestion, NO silent drops (RCF-1).
         // If this write fails (wrong ledger state), the exception propagates to the
@@ -1949,35 +1963,56 @@ class ExecutionAuthority(
 
         // AGOII-ALIGN-1-IDENTITY-ANCHOR: Read the committed CONTRACT_CREATED sequence number
         // directly from the ledger — identity is observed, never predicted.
+        // (Retained for audit/trace purposes; recovery identity uses stable non-sequence key above.)
+        @Suppress("UNUSED_VARIABLE")
         val ingestionSequence = ledger.loadEvents(projectId).last().sequenceNumber
 
         // ── Surface 2: Structural + Semantic Validation (AERP-1 pre-ledger gate) ──
         val validationResult = contractValidator.validate(contract)
         if (validationResult is ContractValidationResult.Invalid) {
-            val anchorState = AnchorState(
-                reportReference    = contract.reportReference,
-                validatedTypes     = emptyList(),
-                validatedStructure = emptySet(),
-                validatedPaths     = emptyList()
-            )
-            val artifactRef      = buildArtifactReference(contract.reportReference, ingestTaskId, "NO_ARTIFACT")
-            val violationSurface = "VALIDATION_FAILED: ${validationResult.violations.joinToString("; ")}"
-            val recovery = ExecutionRecoveryContract(
+            // Idempotency guard: if recovery was already emitted for this contract+surface, skip write.
+            if (!validationRecoveryExists) {
+                val anchorState = AnchorState(
+                    reportReference    = contract.reportReference,
+                    validatedTypes     = emptyList(),
+                    validatedStructure = emptySet(),
+                    validatedPaths     = emptyList()
+                )
+                val artifactRef      = buildArtifactReference(contract.reportReference, ingestTaskId, "NO_ARTIFACT")
+                val violationSurface = "VALIDATION_FAILED: ${validationResult.violations.joinToString("; ")}"
+                val recovery = ExecutionRecoveryContract(
+                    reportReference     = contract.reportReference,
+                    contractId          = "RCF_${contract.contractId}_VALIDATION",
+                    failureClass        = FailureClass.STRUCTURAL,
+                    violationField      = violationSurface,
+                    correctionDirective = "Resolve STRUCTURAL failure for contract '${contract.contractId}': $violationSurface",
+                    anchorState         = anchorState,
+                    successCondition    = "Contract '${contract.contractId}' executed with SUCCESS"
+                )
+                writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, stableValidationRecoveryId, ingestTaskId)
+                return UniversalIngestionResult.ValidationFailed(
+                    violations       = validationResult.violations,
+                    recoveryContract = recovery
+                )
+            }
+            // Idempotent: recovery already in ledger — reconstruct result without re-writing.
+            val existingRecovery = ExecutionRecoveryContract(
                 reportReference     = contract.reportReference,
                 contractId          = "RCF_${contract.contractId}_VALIDATION",
                 failureClass        = FailureClass.STRUCTURAL,
-                violationField      = violationSurface,
-                correctionDirective = "Resolve STRUCTURAL failure for contract '${contract.contractId}': $violationSurface",
-                anchorState         = anchorState,
+                violationField      = "VALIDATION_FAILED (idempotent)",
+                correctionDirective = "Already emitted — idempotent re-entry",
+                anchorState         = AnchorState(
+                    reportReference    = contract.reportReference,
+                    validatedTypes     = emptyList(),
+                    validatedStructure = emptySet(),
+                    validatedPaths     = emptyList()
+                ),
                 successCondition    = "Contract '${contract.contractId}' executed with SUCCESS"
             )
-            val validationRecoveryId = deriveRecoveryId(
-                projectId, contract.contractId, ingestTaskId, ingestionSequence
-            )
-            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, validationRecoveryId, ingestTaskId)
             return UniversalIngestionResult.ValidationFailed(
                 violations       = validationResult.violations,
-                recoveryContract = recovery
+                recoveryContract = existingRecovery
             )
         }
 
@@ -1998,30 +2033,49 @@ class ExecutionAuthority(
         )
 
         if (enforcementResult is ContractEnforcementResult.Violated) {
-            val anchorState = AnchorState(
-                reportReference    = normalized.reportReference,
-                validatedTypes     = emptyList(),
-                validatedStructure = emptySet(),
-                validatedPaths     = emptyList()
-            )
-            val artifactRef      = buildArtifactReference(normalized.reportReference, ingestTaskId, "NO_ARTIFACT")
-            val violationSurface = "ENFORCEMENT_FAILED: ${enforcementResult.violations.joinToString("; ") { it.description }}"
-            val recovery = ExecutionRecoveryContract(
+            // Idempotency guard: if recovery was already emitted for this contract+surface, skip write.
+            if (!enforcementRecoveryExists) {
+                val anchorState = AnchorState(
+                    reportReference    = normalized.reportReference,
+                    validatedTypes     = emptyList(),
+                    validatedStructure = emptySet(),
+                    validatedPaths     = emptyList()
+                )
+                val artifactRef      = buildArtifactReference(normalized.reportReference, ingestTaskId, "NO_ARTIFACT")
+                val violationSurface = "ENFORCEMENT_FAILED: ${enforcementResult.violations.joinToString("; ") { it.description }}"
+                val recovery = ExecutionRecoveryContract(
+                    reportReference     = normalized.reportReference,
+                    contractId          = "RCF_${normalized.contractId}_ENFORCEMENT",
+                    failureClass        = FailureClass.STRUCTURAL,
+                    violationField      = violationSurface,
+                    correctionDirective = "Resolve STRUCTURAL enforcement failure for contract '${normalized.contractId}': $violationSurface",
+                    anchorState         = anchorState,
+                    successCondition    = "Contract '${normalized.contractId}' executed with SUCCESS"
+                )
+                writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, stableEnforcementRecoveryId, ingestTaskId)
+                return UniversalIngestionResult.EnforcementFailed(
+                    violations       = enforcementResult.violations,
+                    recoveryContract = recovery
+                )
+            }
+            // Idempotent: recovery already in ledger — reconstruct result without re-writing.
+            val existingRecovery = ExecutionRecoveryContract(
                 reportReference     = normalized.reportReference,
                 contractId          = "RCF_${normalized.contractId}_ENFORCEMENT",
                 failureClass        = FailureClass.STRUCTURAL,
-                violationField      = violationSurface,
-                correctionDirective = "Resolve STRUCTURAL enforcement failure for contract '${normalized.contractId}': $violationSurface",
-                anchorState         = anchorState,
+                violationField      = "ENFORCEMENT_FAILED (idempotent)",
+                correctionDirective = "Already emitted — idempotent re-entry",
+                anchorState         = AnchorState(
+                    reportReference    = normalized.reportReference,
+                    validatedTypes     = emptyList(),
+                    validatedStructure = emptySet(),
+                    validatedPaths     = emptyList()
+                ),
                 successCondition    = "Contract '${normalized.contractId}' executed with SUCCESS"
             )
-            val enforcementRecoveryId = deriveRecoveryId(
-                projectId, normalized.contractId, ingestTaskId, ingestionSequence
-            )
-            writeRecoveryContractToLedger(projectId, ledger, recovery, artifactRef, enforcementRecoveryId, ingestTaskId)
             return UniversalIngestionResult.EnforcementFailed(
                 violations       = enforcementResult.violations,
-                recoveryContract = recovery
+                recoveryContract = existingRecovery
             )
         }
 

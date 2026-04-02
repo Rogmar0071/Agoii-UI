@@ -134,6 +134,10 @@ class CoreBridge(context: Context) {
                             output = execResult.report.rawOutput.ifBlank { null }
                                 ?: throw LedgerValidationException("ICS BLOCKED: Empty output in artifact")
                         }
+                        is ExecutionAuthorityExecutionResult.FailureRecorded -> {
+                            // AGOII-ALIGN-1-RECOVERY-SINGULARITY: TASK_EXECUTED(FAILURE) was written.
+                            // Continue loop — next iteration sees TASK_EXECUTED(FAILURE) and P1 fires.
+                        }
                         is ExecutionAuthorityExecutionResult.BlockedWithRecovery ->
                             throw LedgerValidationException("ICS BLOCKED: ${execResult.reason}")
                         else ->
