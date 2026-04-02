@@ -19,7 +19,70 @@ data class ReplayStructuralState(
     val assemblyValid: Boolean = false,
     val icsValid: Boolean = false,
     /** V3: commitContractExists && (commitExecuted || commitAborted) */
-    val commitValid: Boolean = false
+    val commitValid: Boolean = false,
+
+    // ── AGOII-REPLAY-STATE-001: Authoritative state surface ──────────────────
+
+    /**
+     * Per-task execution status map (taskId → status string).
+     *
+     * Possible status values (in lifecycle order):
+     *   "ASSIGNED", "STARTED", "EXECUTED_SUCCESS", "EXECUTED_FAILURE",
+     *   "COMPLETED", "FAILED", "VALIDATED"
+     *
+     * Last write wins across retries/reassignments for the same taskId.
+     * Decision modules MUST read task status from this map rather than
+     * filtering raw event lists.
+     */
+    val taskStatus: Map<String, String> = emptyMap(),
+
+    /**
+     * Type of the most recent event in the ledger, or null when the ledger
+     * is empty.  Decision modules MUST read this field rather than calling
+     * loadEvents() and inspecting the last element.
+     */
+    val lastEventType: String? = null,
+
+    /**
+     * Payload of the most recent event in the ledger.  Empty map when the
+     * ledger is empty.  Decision modules MUST read this field rather than
+     * calling loadEvents() and extracting the last event's payload.
+     */
+    val lastEventPayload: Map<String, Any> = emptyMap(),
+
+    /**
+     * Report reference (RRID) derived from the first CONTRACTS_GENERATED
+     * event.  Used by Governor for RRIL-1 propagation into TASK_ASSIGNED
+     * payloads.  Empty string when no CONTRACTS_GENERATED event exists.
+     */
+    val reportReference: String = "",
+
+    /**
+     * Set of recoveryIds that already appear in DELTA_CONTRACT_CREATED
+     * events.  Used by Governor for idempotency checks in the CLC-1 delta
+     * loop.
+     */
+    val deltaContractRecoveryIds: Set<String> = emptySet(),
+
+    /**
+     * Set of taskIds that already appear in TASK_ASSIGNED events.  Used by
+     * Governor for idempotency checks in the delta-loop TASK_ASSIGNED step.
+     */
+    val taskAssignedTaskIds: Set<String> = emptySet(),
+
+    /**
+     * contract_id from the most recent CONTRACT_STARTED event in the ledger.
+     * Used by Governor when deriving CONTRACT_COMPLETED payloads.
+     * Empty string when no CONTRACT_STARTED event has been seen.
+     */
+    val lastContractStartedId: String = "",
+
+    /**
+     * position value from the most recent CONTRACT_STARTED event.  Used by
+     * Governor as a fallback when TASK_ASSIGNED.position is absent.
+     * Null when no CONTRACT_STARTED event has been seen.
+     */
+    val lastContractStartedPosition: Int? = null
 )
 
 data class IntentStructuralState(
@@ -74,20 +137,75 @@ class Replay(private val eventStore: EventRepository) {
         // Count TASK_EXECUTED(SUCCESS) events for executionValid (FS-2)
         var successfulTaskExecutions = 0
 
+        // ── AGOII-REPLAY-STATE-001: Authoritative state fields ────────────────
+        val taskStatusMutable = mutableMapOf<String, String>()
+        var reportReference = ""
+        val deltaContractRecoveryIds = mutableSetOf<String>()
+        val taskAssignedTaskIds = mutableSetOf<String>()
+        var lastContractStartedId = ""
+        var lastContractStartedPosition: Int? = null
+
         for (event in events) {
             when (event.type) {
                 EventTypes.INTENT_SUBMITTED    -> intentSubmitted = true
                 EventTypes.CONTRACTS_GENERATED -> {
                     contractsGenerated = true
-                    totalContractsFromLedger = resolveInt(event.payload["total"]) ?: 0
-                }
-                EventTypes.TASK_ASSIGNED       -> assignedTasks++
-                EventTypes.TASK_COMPLETED      -> completedTasks++
-                EventTypes.TASK_VALIDATED      -> validatedTasks++
-                EventTypes.TASK_EXECUTED       -> {
-                    if (event.payload["executionStatus"]?.toString() == "SUCCESS") {
-                        successfulTaskExecutions++
+                    val contractsList = event.payload["contracts"] as? List<*>
+                    totalContractsFromLedger = when {
+                        !contractsList.isNullOrEmpty() -> contractsList.size
+                        else -> resolveInt(event.payload["total"]) ?: 0
                     }
+                    if (reportReference.isEmpty()) {
+                        reportReference = event.payload["report_reference"]?.toString()
+                            ?: event.payload["report_id"]?.toString()
+                            ?: ""
+                    }
+                }
+                EventTypes.CONTRACT_STARTED -> {
+                    val cId = event.payload["contract_id"]?.toString() ?: ""
+                    if (cId.isNotEmpty()) lastContractStartedId = cId
+                    val pos = resolveInt(event.payload["position"])
+                    if (pos != null) lastContractStartedPosition = pos
+                }
+                EventTypes.TASK_ASSIGNED       -> {
+                    assignedTasks++
+                    val tid = event.payload["taskId"]?.toString() ?: ""
+                    if (tid.isNotEmpty()) {
+                        taskStatusMutable[tid] = "ASSIGNED"
+                        taskAssignedTaskIds.add(tid)
+                    }
+                }
+                EventTypes.TASK_STARTED        -> {
+                    val tid = event.payload["taskId"]?.toString() ?: ""
+                    if (tid.isNotEmpty()) taskStatusMutable[tid] = "STARTED"
+                }
+                EventTypes.TASK_EXECUTED       -> {
+                    val tid = event.payload["taskId"]?.toString() ?: ""
+                    val execStatus = event.payload["executionStatus"]?.toString()
+                    if (execStatus == "SUCCESS") {
+                        successfulTaskExecutions++
+                        if (tid.isNotEmpty()) taskStatusMutable[tid] = "EXECUTED_SUCCESS"
+                    } else {
+                        if (tid.isNotEmpty()) taskStatusMutable[tid] = "EXECUTED_FAILURE"
+                    }
+                }
+                EventTypes.TASK_COMPLETED      -> {
+                    completedTasks++
+                    val tid = event.payload["taskId"]?.toString() ?: ""
+                    if (tid.isNotEmpty()) taskStatusMutable[tid] = "COMPLETED"
+                }
+                EventTypes.TASK_FAILED         -> {
+                    val tid = event.payload["taskId"]?.toString() ?: ""
+                    if (tid.isNotEmpty()) taskStatusMutable[tid] = "FAILED"
+                }
+                EventTypes.TASK_VALIDATED      -> {
+                    validatedTasks++
+                    val tid = event.payload["taskId"]?.toString() ?: ""
+                    if (tid.isNotEmpty()) taskStatusMutable[tid] = "VALIDATED"
+                }
+                EventTypes.DELTA_CONTRACT_CREATED -> {
+                    val rid = event.payload["recoveryId"]?.toString() ?: ""
+                    if (rid.isNotEmpty()) deltaContractRecoveryIds.add(rid)
                 }
                 EventTypes.ASSEMBLY_STARTED    -> assemblyStarted = true
                 EventTypes.ASSEMBLY_VALIDATED  -> assemblyValidated = true
@@ -99,6 +217,10 @@ class Replay(private val eventStore: EventRepository) {
                 EventTypes.COMMIT_ABORTED      -> commitAborted = true
             }
         }
+
+        val lastEvent = events.lastOrNull()
+        val lastEventType = lastEvent?.type
+        val lastEventPayload: Map<String, Any> = lastEvent?.payload ?: emptyMap()
 
         val totalTasks = assignedTasks
 
@@ -159,7 +281,16 @@ class Replay(private val eventStore: EventRepository) {
             executionValid = executionValid,
             assemblyValid = assemblyValidNew,
             icsValid = icsValid,
-            commitValid = commitValid
+            commitValid = commitValid,
+            // ── AGOII-REPLAY-STATE-001: Authoritative state fields ────────────
+            taskStatus = taskStatusMutable,
+            lastEventType = lastEventType,
+            lastEventPayload = lastEventPayload,
+            reportReference = reportReference,
+            deltaContractRecoveryIds = deltaContractRecoveryIds,
+            taskAssignedTaskIds = taskAssignedTaskIds,
+            lastContractStartedId = lastContractStartedId,
+            lastContractStartedPosition = lastContractStartedPosition
         )
     }
 
