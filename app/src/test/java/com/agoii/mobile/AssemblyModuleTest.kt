@@ -336,7 +336,7 @@ class AssemblyModuleTest {
             mapOf(
                 "recoveryId"        to "RCF::proj::contract_3::task-1::42",
                 "contractId"        to "contract_3",
-                "taskId"            to "contract_3",
+                "taskId"            to "task-1",
                 "report_reference"  to "rrid-mix-001",
                 "source"            to "EXECUTION_AUTHORITY"
             )
