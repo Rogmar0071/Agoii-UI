@@ -294,23 +294,30 @@ class Governor(
             }
 
             // CLC-1 delta loop: RECOVERY_CONTRACT → DELTA_CONTRACT_CREATED
-            // Governor extracts contractId, violationField, report_reference from the
-            // recovery payload and issues DELTA_CONTRACT_CREATED with the iteration count.
+            // Governor extracts recoveryId, contractId, taskId, report_reference from the
+            // recovery payload and issues DELTA_CONTRACT_CREATED (idempotency by recoveryId).
             EventTypes.RECOVERY_CONTRACT -> {
+                val recoveryId      = last.payload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
+                    ?: return null
                 val contractId      = last.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val violationField  = last.payload["violationField"]?.toString()?.takeIf { it.isNotBlank() }
+                val taskId          = last.payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
                 val reportReference = last.payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val iterationCount  = deriveDeltaIterationCount(events, reportReference) + 1
+                val alreadyExists = events.any {
+                    it.type == EventTypes.DELTA_CONTRACT_CREATED &&
+                    it.payload["recoveryId"] == recoveryId
+                }
+                if (alreadyExists) return null
                 Event(
                     type    = EventTypes.DELTA_CONTRACT_CREATED,
                     payload = mapOf(
-                        "contractId"            to contractId,
-                        "violationField"        to violationField,
-                        "report_reference"      to reportReference,
-                        "delta_iteration_count" to iterationCount
+                        "recoveryId"       to recoveryId,
+                        "contractId"       to contractId,
+                        "taskId"           to taskId,
+                        "report_reference" to reportReference,
+                        "source"           to "GOVERNOR"
                     )
                 )
             }
@@ -463,18 +470,4 @@ class Governor(
         return 1 to total
     }
 
-    /**
-     * CLC-1: Counts the number of [EventTypes.DELTA_CONTRACT_CREATED] events already in the
-     * ledger for the given [reportReference].
-     *
-     * Used to derive the deterministic iteration count written into the next
-     * DELTA_CONTRACT_CREATED payload (Governor does not hold in-memory state).
-     */
-    private fun deriveDeltaIterationCount(
-        events:          List<Event>,
-        reportReference: String
-    ): Int = events.count {
-        it.type == EventTypes.DELTA_CONTRACT_CREATED &&
-        it.payload["report_reference"]?.toString() == reportReference
-    }
 }
