@@ -1939,18 +1939,22 @@ class ExecutionAuthority(
         // Idempotency: read existing events BEFORE writing CONTRACT_CREATED so the check
         // is stable across re-ingestion attempts (ingestionSequence changes on each replay
         // because CONTRACT_CREATED is always appended, making sequence-based keys unstable).
-        // Single-pass over priorEvents to check both recovery surfaces simultaneously.
+        // Single-pass over priorEvents to locate both recovery events simultaneously;
+        // the found events are reused in the idempotent reconstruction paths below,
+        // eliminating any further traversal of priorEvents.
         val priorEvents = ledger.loadEvents(projectId)
-        var validationRecoveryExists  = false
-        var enforcementRecoveryExists = false
+        var existingValidationRecoveryEvent:  com.agoii.mobile.core.Event? = null
+        var existingEnforcementRecoveryEvent: com.agoii.mobile.core.Event? = null
         for (event in priorEvents) {
             if (event.type == EventTypes.RECOVERY_CONTRACT) {
                 val rid = event.payload["recoveryId"]
-                if (rid == stableValidationRecoveryId)  validationRecoveryExists  = true
-                if (rid == stableEnforcementRecoveryId) enforcementRecoveryExists = true
-                if (validationRecoveryExists && enforcementRecoveryExists) break
+                if (rid == stableValidationRecoveryId)  existingValidationRecoveryEvent  = event
+                if (rid == stableEnforcementRecoveryId) existingEnforcementRecoveryEvent = event
+                if (existingValidationRecoveryEvent != null && existingEnforcementRecoveryEvent != null) break
             }
         }
+        val validationRecoveryExists  = existingValidationRecoveryEvent  != null
+        val enforcementRecoveryExists = existingEnforcementRecoveryEvent != null
 
         // ── Phase 1: Record ingestion attempt (CONTRACT_CREATED) ─────────────
         // Always written first — NO partial ingestion, NO silent drops (RCF-1).
@@ -2004,12 +2008,9 @@ class ExecutionAuthority(
                     recoveryContract = recovery
                 )
             }
-            // Idempotent: recovery already in ledger — reconstruct result from existing event payload.
-            val existingValidationEvent = priorEvents.lastOrNull {
-                it.type == EventTypes.RECOVERY_CONTRACT && it.payload["recoveryId"] == stableValidationRecoveryId
-            }
+            // Idempotent: recovery already in ledger — use the event found during the initial scan.
             val existingRecovery = reconstructRecoveryFromEvent(
-                event                    = existingValidationEvent,
+                event                    = existingValidationRecoveryEvent,
                 fallbackReportRef        = contract.reportReference,
                 fallbackContractId       = "RCF_${contract.contractId}_VALIDATION",
                 fallbackSuccessCondition = "Contract '${contract.contractId}' executed with SUCCESS"
@@ -2062,12 +2063,9 @@ class ExecutionAuthority(
                     recoveryContract = recovery
                 )
             }
-            // Idempotent: recovery already in ledger — reconstruct result from existing event payload.
-            val existingEnforcementEvent = priorEvents.lastOrNull {
-                it.type == EventTypes.RECOVERY_CONTRACT && it.payload["recoveryId"] == stableEnforcementRecoveryId
-            }
+            // Idempotent: recovery already in ledger — use the event found during the initial scan.
             val existingRecovery = reconstructRecoveryFromEvent(
-                event                    = existingEnforcementEvent,
+                event                    = existingEnforcementRecoveryEvent,
                 fallbackReportRef        = normalized.reportReference,
                 fallbackContractId       = "RCF_${normalized.contractId}_ENFORCEMENT",
                 fallbackSuccessCondition = "Contract '${normalized.contractId}' executed with SUCCESS"
