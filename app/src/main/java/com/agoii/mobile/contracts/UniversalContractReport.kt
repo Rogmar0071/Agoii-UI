@@ -29,14 +29,7 @@ class UniversalContractReport {
             else null,
             exitCode           = if (executionOutput.error == null) 0 else 1,
             failureSurface     = listOfNotNull(executionOutput.error),
-            policyViolations   = emptyList(),
-
-            // ✅ NEW REQUIRED FIELDS — STRUCTURAL ALIGNMENT
-            validatedSections = ValidatedSections(emptySet()),
-            mutationSurface   = MutationSurface(
-                allowedFields = emptyList(),
-                allowedSections = emptyList()
-            )
+            policyViolations   = emptyList()
         )
     }
 
