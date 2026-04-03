@@ -329,6 +329,7 @@ class ExecutionAuthority(
                 }
                 else -> {
                     // Any other delta validation result is a failure
+                    // Note: Unexpected validation result - consider updating when clause
                     return ExecutionAuthorityExecutionResult.Executed(
                         taskId,
                         ExecutionStatus.FAILURE,
