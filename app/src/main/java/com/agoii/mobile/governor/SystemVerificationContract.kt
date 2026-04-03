@@ -176,15 +176,16 @@ class SystemVerificationContract(private val eventStore: EventRepository) {
     // ── Check 2: Replay Consistency ───────────────────────────────────────────
 
     private fun checkReplayConsistency(state: ReplayStructuralState): ReplayConsistencyCheck {
-        val failCondition1 = !state.execution.fullyExecuted && state.assembly.assemblyCompleted
-        val failCondition2 = state.execution.totalTasks != state.execution.completedTasks &&
-                             state.execution.fullyExecuted
-        val failCondition3 = state.assembly.assemblyValid && !state.execution.fullyExecuted
+        val av = state.auditView
+        val failCondition1 = !av.execution.fullyExecuted && av.assembly.assemblyCompleted
+        val failCondition2 = av.execution.totalTasks != av.execution.completedTasks &&
+                             av.execution.fullyExecuted
+        val failCondition3 = av.assembly.assemblyValid && !av.execution.fullyExecuted
         return ReplayConsistencyCheck(
             passed            = !failCondition1 && !failCondition2 && !failCondition3,
-            fullyExecuted     = state.execution.fullyExecuted,
-            assemblyCompleted = state.assembly.assemblyCompleted,
-            assemblyValid     = state.assembly.assemblyValid
+            fullyExecuted     = av.execution.fullyExecuted,
+            assemblyCompleted = av.assembly.assemblyCompleted,
+            assemblyValid     = av.assembly.assemblyValid
         )
     }
 

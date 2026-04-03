@@ -23,13 +23,14 @@ data class UIState(
 class StateProjection {
 
     fun project(state: ReplayStructuralState): UIState {
+        val av = state.auditView
         return UIState(
-            isComplete         = state.assembly.assemblyCompleted,
-            executionStarted   = state.execution.assignedTasks > 0,
-            executionCompleted = state.execution.fullyExecuted,
-            assemblyStarted    = state.assembly.assemblyStarted,
-            assemblyValidated  = state.assembly.assemblyValidated,
-            assemblyCompleted  = state.assembly.assemblyCompleted
+            isComplete         = av.assembly.assemblyCompleted,
+            executionStarted   = av.execution.assignedTasks > 0,
+            executionCompleted = av.execution.fullyExecuted,
+            assemblyStarted    = av.assembly.assemblyStarted,
+            assemblyValidated  = av.assembly.assemblyValidated,
+            assemblyCompleted  = av.assembly.assemblyCompleted
         )
     }
 }

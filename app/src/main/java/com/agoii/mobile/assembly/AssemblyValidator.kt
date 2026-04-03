@@ -31,8 +31,9 @@ class AssemblyValidator {
         val missingElements = mutableListOf<String>()
         val failedChecks    = mutableListOf<String>()
 
-        val executionStarted   = replayState.execution.assignedTasks > 0
-        val executionCompleted = replayState.execution.fullyExecuted
+        val av = replayState.auditView
+        val executionStarted   = av.execution.assignedTasks > 0
+        val executionCompleted = av.execution.fullyExecuted
 
         // B. Execution Closure
         if (!executionStarted) {
@@ -43,10 +44,10 @@ class AssemblyValidator {
         }
 
         // D. Transition Integrity
-        if (replayState.assembly.assemblyStarted && !executionCompleted) {
+        if (av.assembly.assemblyStarted && !executionCompleted) {
             failedChecks.add("assembly_started appeared before execution_completed")
         }
-        if (replayState.assembly.assemblyValidated && !replayState.assembly.assemblyStarted) {
+        if (av.assembly.assemblyValidated && !av.assembly.assemblyStarted) {
             failedChecks.add("assembly_validated appeared before assembly_started")
         }
 

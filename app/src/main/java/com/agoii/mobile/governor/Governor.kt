@@ -88,9 +88,10 @@ class Governor(
      */
     fun runGovernor(projectId: String): GovernorResult {
         val state = store.replayState(projectId)
-        if (state.lastEventType == null) return GovernorResult.NO_EVENT
+        val gv = state.governanceView
+        if (gv.lastEventType == null) return GovernorResult.NO_EVENT
 
-        return when (state.lastEventType) {
+        return when (gv.lastEventType) {
             // CONTRACTS_GENERATED is authored by ExecutionAuthority — not by Governor.
             // Governor reads from the ledger only; if it has not yet been written, wait.
             EventTypes.INTENT_SUBMITTED    -> GovernorResult.NO_EVENT
@@ -170,7 +171,7 @@ class Governor(
      * This function has no side effects.
      */
     fun nextEvents(state: ReplayStructuralState): List<Event> {
-        if (state.lastEventType == null) return emptyList()
+        if (state.governanceView.lastEventType == null) return emptyList()
         return listOfNotNull(nextEventSingle(state))
     }
 
@@ -181,8 +182,9 @@ class Governor(
      * is consumed inside this function.  Returns null when no transition is applicable.
      */
     private fun nextEventSingle(state: ReplayStructuralState): Event? {
-        val lastType    = state.lastEventType ?: return null
-        val lastPayload = state.lastEventPayload
+        val gv          = state.governanceView
+        val lastType    = gv.lastEventType ?: return null
+        val lastPayload = gv.lastEventPayload
 
         return when (lastType) {
 
@@ -193,7 +195,7 @@ class Governor(
 
             // EXECUTION_STARTED → begin first contract
             EventTypes.EXECUTION_STARTED -> {
-                val total = state.contracts.totalContracts.takeIf { it > 0 } ?: return null
+                val total = gv.totalContracts.takeIf { it > 0 } ?: return null
                 canIssue(1) ?: return null
                 Event(
                     type    = EventTypes.CONTRACT_STARTED,
@@ -215,7 +217,7 @@ class Governor(
             // ── Execution spine ───────────────────────────────────────────────────
 
             EventTypes.CONTRACTS_READY -> {
-                val total = state.contracts.totalContracts.takeIf { it > 0 } ?: return null
+                val total = gv.totalContracts.takeIf { it > 0 } ?: return null
                 canIssue(1) ?: return null
                 Event(
                     type    = EventTypes.CONTRACT_STARTED,
@@ -226,7 +228,7 @@ class Governor(
             EventTypes.CONTRACT_STARTED -> {
                 val contractId = lastPayload["contract_id"] as? String ?: return null
                 val position   = resolveInt(lastPayload["position"])    ?: return null
-                val total      = state.contracts.totalContracts.takeIf { it > 0 } ?: return null
+                val total      = gv.totalContracts.takeIf { it > 0 }   ?: return null
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
@@ -234,7 +236,7 @@ class Governor(
                         "contractId"       to contractId,
                         "position"         to position,
                         "total"            to total,
-                        "report_reference" to state.reportReference,
+                        "report_reference" to gv.reportReference,
                         "requirements"     to emptyList<Any>(),
                         "constraints"      to emptyList<Any>()
                     )
@@ -244,10 +246,10 @@ class Governor(
             EventTypes.TASK_ASSIGNED -> {
                 val taskId   = lastPayload["taskId"] as? String ?: return null
                 val position = resolveInt(lastPayload["position"])
-                    ?: state.lastContractStartedPosition
+                    ?: gv.lastContractStartedPosition
                     ?: return null
                 val total = resolveInt(lastPayload["total"])
-                    ?: state.contracts.totalContracts.takeIf { it > 0 }
+                    ?: gv.totalContracts.takeIf { it > 0 }
                     ?: return null
                 Event(
                     type    = EventTypes.TASK_STARTED,
@@ -286,8 +288,8 @@ class Governor(
                     payload = mapOf(
                         "position"         to position,
                         "total"            to total,
-                        "contractId"       to state.lastContractStartedId,
-                        "report_reference" to state.reportReference
+                        "contractId"       to gv.lastContractStartedId,
+                        "report_reference" to gv.reportReference
                     )
                 )
             }
@@ -321,17 +323,17 @@ class Governor(
             // CLC-1 delta loop: RECOVERY_CONTRACT → DELTA_CONTRACT_CREATED
             // Reads recoveryId, contractId, taskId, report_reference from the state's
             // last-event payload; idempotency is checked against the pre-computed
-            // deltaContractRecoveryIds set in ReplayStructuralState.
+            // deltaContractRecoveryIds set in GovernanceView.
             EventTypes.RECOVERY_CONTRACT -> {
-                val recoveryId      = lastPayload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
+                val recoveryId = lastPayload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val contractId      = lastPayload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+                val contractId = lastPayload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val taskId          = lastPayload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
+                val taskId     = lastPayload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val reportRef       = lastPayload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+                val reportRef  = lastPayload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                if (state.deltaContractRecoveryIds.contains(recoveryId)) return null
+                if (gv.deltaContractRecoveryIds.contains(recoveryId)) return null
                 Event(
                     type    = EventTypes.DELTA_CONTRACT_CREATED,
                     payload = mapOf(
@@ -346,7 +348,7 @@ class Governor(
 
             // CLC-1 delta loop: DELTA_CONTRACT_CREATED → TASK_ASSIGNED
             // Reads fields from the state's last-event payload; idempotency is checked
-            // against the pre-computed taskAssignedTaskIds set in ReplayStructuralState.
+            // against the pre-computed taskAssignedTaskIds set in GovernanceView.
             EventTypes.DELTA_CONTRACT_CREATED -> {
                 // recoveryId required in payload (contract enforcement — mirrors ValidationLayer).
                 val recoveryId  = lastPayload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
@@ -357,7 +359,7 @@ class Governor(
                     ?: return null
                 val reportRef   = lastPayload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                if (state.taskAssignedTaskIds.contains(taskId)) return null
+                if (gv.taskAssignedTaskIds.contains(taskId)) return null
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
@@ -381,7 +383,7 @@ class Governor(
 
             EventTypes.CONTRACT_COMPLETED -> {
                 val position = resolveInt(lastPayload["position"]) ?: return null
-                val total    = state.contracts.totalContracts.takeIf { it > 0 } ?: return null
+                val total    = gv.totalContracts.takeIf { it > 0 } ?: return null
                 if (position < total) {
                     val next = position + 1
                     canIssue(next) ?: return null

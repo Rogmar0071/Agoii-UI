@@ -69,26 +69,26 @@ class CoreTest {
     @Test
     fun `replay on empty ledger returns no structural completion`() {
         val state = Replay(store()).deriveStructuralState(emptyList())
-        assertFalse(state.intent.structurallyComplete)
-        assertFalse(state.contracts.generated)
-        assertFalse(state.contracts.valid)
-        assertEquals(0, state.execution.totalTasks)
-        assertEquals(0, state.execution.assignedTasks)
-        assertEquals(0, state.execution.completedTasks)
-        assertEquals(0, state.execution.validatedTasks)
-        assertFalse(state.execution.fullyExecuted)
-        assertFalse(state.assembly.assemblyStarted)
-        assertFalse(state.assembly.assemblyValidated)
-        assertFalse(state.assembly.assemblyCompleted)
-        assertFalse(state.assembly.assemblyValid)
+        assertFalse(state.auditView.intent.structurallyComplete)
+        assertFalse(state.auditView.contracts.generated)
+        assertFalse(state.auditView.contracts.valid)
+        assertEquals(0, state.auditView.execution.totalTasks)
+        assertEquals(0, state.auditView.execution.assignedTasks)
+        assertEquals(0, state.auditView.execution.completedTasks)
+        assertEquals(0, state.auditView.execution.validatedTasks)
+        assertFalse(state.auditView.execution.fullyExecuted)
+        assertFalse(state.auditView.assembly.assemblyStarted)
+        assertFalse(state.auditView.assembly.assemblyValidated)
+        assertFalse(state.auditView.assembly.assemblyCompleted)
+        assertFalse(state.auditView.assembly.assemblyValid)
     }
 
     @Test
     fun `replay marks intent structurally complete after intent_submitted`() {
         val events = listOf(Event("intent_submitted", mapOf("objective" to "Build the thing")))
         val state  = Replay(store()).deriveStructuralState(events)
-        assertTrue(state.intent.structurallyComplete)
-        assertFalse(state.contracts.generated)
+        assertTrue(state.auditView.intent.structurallyComplete)
+        assertFalse(state.auditView.contracts.generated)
     }
 
     @Test
@@ -98,10 +98,10 @@ class CoreTest {
             Event("contracts_generated", mapOf("total" to 3.0))
         )
         val state = Replay(store()).deriveStructuralState(events)
-        assertTrue(state.intent.structurallyComplete)
-        assertTrue(state.contracts.generated)
-        assertTrue(state.contracts.valid)
-        assertEquals(0, state.execution.totalTasks)
+        assertTrue(state.auditView.intent.structurallyComplete)
+        assertTrue(state.auditView.contracts.generated)
+        assertTrue(state.auditView.contracts.valid)
+        assertEquals(0, state.auditView.execution.totalTasks)
     }
 
     @Test
@@ -119,11 +119,11 @@ class CoreTest {
             Event("contract_completed",  mapOf("contract_id" to "contract_1", "position" to 1, "total" to 1))
         )
         val state = Replay(store()).deriveStructuralState(events)
-        assertEquals(1, state.execution.totalTasks)
-        assertEquals(1, state.execution.assignedTasks)
-        assertEquals(1, state.execution.completedTasks)
-        assertEquals(0, state.execution.validatedTasks)
-        assertFalse(state.execution.fullyExecuted)
+        assertEquals(1, state.auditView.execution.totalTasks)
+        assertEquals(1, state.auditView.execution.assignedTasks)
+        assertEquals(1, state.auditView.execution.completedTasks)
+        assertEquals(0, state.auditView.execution.validatedTasks)
+        assertFalse(state.auditView.execution.fullyExecuted)
     }
 
     @Test
@@ -143,11 +143,11 @@ class CoreTest {
             Event("execution_completed", mapOf("contracts_completed" to 1))
         )
         val state = Replay(store()).deriveStructuralState(events)
-        assertEquals(1, state.execution.totalTasks)
-        assertEquals(1, state.execution.completedTasks)
-        assertEquals(1, state.execution.validatedTasks)
-        assertTrue(state.execution.fullyExecuted)
-        assertFalse(state.assembly.assemblyStarted)
+        assertEquals(1, state.auditView.execution.totalTasks)
+        assertEquals(1, state.auditView.execution.completedTasks)
+        assertEquals(1, state.auditView.execution.validatedTasks)
+        assertTrue(state.auditView.execution.fullyExecuted)
+        assertFalse(state.auditView.assembly.assemblyStarted)
     }
 
     @Test
@@ -170,11 +170,11 @@ class CoreTest {
             Event("assembly_completed",  emptyMap())
         )
         val state = Replay(store()).deriveStructuralState(events)
-        assertTrue(state.execution.fullyExecuted)
-        assertTrue(state.assembly.assemblyStarted)
-        assertTrue(state.assembly.assemblyValidated)
-        assertTrue(state.assembly.assemblyCompleted)
-        assertTrue(state.assembly.assemblyValid)
+        assertTrue(state.auditView.execution.fullyExecuted)
+        assertTrue(state.auditView.assembly.assemblyStarted)
+        assertTrue(state.auditView.assembly.assemblyValidated)
+        assertTrue(state.auditView.assembly.assemblyCompleted)
+        assertTrue(state.auditView.assembly.assemblyValid)
     }
 
     // ── LedgerAudit tests ────────────────────────────────────────────────────
@@ -369,10 +369,10 @@ class CoreTest {
         )
         val state = Replay(store()).deriveStructuralState(events)
         // fullyExecuted is true: totalTasks=1, completedTasks=1, validatedTasks=1, executionCompleted
-        assertTrue(state.execution.fullyExecuted)
+        assertTrue(state.auditView.execution.fullyExecuted)
         // but assignedTasks=0 != totalTasks=1
-        assertEquals(0, state.execution.assignedTasks)
-        assertEquals(1, state.execution.totalTasks)
+        assertEquals(0, state.auditView.execution.assignedTasks)
+        assertEquals(1, state.auditView.execution.totalTasks)
         // ReplayTest invariant must catch this data inconsistency
         val result = ReplayTest(store(events)).verifyReplay("proj")
         assertFalse(result.valid)
@@ -787,9 +787,9 @@ class CoreTest {
             verification.valid
         )
         val state = verification.structuralState
-        assertTrue(state.intent.structurallyComplete)
-        assertTrue(state.contracts.generated)
-        assertTrue(state.contracts.valid)
+        assertTrue(state.auditView.intent.structurallyComplete)
+        assertTrue(state.auditView.contracts.generated)
+        assertTrue(state.auditView.contracts.valid)
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

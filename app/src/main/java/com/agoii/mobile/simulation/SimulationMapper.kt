@@ -37,12 +37,13 @@ internal class SimulationMapper {
      * executionCompleted is derived as [ReplayStructuralState.execution.fullyExecuted].
      */
     fun map(state: ReplayStructuralState): SimulationSnapshot {
+        val av = state.auditView
         return SimulationSnapshot(
-            executionStarted   = state.execution.assignedTasks > 0,
-            executionCompleted = state.execution.fullyExecuted,
-            assemblyStarted    = state.assembly.assemblyStarted,
-            assemblyValidated  = state.assembly.assemblyValidated,
-            assemblyCompleted  = state.assembly.assemblyCompleted
+            executionStarted   = av.execution.assignedTasks > 0,
+            executionCompleted = av.execution.fullyExecuted,
+            assemblyStarted    = av.assembly.assemblyStarted,
+            assemblyValidated  = av.assembly.assemblyValidated,
+            assemblyCompleted  = av.assembly.assemblyCompleted
         )
     }
 }

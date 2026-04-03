@@ -17,13 +17,16 @@ class InteractionMapper {
      * All 5 structural fields are always mapped — no conditions, no defaults,
      * no substitution.
      */
-    fun extract(state: ReplayStructuralState): StateSlice = StateSlice(
-        executionStarted   = state.execution.assignedTasks > 0,
-        executionCompleted = state.execution.fullyExecuted,
-        assemblyStarted    = state.assembly.assemblyStarted,
-        assemblyValidated  = state.assembly.assemblyValidated,
-        assemblyCompleted  = state.assembly.assemblyCompleted
-    )
+    fun extract(state: ReplayStructuralState): StateSlice {
+        val av = state.auditView
+        return StateSlice(
+            executionStarted   = av.execution.assignedTasks > 0,
+            executionCompleted = av.execution.fullyExecuted,
+            assemblyStarted    = av.assembly.assemblyStarted,
+            assemblyValidated  = av.assembly.assemblyValidated,
+            assemblyCompleted  = av.assembly.assemblyCompleted
+        )
+    }
 }
 
 /**

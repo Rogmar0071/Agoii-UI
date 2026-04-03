@@ -3,8 +3,11 @@ package com.agoii.mobile
 import com.agoii.mobile.assembly.AssemblyResult
 import com.agoii.mobile.assembly.AssemblyValidator
 import com.agoii.mobile.core.AssemblyStructuralState
+import com.agoii.mobile.core.AuditView
 import com.agoii.mobile.core.ContractStructuralState
 import com.agoii.mobile.core.ExecutionStructuralState
+import com.agoii.mobile.core.ExecutionView
+import com.agoii.mobile.core.GovernanceView
 import com.agoii.mobile.core.IntentStructuralState
 import com.agoii.mobile.core.ReplayStructuralState
 import org.junit.Assert.*
@@ -24,24 +27,45 @@ class AssemblyValidationTest {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
+    private fun emptyGovernanceView() = GovernanceView(
+        lastEventType = null, lastEventPayload = emptyMap(),
+        totalContracts = 0, reportReference = "",
+        deltaContractRecoveryIds = emptySet(), taskAssignedTaskIds = emptySet(),
+        lastContractStartedId = "", lastContractStartedPosition = null
+    )
+
+    private fun emptyExecutionView() = ExecutionView(
+        taskStatus = emptyMap(), icsStarted = false, icsCompleted = false,
+        commitContractExists = false, commitExecuted = false,
+        commitAborted = false, commitPending = false
+    )
+
     /** Minimal fully-valid ReplayStructuralState for a completed execution system. */
     private fun validState(
         totalTasks: Int = 1
     ) = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = true),
-        contracts = ContractStructuralState(generated = true, valid = true),
-        execution = ExecutionStructuralState(
-            totalTasks     = totalTasks,
-            assignedTasks  = totalTasks,
-            completedTasks = totalTasks,
-            validatedTasks = totalTasks,
-            fullyExecuted  = true
-        ),
-        assembly  = AssemblyStructuralState(
-            assemblyStarted   = true,
-            assemblyValidated = true,
-            assemblyCompleted = true,
-            assemblyValid     = true
+        governanceView = emptyGovernanceView(),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = true),
+            contracts = ContractStructuralState(generated = true, valid = true),
+            execution = ExecutionStructuralState(
+                totalTasks     = totalTasks,
+                assignedTasks  = totalTasks,
+                completedTasks = totalTasks,
+                validatedTasks = totalTasks,
+                fullyExecuted  = true
+            ),
+            assembly  = AssemblyStructuralState(
+                assemblyStarted   = true,
+                assemblyValidated = true,
+                assemblyCompleted = true,
+                assemblyValid     = true
+            ),
+            executionValid = true,
+            assemblyValid  = true,
+            icsValid       = false,
+            commitValid    = false
         )
     )
 
@@ -70,7 +94,9 @@ class AssemblyValidationTest {
     @Test
     fun `partial execution — execution not completed — fails assembly`() {
         val state = validState().copy(
-            execution = ExecutionStructuralState(3, 3, 3, 3, fullyExecuted = false)
+            auditView = validState().auditView.copy(
+                execution = ExecutionStructuralState(3, 3, 3, 3, fullyExecuted = false)
+            )
         )
         val result = validator.validate(state)
         assertFalse(result.isValid)
@@ -81,7 +107,9 @@ class AssemblyValidationTest {
     @Test
     fun `partial execution — execution not started — fails assembly`() {
         val state = validState().copy(
-            execution = ExecutionStructuralState(0, 0, 0, 0, fullyExecuted = false)
+            auditView = validState().auditView.copy(
+                execution = ExecutionStructuralState(0, 0, 0, 0, fullyExecuted = false)
+            )
         )
         val result = validator.validate(state)
         assertFalse(result.isValid)
@@ -93,14 +121,20 @@ class AssemblyValidationTest {
     @Test
     fun `assembly_started before execution_completed is an illegal transition`() {
         val state = ReplayStructuralState(
-            intent    = IntentStructuralState(structurallyComplete = true),
-            contracts = ContractStructuralState(generated = true, valid = true),
-            execution = ExecutionStructuralState(1, 1, 0, 0, fullyExecuted = false),
-            assembly  = AssemblyStructuralState(
-                assemblyStarted   = true,
-                assemblyValidated = false,
-                assemblyCompleted = false,
-                assemblyValid     = false
+            governanceView = emptyGovernanceView(),
+            executionView  = emptyExecutionView(),
+            auditView      = AuditView(
+                intent    = IntentStructuralState(structurallyComplete = true),
+                contracts = ContractStructuralState(generated = true, valid = true),
+                execution = ExecutionStructuralState(1, 1, 0, 0, fullyExecuted = false),
+                assembly  = AssemblyStructuralState(
+                    assemblyStarted   = true,
+                    assemblyValidated = false,
+                    assemblyCompleted = false,
+                    assemblyValid     = false
+                ),
+                executionValid = false, assemblyValid = false,
+                icsValid = false, commitValid = false
             )
         )
         val result = validator.validate(state)
@@ -111,14 +145,20 @@ class AssemblyValidationTest {
     @Test
     fun `assembly_validated before assembly_started is an illegal transition`() {
         val state = ReplayStructuralState(
-            intent    = IntentStructuralState(structurallyComplete = true),
-            contracts = ContractStructuralState(generated = true, valid = true),
-            execution = ExecutionStructuralState(1, 1, 1, 1, fullyExecuted = true),
-            assembly  = AssemblyStructuralState(
-                assemblyStarted   = false,
-                assemblyValidated = true,
-                assemblyCompleted = false,
-                assemblyValid     = false
+            governanceView = emptyGovernanceView(),
+            executionView  = emptyExecutionView(),
+            auditView      = AuditView(
+                intent    = IntentStructuralState(structurallyComplete = true),
+                contracts = ContractStructuralState(generated = true, valid = true),
+                execution = ExecutionStructuralState(1, 1, 1, 1, fullyExecuted = true),
+                assembly  = AssemblyStructuralState(
+                    assemblyStarted   = false,
+                    assemblyValidated = true,
+                    assemblyCompleted = false,
+                    assemblyValid     = false
+                ),
+                executionValid = true, assemblyValid = false,
+                icsValid = false, commitValid = false
             )
         )
         val result = validator.validate(state)
@@ -142,7 +182,9 @@ class AssemblyValidationTest {
     @Test
     fun `invalid state produces identical results on repeated calls`() {
         val state   = validState().copy(
-            execution = ExecutionStructuralState(1, 1, 1, 1, fullyExecuted = false)
+            auditView = validState().auditView.copy(
+                execution = ExecutionStructuralState(1, 1, 1, 1, fullyExecuted = false)
+            )
         )
         val first   = validator.validate(state)
         val second  = validator.validate(state)
