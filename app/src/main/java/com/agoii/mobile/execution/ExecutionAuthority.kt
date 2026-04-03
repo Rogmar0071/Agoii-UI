@@ -59,6 +59,7 @@ class ExecutionAuthority(
 ) {
 
     private val nemoClawAdapter = NemoClawAdapter()
+    private val resolutionLayer = ExecutionResolutionLayer()
 
     companion object {
         /**
@@ -151,11 +152,12 @@ class ExecutionAuthority(
     /**
      * Execute task from ledger when TASK_STARTED is the last event.
      *
+     * CONTRACT: AGOII–EXECUTION-RESOLUTION-LAYER-001
+     *
      * Flow:
-     *   1. Check last event type
-     *   2. If TASK_STARTED → execute task
-     *   3. If TASK_EXECUTED(FAILURE) → emit RECOVERY_CONTRACT (P1 handler)
-     *   4. Otherwise → NotTriggered
+     *   1. ExecutionAuthority DECIDES (pure, side-effect free)
+     *   2. ResolutionLayer COMMITS (translates decision → event)
+     *   3. Ledger STORES (persists events)
      *
      * Convergence Enforcement:
      *   - Track recovery chains per contractId
@@ -175,11 +177,18 @@ class ExecutionAuthority(
         val lastEvent = events.lastOrNull()
             ?: return ExecutionAuthorityExecutionResult.NotTriggered
 
-        return when (lastEvent.type) {
+        // RULE 1: ExecutionAuthority DECIDES (pure decision gate)
+        val result = when (lastEvent.type) {
             EventTypes.TASK_STARTED -> handleTaskStarted(projectId, lastEvent, events, ledger)
             EventTypes.TASK_EXECUTED -> handleTaskExecuted(projectId, lastEvent, events, ledger)
             else -> ExecutionAuthorityExecutionResult.NotTriggered
         }
+        
+        // RULE 2: ResolutionLayer COMMITS (decision → event translation)
+        // CONTRACT: AGOII–EXECUTION-RESOLUTION-LAYER-001
+        resolutionLayer.resolve(result, projectId, ledger, events)
+        
+        return result
     }
 
     /**
@@ -439,7 +448,11 @@ class ExecutionAuthority(
     /**
      * Handle TASK_EXECUTED(FAILURE) event — P1 recovery handler.
      *
-     * Emits RECOVERY_CONTRACT with source=EXECUTION_AUTHORITY.
+     * CONTRACT: AGOII–EXECUTION-AUTHORITY-PURITY-002
+     * CONTRACT: AGOII–EXECUTION-RESOLUTION-LAYER-001
+     *
+     * PURE DECISION GATE: Returns result without side effects.
+     * ResolutionLayer handles recovery emission based on result.
      *
      * CONTRACT: Section 3.5 — Convergence Limit Enforcement
      * CONTRACT: Section 3.6 — Failure Escalation
@@ -460,43 +473,8 @@ class ExecutionAuthority(
 
         val contractId = taskEvent.payload["contractId"]?.toString() ?: taskId
 
-        // RULE 3.5: Check convergence ceiling
-        val recoveryCount = countRecoveryAttempts(events, contractId)
-        if (recoveryCount >= MAX_DELTA) {
-            // Emit CONTRACT_FAILED (convergence ceiling reached)
-            ledger.appendEvent(
-                projectId,
-                EventTypes.CONTRACT_FAILED,
-                mapOf(
-                    "contractId" to contractId,
-                    "reason" to "NON_CONVERGENT_SYSTEM",
-                    "recoveryAttempts" to recoveryCount,
-                    "maxDelta" to MAX_DELTA
-                )
-            )
-            return ExecutionAuthorityExecutionResult.Blocked(
-                "Convergence ceiling reached for $contractId ($recoveryCount >= $MAX_DELTA)"
-            )
-        }
-
-        // Emit RECOVERY_CONTRACT (P1 handler)
-        val recoveryId = deriveRecoveryId(projectId, contractId, recoveryCount)
-        val reportReference = extractReportReference(events, contractId)
-
-        ledger.appendEvent(
-            projectId,
-            EventTypes.RECOVERY_CONTRACT,
-            mapOf(
-                "recoveryId" to recoveryId,
-                "contractId" to contractId,
-                "taskId" to contractId, // Delta uses contractId as taskId
-                "report_reference" to reportReference,
-                "failureClass" to FailureClass.VALIDATION_FAILURE.name,
-                "violationField" to "unknown", // TODO: Extract from failure context
-                "source" to RECOVERY_SOURCE
-            )
-        )
-
+        // PURE DECISION: Return Executed(FAILURE) to trigger recovery via ResolutionLayer
+        // ResolutionLayer will check convergence ceiling and emit appropriate events
         return ExecutionAuthorityExecutionResult.Executed(
             taskId,
             ExecutionStatus.FAILURE,
