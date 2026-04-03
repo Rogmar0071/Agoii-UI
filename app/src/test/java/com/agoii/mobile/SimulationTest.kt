@@ -49,7 +49,7 @@ class SimulationTest {
     private fun emptyExecutionView() = ExecutionView(
         taskStatus = emptyMap(), icsStarted = false, icsCompleted = false,
         commitContractExists = false, commitExecuted = false,
-        commitAborted = false, commitPending = false
+        commitAborted = false
     )
 
     private fun idleState() = ReplayStructuralState(
@@ -58,12 +58,13 @@ class SimulationTest {
         auditView      = AuditView(
             intent    = IntentStructuralState(structurallyComplete = false),
             contracts = ContractStructuralState(generated = false, valid = false),
-            execution = ExecutionStructuralState(0, 0, 0, 0, false),
-            assembly  = AssemblyStructuralState(false, false, false, false),
-            executionValid = false,
-            assemblyValid  = false,
-            icsValid       = false,
-            commitValid    = false
+            execution = ExecutionStructuralState(0, 0, 0, 0),
+            assembly  = AssemblyStructuralState(false, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 
@@ -73,12 +74,13 @@ class SimulationTest {
         auditView      = AuditView(
             intent    = IntentStructuralState(structurallyComplete = true),
             contracts = ContractStructuralState(generated = true, valid = true),
-            execution = ExecutionStructuralState(3, 1, 0, 0, false),
-            assembly  = AssemblyStructuralState(false, false, false, false),
-            executionValid = false,
-            assemblyValid  = false,
-            icsValid       = false,
-            commitValid    = false
+            execution = ExecutionStructuralState(3, 1, 0, 0),
+            assembly  = AssemblyStructuralState(false, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 
@@ -88,12 +90,13 @@ class SimulationTest {
         auditView      = AuditView(
             intent    = IntentStructuralState(structurallyComplete = true),
             contracts = ContractStructuralState(generated = true, valid = true),
-            execution = ExecutionStructuralState(3, 3, 3, 3, true),
-            assembly  = AssemblyStructuralState(false, false, false, false),
-            executionValid = true,
-            assemblyValid  = false,
-            icsValid       = false,
-            commitValid    = false
+            execution = ExecutionStructuralState(3, 3, 3, 3),
+            assembly  = AssemblyStructuralState(false, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 
@@ -103,12 +106,13 @@ class SimulationTest {
         auditView      = AuditView(
             intent    = IntentStructuralState(structurallyComplete = true),
             contracts = ContractStructuralState(generated = true, valid = true),
-            execution = ExecutionStructuralState(3, 3, 3, 3, true),
-            assembly  = AssemblyStructuralState(true, true, true, true),
-            executionValid = true,
-            assemblyValid  = true,
-            icsValid       = false,
-            commitValid    = false
+            execution = ExecutionStructuralState(3, 3, 3, 3),
+            assembly  = AssemblyStructuralState(true, true, true),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 
@@ -118,12 +122,13 @@ class SimulationTest {
         auditView      = AuditView(
             intent    = IntentStructuralState(structurallyComplete = true),
             contracts = ContractStructuralState(generated = true, valid = true),
-            execution = ExecutionStructuralState(3, 3, 3, 3, true),
-            assembly  = AssemblyStructuralState(true, false, false, false),
-            executionValid = true,
-            assemblyValid  = false,
-            icsValid       = false,
-            commitValid    = false
+            execution = ExecutionStructuralState(3, 3, 3, 3),
+            assembly  = AssemblyStructuralState(true, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 

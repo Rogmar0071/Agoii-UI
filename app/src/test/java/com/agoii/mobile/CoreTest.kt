@@ -64,6 +64,25 @@ import org.junit.Test
  */
 class CoreTest {
 
+    // ── Helper functions for computed derived fields ───────────────────────
+
+    private fun fullyExecuted(state: com.agoii.mobile.core.ReplayStructuralState): Boolean {
+        val exec = state.auditView.execution
+        return exec.totalTasks > 0 && exec.validatedTasks == exec.totalTasks
+    }
+
+    private fun executionValid(state: com.agoii.mobile.core.ReplayStructuralState): Boolean {
+        val gov = state.governanceView
+        val exec = state.auditView.execution
+        return gov.totalContracts > 0 && exec.successfulTasks == gov.totalContracts
+    }
+
+    private fun assemblyValid(state: com.agoii.mobile.core.ReplayStructuralState): Boolean {
+        val asm = state.auditView.assembly
+        val execValid = executionValid(state)
+        return asm.assemblyStarted && asm.assemblyCompleted && execValid
+    }
+
     // ── Replay tests ─────────────────────────────────────────────────────────
 
     @Test
@@ -76,11 +95,11 @@ class CoreTest {
         assertEquals(0, state.auditView.execution.assignedTasks)
         assertEquals(0, state.auditView.execution.completedTasks)
         assertEquals(0, state.auditView.execution.validatedTasks)
-        assertFalse(state.auditView.execution.fullyExecuted)
+        assertFalse(fullyExecuted(state))
         assertFalse(state.auditView.assembly.assemblyStarted)
         assertFalse(state.auditView.assembly.assemblyValidated)
         assertFalse(state.auditView.assembly.assemblyCompleted)
-        assertFalse(state.auditView.assembly.assemblyValid)
+        assertFalse(assemblyValid(state))
     }
 
     @Test
@@ -123,7 +142,7 @@ class CoreTest {
         assertEquals(1, state.auditView.execution.assignedTasks)
         assertEquals(1, state.auditView.execution.completedTasks)
         assertEquals(0, state.auditView.execution.validatedTasks)
-        assertFalse(state.auditView.execution.fullyExecuted)
+        assertFalse(fullyExecuted(state))
     }
 
     @Test
@@ -146,7 +165,7 @@ class CoreTest {
         assertEquals(1, state.auditView.execution.totalTasks)
         assertEquals(1, state.auditView.execution.completedTasks)
         assertEquals(1, state.auditView.execution.validatedTasks)
-        assertTrue(state.auditView.execution.fullyExecuted)
+        assertTrue(fullyExecuted(state))
         assertFalse(state.auditView.assembly.assemblyStarted)
     }
 
@@ -170,11 +189,11 @@ class CoreTest {
             Event("assembly_completed",  emptyMap())
         )
         val state = Replay(store()).deriveStructuralState(events)
-        assertTrue(state.auditView.execution.fullyExecuted)
+        assertTrue(fullyExecuted(state))
         assertTrue(state.auditView.assembly.assemblyStarted)
         assertTrue(state.auditView.assembly.assemblyValidated)
         assertTrue(state.auditView.assembly.assemblyCompleted)
-        assertTrue(state.auditView.assembly.assemblyValid)
+        assertTrue(assemblyValid(state))
     }
 
     // ── LedgerAudit tests ────────────────────────────────────────────────────
@@ -342,8 +361,8 @@ class CoreTest {
         val result = ReplayTest(store(events)).verifyReplay("proj")
         // audit passes (legal transitions), but structuralState.assembly.assemblyValid=false
         // because no task_created/completed/validated events exist (fullyExecuted=false)
-        assertFalse(result.structuralState.assembly.assemblyValid)
-        assertFalse(result.structuralState.execution.fullyExecuted)
+        assertFalse(assemblyValid(result.structuralState))
+        assertFalse(fullyExecuted(result.structuralState))
         assertTrue(result.invariantErrors.isEmpty())
     }
 
@@ -369,7 +388,7 @@ class CoreTest {
         )
         val state = Replay(store()).deriveStructuralState(events)
         // fullyExecuted is true: totalTasks=1, completedTasks=1, validatedTasks=1, executionCompleted
-        assertTrue(state.auditView.execution.fullyExecuted)
+        assertTrue(fullyExecuted(state))
         // but assignedTasks=0 != totalTasks=1
         assertEquals(0, state.auditView.execution.assignedTasks)
         assertEquals(1, state.auditView.execution.totalTasks)

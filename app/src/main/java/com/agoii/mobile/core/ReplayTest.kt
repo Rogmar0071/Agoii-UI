@@ -52,7 +52,21 @@ class ReplayTest(private val eventStore: EventRepository) {
         }
 
         // Invariant 4: assemblyValid requires fullyExecuted
-        if (state.auditView.assembly.assemblyValid && !state.auditView.execution.fullyExecuted) {
+        // fullyExecuted: totalTasks > 0 && validatedTasks == totalTasks
+        // assemblyValid: assemblyStarted && assemblyCompleted && executionValid
+        val fullyExecuted = state.auditView.execution.totalTasks > 0 && 
+                           state.auditView.execution.validatedTasks == state.auditView.execution.totalTasks
+        
+        // executionValid: totalContracts > 0 && successfulTasks == totalContracts
+        val executionValid = state.governanceView.totalContracts > 0 && 
+                            state.auditView.execution.successfulTasks == state.governanceView.totalContracts
+        
+        // assemblyValid: assemblyStarted && assemblyCompleted && executionValid
+        val assemblyValid = state.auditView.assembly.assemblyStarted && 
+                           state.auditView.assembly.assemblyCompleted && 
+                           executionValid
+        
+        if (assemblyValid && !fullyExecuted) {
             invariantErrors.add(
                 "Invariant: assemblyValid=true but fullyExecuted=false"
             )

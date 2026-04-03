@@ -46,7 +46,7 @@ class InteractionContractTest {
     private fun emptyExecutionView() = ExecutionView(
         taskStatus = emptyMap(), icsStarted = false, icsCompleted = false,
         commitContractExists = false, commitExecuted = false,
-        commitAborted = false, commitPending = false
+        commitAborted = false
     )
 
     private fun state(
@@ -66,19 +66,18 @@ class InteractionContractTest {
                 totalTasks     = if (fullyExecuted) 3 else assignedTasks,
                 assignedTasks  = assignedTasks,
                 completedTasks = if (fullyExecuted) 3 else 0,
-                validatedTasks = if (fullyExecuted) 3 else 0,
-                fullyExecuted  = fullyExecuted
+                validatedTasks = if (fullyExecuted) 3 else 0
             ),
             assembly  = AssemblyStructuralState(
                 assemblyStarted   = assemblyStarted,
                 assemblyValidated = assemblyValidated,
-                assemblyCompleted = assemblyCompleted,
-                assemblyValid     = assemblyStarted && assemblyValidated && assemblyCompleted && fullyExecuted
+                assemblyCompleted = assemblyCompleted
             ),
-            executionValid = fullyExecuted,
-            assemblyValid  = assemblyStarted && assemblyValidated && assemblyCompleted && fullyExecuted,
-            icsValid       = false,
-            commitValid    = false
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 

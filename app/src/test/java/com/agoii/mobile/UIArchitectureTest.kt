@@ -50,8 +50,7 @@ class UIArchitectureTest {
         icsCompleted         = false,
         commitContractExists = false,
         commitExecuted       = false,
-        commitAborted        = false,
-        commitPending        = false
+        commitAborted        = false
     )
 
     private fun idle() = ReplayStructuralState(
@@ -60,12 +59,13 @@ class UIArchitectureTest {
         auditView      = AuditView(
             intent    = IntentStructuralState(structurallyComplete = false),
             contracts = ContractStructuralState(generated = false, valid = false),
-            execution = ExecutionStructuralState(0, 0, 0, 0, false),
-            assembly  = AssemblyStructuralState(false, false, false, false),
-            executionValid = false,
-            assemblyValid  = false,
-            icsValid       = false,
-            commitValid    = false
+            execution = ExecutionStructuralState(0, 0, 0, 0),
+            assembly  = AssemblyStructuralState(false, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 
@@ -78,12 +78,13 @@ class UIArchitectureTest {
             // because each view serves a different authority.  In production both are derived from
             // the same CONTRACTS_GENERATED event so they always agree.
             contracts = ContractStructuralState(generated = true, valid = true, totalContracts = 1),
-            execution = ExecutionStructuralState(0, 0, 0, 0, false),
-            assembly  = AssemblyStructuralState(false, false, false, false),
-            executionValid = false,
-            assemblyValid  = false,
-            icsValid       = false,
-            commitValid    = false
+            execution = ExecutionStructuralState(0, 0, 0, 0),
+            assembly  = AssemblyStructuralState(false, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 
@@ -93,12 +94,13 @@ class UIArchitectureTest {
         auditView      = AuditView(
             intent    = IntentStructuralState(structurallyComplete = true),
             contracts = ContractStructuralState(generated = true, valid = true, totalContracts = 3),
-            execution = ExecutionStructuralState(3, 1, 0, 0, false),
-            assembly  = AssemblyStructuralState(false, false, false, false),
-            executionValid = false,
-            assemblyValid  = false,
-            icsValid       = false,
-            commitValid    = false
+            execution = ExecutionStructuralState(3, 1, 0, 0),
+            assembly  = AssemblyStructuralState(false, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 
@@ -108,12 +110,13 @@ class UIArchitectureTest {
         auditView      = AuditView(
             intent    = IntentStructuralState(structurallyComplete = true),
             contracts = ContractStructuralState(generated = true, valid = true, totalContracts = 3),
-            execution = ExecutionStructuralState(3, 3, 3, 3, true),
-            assembly  = AssemblyStructuralState(false, false, false, false),
-            executionValid = true,
-            assemblyValid  = false,
-            icsValid       = false,
-            commitValid    = false
+            execution = ExecutionStructuralState(3, 3, 3, 3),
+            assembly  = AssemblyStructuralState(false, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 
@@ -123,12 +126,13 @@ class UIArchitectureTest {
         auditView      = AuditView(
             intent    = IntentStructuralState(structurallyComplete = true),
             contracts = ContractStructuralState(generated = true, valid = true, totalContracts = 3),
-            execution = ExecutionStructuralState(3, 3, 3, 3, true),
-            assembly  = AssemblyStructuralState(true, true, true, true),
-            executionValid = true,
-            assemblyValid  = true,
-            icsValid       = false,
-            commitValid    = false
+            execution = ExecutionStructuralState(3, 3, 3, 3),
+            assembly  = AssemblyStructuralState(true, true, true),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 
