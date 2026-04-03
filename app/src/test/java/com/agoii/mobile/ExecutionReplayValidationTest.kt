@@ -13,6 +13,7 @@ import java.io.File
 
 /**
  * CONTRACT ID: AGOII–EXECUTION-REPLAY-VALIDATION-001
+ * CORRECTION: AGOII–EXECUTION-REPLAY-VALIDATION-CORRECTION-001
  *
  * CLASSIFICATION:
  *   - Class: Structural Validation
@@ -28,6 +29,16 @@ import java.io.File
  *   If replaying it does not reproduce the same state and outputs,
  *   the system is invalid.
  *
+ * CORRECTION CONTRACT ENFORCEMENT:
+ *   RULE 1: NO FALLBACK MODE - If NemoClaw unavailable → BLOCKED (not PASS)
+ *   RULE 2: FORCE REAL EXECUTION - Must use ExecutionAuthority → NemoClawAdapter → node process
+ *   RULE 3: HARD FAIL ON MISSING ARTIFACT - artifact == null → FAIL
+ *   RULE 4: STRICT EVENT COMPARISON - Full payload deep equality (exclude only timestamp)
+ *   RULE 5: FAIL ON EXTRA/MISSING EVENTS - len(original) ≠ len(replay) → FAIL
+ *   RULE 6: NO FUZZY MATCHING - original_event == replay_event (strict)
+ *   RULE 7: OUTPUT REAL RESULT - JSON format with status/checks/failure_reason/diff
+ *   RULE 8: BLOCKED CONDITION - NemoClaw unavailable → status = BLOCKED
+ *
  * VALIDATION ASSERTIONS:
  *   1. EVENT COUNT MATCH:    len(original) == len(replay)
  *   2. EVENT IDENTITY MATCH: ∀ i: original[i] == replay[i]
@@ -41,6 +52,9 @@ import java.io.File
  *
  * SUCCESS CONDITION:
  *   If ALL assertions pass → SYSTEM STATUS = DETERMINISTIC
+ *
+ * BLOCKED CONDITION:
+ *   If NemoClaw unavailable → SYSTEM STATUS = CANNOT VALIDATE
  */
 class ExecutionReplayValidationTest {
 
@@ -69,12 +83,14 @@ class ExecutionReplayValidationTest {
     data class ValidationResult(
         val status: ValidationStatus,
         val checks: ValidationChecks,
+        val failureReason: String? = null,
         val diff: String? = null
     )
 
     enum class ValidationStatus {
         PASS,
-        FAIL
+        FAIL,
+        BLOCKED
     }
 
     data class ValidationChecks(
@@ -122,13 +138,32 @@ class ExecutionReplayValidationTest {
         // Verify NemoClaw is available (required for execution)
         val nemoClawScript = File("execution/nemoclaw/execute.js")
         if (!nemoClawScript.exists()) {
-            println("⚠ NemoClaw not found at: ${nemoClawScript.absolutePath}")
-            println("⚠ This test requires NemoClaw to be embedded in execution/nemoclaw/")
-            println("⚠ Skipping execution validation (testing event replay logic only)")
+            // RULE 1 & RULE 8: NO FALLBACK MODE
+            // If NemoClaw cannot run, test MUST return BLOCKED
+            val blockedResult = ValidationResult(
+                status = ValidationStatus.BLOCKED,
+                checks = ValidationChecks(
+                    eventCount = false,
+                    eventIdentity = false,
+                    finalState = false,
+                    artifactHash = false,
+                    noExtraEvents = false,
+                    noMissingEvents = false
+                ),
+                failureReason = "NEMOCLAW_UNAVAILABLE",
+                diff = "NemoClaw not found at: ${nemoClawScript.absolutePath}. This test requires real execution via NemoClaw."
+            )
             
-            // Run a simplified validation without execution
-            runSimplifiedReplayValidation(originalLedger)
-            return
+            printValidationResult(blockedResult)
+            
+            println("\n═══════════════════════════════════════════════════════════")
+            println("✗ CONTRACT AGOII-EXECUTION-REPLAY-VALIDATION-001: BLOCKED")
+            println("✗ SYSTEM STATUS: CANNOT VALIDATE (NemoClaw unavailable)")
+            println("✗ TEST RESULT: BLOCKED")
+            println("═══════════════════════════════════════════════════════════")
+            
+            // Fail the test - BLOCKED is a test failure
+            fail("Test BLOCKED: NemoClaw unavailable at ${nemoClawScript.absolutePath}")
         }
 
         println("✓ NemoClaw found at: ${nemoClawScript.absolutePath}")
@@ -286,32 +321,63 @@ class ExecutionReplayValidationTest {
     ): ValidationResult {
         val diffMessages = mutableListOf<String>()
 
-        // CHECK 1: EVENT COUNT MATCH
+        // CHECK 1: EVENT COUNT MATCH (RULE 5)
         val eventCountMatch = originalEvents.size == replayEvents.size
         if (!eventCountMatch) {
             diffMessages.add(
-                "Event count mismatch: original=${originalEvents.size}, replay=${replayEvents.size}"
+                "EVENT_STREAM_MISMATCH: Event count mismatch: original=${originalEvents.size}, replay=${replayEvents.size}"
+            )
+            // RULE 5: FAIL immediately on count mismatch
+            return ValidationResult(
+                status = ValidationStatus.FAIL,
+                checks = ValidationChecks(
+                    eventCount = false,
+                    eventIdentity = false,
+                    finalState = false,
+                    artifactHash = false,
+                    noExtraEvents = false,
+                    noMissingEvents = false
+                ),
+                failureReason = "EVENT_STREAM_MISMATCH",
+                diff = diffMessages.joinToString("\n")
             )
         }
 
-        // CHECK 2: EVENT IDENTITY MATCH
+        // CHECK 2: EVENT IDENTITY MATCH (RULE 4 & RULE 6)
         var eventIdentityMatch = true
-        val minSize = minOf(originalEvents.size, replayEvents.size)
-        for (i in 0 until minSize) {
+        for (i in originalEvents.indices) {
             val orig = originalEvents[i]
             val repl = replayEvents[i]
 
-            // Compare event types
+            // Compare event types (STRICT)
             if (orig.type != repl.type) {
                 eventIdentityMatch = false
                 diffMessages.add("Event[$i] type mismatch: ${orig.type} != ${repl.type}")
             }
 
-            // Compare payloads (excluding timestamps and IDs which may vary)
-            if (!payloadsMatch(orig.payload, repl.payload)) {
+            // Compare payloads (STRICT - RULE 6: no fuzzy matching)
+            if (!payloadsMatchStrict(orig.payload, repl.payload)) {
                 eventIdentityMatch = false
                 diffMessages.add("Event[$i] payload mismatch")
             }
+        }
+
+        // RULE 3: HARD FAIL ON MISSING ARTIFACT
+        val artifactValidation = validateArtifactsStrict(originalEvents, replayEvents, diffMessages)
+        if (!artifactValidation) {
+            return ValidationResult(
+                status = ValidationStatus.FAIL,
+                checks = ValidationChecks(
+                    eventCount = eventCountMatch,
+                    eventIdentity = eventIdentityMatch,
+                    finalState = false,
+                    artifactHash = false,
+                    noExtraEvents = true,
+                    noMissingEvents = true
+                ),
+                failureReason = "MISSING_ARTIFACT",
+                diff = diffMessages.joinToString("\n")
+            )
         }
 
         // CHECK 3: FINAL STATE MATCH
@@ -345,14 +411,29 @@ class ExecutionReplayValidationTest {
             ValidationStatus.FAIL
         }
 
+        val failureReason = if (status == ValidationStatus.FAIL) {
+            when {
+                !eventCountMatch -> "EVENT_STREAM_MISMATCH"
+                !eventIdentityMatch -> "EVENT_IDENTITY_MISMATCH"
+                !finalStateMatch -> "FINAL_STATE_MISMATCH"
+                !artifactHashMatch -> "ARTIFACT_HASH_MISMATCH"
+                else -> "VALIDATION_FAILURE"
+            }
+        } else null
+
         return ValidationResult(
             status = status,
             checks = allChecks,
+            failureReason = failureReason,
             diff = if (diffMessages.isNotEmpty()) diffMessages.joinToString("\n") else null
         )
     }
 
-    private fun payloadsMatch(payload1: Map<String, Any>, payload2: Map<String, Any>): Boolean {
+    /**
+     * RULE 6: STRICT payload comparison - NO fuzzy matching.
+     * RULE 4: Only exclude timestamp and proven non-deterministic IDs.
+     */
+    private fun payloadsMatchStrict(payload1: Map<String, Any>, payload2: Map<String, Any>): Boolean {
         // Compare all keys except auto-generated ones defined in EXCLUDED_PAYLOAD_KEYS
         val keys1 = payload1.keys.filterNot { it in EXCLUDED_PAYLOAD_KEYS }
         val keys2 = payload2.keys.filterNot { it in EXCLUDED_PAYLOAD_KEYS }
@@ -363,37 +444,72 @@ class ExecutionReplayValidationTest {
             val val1 = payload1[key]
             val val2 = payload2[key]
             
-            // Deep compare (handle nested maps/lists)
-            if (!valuesEqual(val1, val2)) return false
+            // RULE 6: Deep compare - STRICT equality (no fuzzy matching)
+            if (!valuesEqualStrict(val1, val2)) return false
         }
 
         return true
     }
 
-    private fun valuesEqual(val1: Any?, val2: Any?): Boolean {
+    /**
+     * RULE 6: STRICT value comparison - original_event == replay_event
+     */
+    private fun valuesEqualStrict(val1: Any?, val2: Any?): Boolean {
         return when {
             val1 === val2 -> true
             val1 == null || val2 == null -> false
-            val1 is Map<*, *> && val2 is Map<*, *> -> mapsEqual(val1, val2)
-            val1 is List<*> && val2 is List<*> -> listsEqual(val1, val2)
+            val1 is Map<*, *> && val2 is Map<*, *> -> mapsEqualStrict(val1, val2)
+            val1 is List<*> && val2 is List<*> -> listsEqualStrict(val1, val2)
             else -> val1 == val2
         }
     }
 
     @Suppress("UNCHECKED_CAST")
-    private fun mapsEqual(map1: Map<*, *>, map2: Map<*, *>): Boolean {
+    private fun mapsEqualStrict(map1: Map<*, *>, map2: Map<*, *>): Boolean {
         if (map1.size != map2.size) return false
         for (key in map1.keys) {
-            if (!valuesEqual(map1[key], map2[key])) return false
+            if (!valuesEqualStrict(map1[key], map2[key])) return false
         }
         return true
     }
 
-    private fun listsEqual(list1: List<*>, list2: List<*>): Boolean {
+    private fun listsEqualStrict(list1: List<*>, list2: List<*>): Boolean {
         if (list1.size != list2.size) return false
         for (i in list1.indices) {
-            if (!valuesEqual(list1[i], list2[i])) return false
+            if (!valuesEqualStrict(list1[i], list2[i])) return false
         }
+        return true
+    }
+
+    /**
+     * RULE 3: HARD FAIL ON MISSING ARTIFACT
+     * Any execution event with null artifact → FAIL
+     */
+    private fun validateArtifactsStrict(
+        originalEvents: List<Event>,
+        replayEvents: List<Event>,
+        diffMessages: MutableList<String>
+    ): Boolean {
+        val originalTaskExecuted = originalEvents.filter { it.type == EventTypes.TASK_EXECUTED }
+        val replayTaskExecuted = replayEvents.filter { it.type == EventTypes.TASK_EXECUTED }
+
+        for (i in originalTaskExecuted.indices) {
+            @Suppress("UNCHECKED_CAST")
+            val origArtifact = originalTaskExecuted[i].payload["artifact"] as? Map<String, Any>
+            @Suppress("UNCHECKED_CAST")
+            val replArtifact = replayTaskExecuted[i].payload["artifact"] as? Map<String, Any>
+
+            // RULE 3: If artifact is null → FAIL
+            if (origArtifact == null) {
+                diffMessages.add("MISSING_ARTIFACT: Original event[$i] has null artifact")
+                return false
+            }
+            if (replArtifact == null) {
+                diffMessages.add("MISSING_ARTIFACT: Replay event[$i] has null artifact")
+                return false
+            }
+        }
+
         return true
     }
 
@@ -467,42 +583,6 @@ class ExecutionReplayValidationTest {
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    // Simplified Validation (No Execution)
-    // ══════════════════════════════════════════════════════════════════════════
-
-    private fun runSimplifiedReplayValidation(ledger: EventLedger) {
-        println("\n[SIMPLIFIED VALIDATION] Testing replay logic without execution")
-        println("──────────────────────────────────────────────────────────────")
-
-        val store = InMemoryEventStore()
-        val simpleLedger = EventLedger(store)
-
-        // Create a simple event stream
-        simpleLedger.appendEvent(TEST_PROJECT_ID, EventTypes.PROJECT_CREATED, mapOf("projectId" to TEST_PROJECT_ID))
-        simpleLedger.appendEvent(TEST_PROJECT_ID, EventTypes.CONTRACTS_GENERATED, mapOf("totalCount" to 1, "report_reference" to TEST_REPORT_REFERENCE))
-
-        val originalEvents = store.copyEvents(TEST_PROJECT_ID)
-        val originalState = simpleLedger.replayState(TEST_PROJECT_ID)
-
-        // Clear and replay
-        store.clearLedger(TEST_PROJECT_ID)
-        for (event in originalEvents) {
-            simpleLedger.appendEvent(TEST_PROJECT_ID, event.type, event.payload)
-        }
-
-        val replayEvents = store.copyEvents(TEST_PROJECT_ID)
-        val replayState = simpleLedger.replayState(TEST_PROJECT_ID)
-
-        // Validate
-        assertEquals("Event count must match", originalEvents.size, replayEvents.size)
-        assertEquals("Last event type must match", originalState.governanceView.lastEventType, replayState.governanceView.lastEventType)
-
-        println("✓ Simplified replay validation passed")
-        println("✓ Event count: ${originalEvents.size}")
-        println("✓ State derivation: deterministic")
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
     // Helper Functions
     // ══════════════════════════════════════════════════════════════════════════
 
@@ -520,6 +600,9 @@ class ExecutionReplayValidationTest {
         println("\n  VALIDATION RESULTS:")
         println("  ─────────────────────────────────────────────────")
         println("  Status: ${result.status}")
+        if (result.failureReason != null) {
+            println("  Failure Reason: ${result.failureReason}")
+        }
         println("  ─────────────────────────────────────────────────")
         println("  ✓ Event Count Match:      ${result.checks.eventCount}")
         println("  ✓ Event Identity Match:   ${result.checks.eventIdentity}")
@@ -533,5 +616,25 @@ class ExecutionReplayValidationTest {
             println("\n  DIFF REPORT:")
             println("  ${result.diff}")
         }
+        
+        // RULE 7: Output real result in specified format
+        println("\n  JSON OUTPUT:")
+        println("  {")
+        println("    \"status\": \"${result.status}\",")
+        println("    \"checks\": {")
+        println("      \"event_count\": ${result.checks.eventCount},")
+        println("      \"event_identity\": ${result.checks.eventIdentity},")
+        println("      \"final_state\": ${result.checks.finalState},")
+        println("      \"artifact_hash\": ${result.checks.artifactHash},")
+        println("      \"no_extra_events\": ${result.checks.noExtraEvents},")
+        println("      \"no_missing_events\": ${result.checks.noMissingEvents}")
+        println("    }")
+        if (result.failureReason != null) {
+            println("    \"failure_reason\": \"${result.failureReason}\"")
+        }
+        if (result.diff != null) {
+            println("    \"diff\": \"${result.diff.replace("\"", "\\\"")}\"")
+        }
+        println("  }")
     }
 }
