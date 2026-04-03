@@ -59,9 +59,11 @@ class ExecutionAuthority(
 ) {
 
     // AGOII–EXECUTION-ADAPTER-001: NemoClaw process adapter
+    // NOTE: Path is a PLACEHOLDER - actual NemoClaw path must be configured externally
+    // TODO: Inject via configuration or constructor parameter
     private val nemoClawAdapter = NemoClawAdapter(
         nemoClawExecutable = "node",
-        nemoClawScript     = "/path/to/nemoclaw/execute.js",
+        nemoClawScript     = "/path/to/nemoclaw/execute.js", // PLACEHOLDER - configure externally
         defaultTimeoutMs   = 60000L
     )
 

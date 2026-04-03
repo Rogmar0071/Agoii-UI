@@ -50,13 +50,19 @@ import java.util.concurrent.TimeUnit
  *
  * NO LOGIC, NO DECISIONS, NO RETRIES.
  *
+ * CONFIGURATION NOTE:
+ *   The default nemoClawScript path is a placeholder and MUST be configured
+ *   externally (via dependency injection or configuration file) before use.
+ *   Production systems should inject actual NemoClaw path via constructor.
+ *
  * @property nemoClawExecutable Path to NemoClaw executable (e.g., "node", "nemoclaw")
- * @property nemoClawScript     Path to NemoClaw script (e.g., "/path/to/execute.js")
+ * @property nemoClawScript     Path to NemoClaw script (e.g., "/actual/path/to/execute.js")
+ *                              Use empty string if nemoClawExecutable is itself a script.
  * @property defaultTimeoutMs   Default timeout in milliseconds (60000 = 60s)
  */
 class NemoClawAdapter(
     private val nemoClawExecutable: String = "node",
-    private val nemoClawScript:     String = "/path/to/nemoclaw/execute.js",
+    private val nemoClawScript:     String = "/path/to/nemoclaw/execute.js", // PLACEHOLDER - configure externally
     private val defaultTimeoutMs:   Long   = 60000L
 ) {
 
@@ -93,17 +99,24 @@ class NemoClawAdapter(
             return createFailureReport(executionId, "CONTRACT_SERIALIZATION_FAILED", e.message)
         }
 
-        // STEP 2: Write contract to temp file
+        // STEP 2: Write contract to temp file with restricted permissions
         val contractFile = try {
-            writeTempFile(contractJson)
+            writeTempFileSecure(contractJson)
         } catch (e: Exception) {
             return createFailureReport(executionId, "TEMP_FILE_CREATION_FAILED", e.message)
         }
 
         try {
             // STEP 3: Launch NemoClaw process
+            // Build command: if nemoClawScript is blank, use executable directly
+            // Otherwise, use executable with script as argument
             val process = try {
-                ProcessBuilder(nemoClawExecutable, nemoClawScript, contractFile.absolutePath)
+                val command = if (nemoClawScript.isBlank()) {
+                    listOf(nemoClawExecutable, contractFile.absolutePath)
+                } else {
+                    listOf(nemoClawExecutable, nemoClawScript, contractFile.absolutePath)
+                }
+                ProcessBuilder(command)
                     .redirectErrorStream(false) // Keep stderr separate (logged but ignored)
                     .start()
             } catch (e: Exception) {
@@ -224,13 +237,20 @@ class NemoClawAdapter(
     }
 
     /**
-     * Write JSON to temporary file.
+     * Write JSON to temporary file with restricted permissions.
+     *
+     * Security: Sets file to be readable/writable only by owner (600 permissions).
      *
      * @param json JSON string.
      * @return Temp file.
      */
-    private fun writeTempFile(json: String): File {
+    private fun writeTempFileSecure(json: String): File {
         val tempFile = File.createTempFile("agoii_contract_", ".json")
+        // Restrict permissions: owner read/write only (no group/other access)
+        tempFile.setReadable(false, false)   // Remove read for all
+        tempFile.setWritable(false, false)   // Remove write for all
+        tempFile.setReadable(true, true)     // Add read for owner only
+        tempFile.setWritable(true, true)     // Add write for owner only
         tempFile.writeText(json)
         return tempFile
     }
