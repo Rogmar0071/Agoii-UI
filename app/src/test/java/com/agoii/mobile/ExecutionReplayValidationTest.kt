@@ -53,6 +53,13 @@ class ExecutionReplayValidationTest {
         private const val TEST_TASK_ID = "test-task-001"
         private const val TEST_CONTRACT_ID = "test-contract-001"
         private const val TEST_REPORT_REFERENCE = "test-rrid-001"
+        
+        /**
+         * Keys to exclude from payload comparison (auto-generated, non-deterministic).
+         */
+        private val EXCLUDED_PAYLOAD_KEYS = setOf(
+            "timestamp", "Timestamp", "createdAt", "updatedAt"
+        )
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -77,7 +84,16 @@ class ExecutionReplayValidationTest {
         val artifactHash: Boolean,
         val noExtraEvents: Boolean,
         val noMissingEvents: Boolean
-    )
+    ) {
+        /**
+         * Check if all validation checks pass.
+         * 
+         * @return true if ALL checks pass, false otherwise.
+         */
+        fun allPass(): Boolean = 
+            eventCount && eventIdentity && finalState && 
+            artifactHash && noExtraEvents && noMissingEvents
+    }
 
     // ══════════════════════════════════════════════════════════════════════════
     // Core Test: Full Determinism Validation
@@ -308,6 +324,9 @@ class ExecutionReplayValidationTest {
         val artifactHashMatch = validateArtifactHashes(originalEvents, replayEvents, diffMessages)
 
         // CHECK 5 & 6: NO EXTRA/MISSING EVENTS
+        // Note: These checks are technically redundant with eventCountMatch.
+        // They are kept explicit per CONTRACT specification for clarity and traceability.
+        // The contract requires six distinct validation checks to be reported.
         val noExtraEvents = replayEvents.size <= originalEvents.size
         val noMissingEvents = replayEvents.size >= originalEvents.size
 
@@ -320,9 +339,7 @@ class ExecutionReplayValidationTest {
             noMissingEvents = noMissingEvents
         )
 
-        val status = if (allChecks.eventCount && allChecks.eventIdentity && 
-                         allChecks.finalState && allChecks.artifactHash &&
-                         allChecks.noExtraEvents && allChecks.noMissingEvents) {
+        val status = if (allChecks.allPass()) {
             ValidationStatus.PASS
         } else {
             ValidationStatus.FAIL
@@ -336,9 +353,9 @@ class ExecutionReplayValidationTest {
     }
 
     private fun payloadsMatch(payload1: Map<String, Any>, payload2: Map<String, Any>): Boolean {
-        // Compare all keys except timestamps and auto-generated IDs
-        val keys1 = payload1.keys.filterNot { it.contains("timestamp") || it.contains("Timestamp") }
-        val keys2 = payload2.keys.filterNot { it.contains("timestamp") || it.contains("Timestamp") }
+        // Compare all keys except auto-generated ones defined in EXCLUDED_PAYLOAD_KEYS
+        val keys1 = payload1.keys.filterNot { it in EXCLUDED_PAYLOAD_KEYS }
+        val keys2 = payload2.keys.filterNot { it in EXCLUDED_PAYLOAD_KEYS }
 
         if (keys1.toSet() != keys2.toSet()) return false
 
