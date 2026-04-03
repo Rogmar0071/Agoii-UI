@@ -8,6 +8,7 @@ import com.agoii.mobile.contracts.UniversalContract
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.execution.adapter.NemoClawAdapter
 
 // ══════════════════════════════════════════════════════════════════════════════
 // AGOII-CONVERGENCE-ENFORCEMENT-LOCK-003
@@ -56,6 +57,13 @@ class ExecutionAuthority(
     private val contractorRegistry: ContractorRegistry,
     private val driverRegistry:     DriverRegistry
 ) {
+
+    // AGOII–EXECUTION-ADAPTER-001: NemoClaw process adapter
+    private val nemoClawAdapter = NemoClawAdapter(
+        nemoClawExecutable = "node",
+        nemoClawScript     = "/path/to/nemoclaw/execute.js",
+        defaultTimeoutMs   = 60000L
+    )
 
     companion object {
         /**
@@ -202,13 +210,50 @@ class ExecutionAuthority(
         val taskId = taskEvent.payload["taskId"]?.toString()
             ?: return ExecutionAuthorityExecutionResult.Blocked("taskId missing in TASK_STARTED")
 
-        val contractId = taskEvent.payload["contractId"]?.toString()
-            ?: return ExecutionAuthorityExecutionResult.Blocked("contractId missing in TASK_STARTED")
+        // Extract contractId and report_reference from TASK_ASSIGNED event
+        // (Governor doesn't pass these through to TASK_STARTED, so we look them up)
+        val taskAssignedEvent = events.findLast { event ->
+            event.type == EventTypes.TASK_ASSIGNED &&
+            event.payload["taskId"]?.toString() == taskId
+        }
 
-        // TODO(Phase 2): Implement actual task execution via ContractorExecutor
-        // When wired: ContractorExecutor.execute() → ContractorExecutionOutput.artifact → ExecutionReport
-        // Reference: ARTIFACT_SPINE_IMPLEMENTATION_REPORT.md Section "Future Integration Points"
-        val executionReport: ExecutionReport? = null // Placeholder until execution integration
+        val contractId = taskAssignedEvent?.payload?.get("contractId")?.toString()
+            ?: return ExecutionAuthorityExecutionResult.Blocked("contractId not found in TASK_ASSIGNED for taskId: $taskId")
+
+        val reportReference = taskAssignedEvent.payload["report_reference"]?.toString()
+            ?: return ExecutionAuthorityExecutionResult.Blocked("report_reference not found in TASK_ASSIGNED for taskId: $taskId")
+
+        val position = taskEvent.payload["position"]?.toString()?.toIntOrNull()
+            ?: return ExecutionAuthorityExecutionResult.Blocked("position missing in TASK_STARTED")
+
+        val contractName = taskAssignedEvent.payload["name"]?.toString()
+            ?: "Task-$contractId" // Fallback if name not present
+
+        // AGOII–EXECUTION-ADAPTER-001: Execute task via NemoClaw adapter
+        val executionContract = ExecutionContract(
+            contractId      = contractId,
+            name            = contractName,
+            position        = position,
+            reportReference = reportReference
+        )
+
+        // Invoke NemoClaw process adapter
+        val executionReport = try {
+            nemoClawAdapter.execute(executionContract, timeoutMs = 60000L)
+        } catch (e: Exception) {
+            // Adapter should not throw, but handle defensively
+            ExecutionReport(
+                executionId = java.util.UUID.randomUUID().toString(),
+                status      = "FAILURE",
+                exitCode    = -1,
+                outputs     = emptyList(),
+                artifact    = null,
+                failureSurface = mapOf(
+                    "error_code"   to "ADAPTER_EXCEPTION",
+                    "error_detail" to (e.message ?: "Unknown error")
+                )
+            )
+        }
         
         // Check if this is a delta contract (from RECOVERY_CONTRACT flow)
         val isDeltaContract = events.any { event ->
@@ -219,14 +264,14 @@ class ExecutionAuthority(
         // ADMISSION CONTROL: Delta contracts require execution grounding (artifact)
         // CONTRACT: AGOII–EXECUTION-GROUNDING-GATE-001
         // Eliminates bypass: SUCCESS without validation
-        if (isDeltaContract && executionReport == null) {
+        if (isDeltaContract && (executionReport.status == "SUCCESS" && executionReport.artifact == null)) {
             return ExecutionAuthorityExecutionResult.Blocked(
                 "Delta contract execution requires ExecutionReport with artifact (grounding missing)"
             )
         }
 
-        // RULES 3.2-3.4: Delta validation (if applicable and we have execution report)
-        if (isDeltaContract && executionReport != null) {
+        // RULES 3.2-3.4: Delta validation (if applicable and we have successful execution with artifact)
+        if (isDeltaContract && executionReport.status == "SUCCESS" && executionReport.artifact != null) {
             val deltaValidation = performDeltaValidation(events, contractId, executionReport)
             when (deltaValidation) {
                 is DeltaValidationResult.RegressionDetected -> {
@@ -322,12 +367,29 @@ class ExecutionAuthority(
                     )
                 }
                 DeltaValidationResult.Approved -> {
-                    // Delta validation passed, continue with execution
+                    // Delta validation passed, continue with normal execution flow
                 }
             }
         }
 
-        // Build TASK_EXECUTED event payload with artifact (if present)
+        // Handle execution result based on status from NemoClaw
+        if (executionReport.status != "SUCCESS") {
+            // Execution failed - emit TASK_EXECUTED(FAILURE)
+            // P1 handler (handleTaskExecuted) will emit RECOVERY_CONTRACT if within convergence limit
+            ledger.appendEvent(
+                projectId,
+                EventTypes.TASK_EXECUTED,
+                mapOf(
+                    "taskId" to taskId,
+                    "contractId" to contractId,
+                    "executionStatus" to ExecutionStatus.FAILURE.name,
+                    "reason" to (executionReport.failureSurface?.get("error_code")?.toString() ?: "EXECUTION_FAILED")
+                )
+            )
+            return ExecutionAuthorityExecutionResult.Executed(taskId, ExecutionStatus.FAILURE, null)
+        }
+
+        // Build TASK_EXECUTED event payload with artifact (SUCCESS case)
         val eventPayload = mutableMapOf<String, Any>(
             "taskId" to taskId,
             "contractId" to contractId,
@@ -335,7 +397,7 @@ class ExecutionAuthority(
         )
         
         // Add artifact to payload (AGOII-ARTIFACT-SPINE-001)
-        if (executionReport?.artifact != null) {
+        if (executionReport.artifact != null) {
             eventPayload["artifact"] = serializeArtifact(executionReport.artifact)
             
             // Add validated sections (section IDs from artifact)
