@@ -187,7 +187,7 @@ function computeContentHash(content) {
 
 /**
  * Normalizes OpenAI response to canonical result format.
- * Per AGOII–ARTIFACT-NORMALIZATION-001: Extract only deterministic result content.
+ * Per AGOII-ARTIFACT-NORMALIZATION-001: Extract only deterministic result content.
  * 
  * Transforms raw OpenAI response JSON (which contains non-deterministic fields 
  * like id, created, system_fingerprint) into normalized canonical output:
@@ -228,15 +228,15 @@ function normalizeOpenAIResponse(rawOutput) {
 
 /**
  * Builds a deterministic artifact from execution output.
- * Per AGOII–ARTIFACT-SPINE-VALIDATION-002: contractor MUST produce artifact.
- * Per AGOII–ARTIFACT-NORMALIZATION-001: Use normalized canonical output.
+ * Per AGOII-ARTIFACT-SPINE-VALIDATION-002: contractor MUST produce artifact.
+ * Per AGOII-ARTIFACT-NORMALIZATION-001: Use normalized canonical output.
  *
  * @param {string} rawOutput - The raw output from execution
  * @param {string} adapter - The adapter type ('openai', etc.) for normalization
  * @returns {object} ExecutionArtifact with sections array
  */
 function buildArtifact(rawOutput, adapter) {
-  // Per AGOII–ARTIFACT-NORMALIZATION-001: Transform to canonical format
+  // Per AGOII-ARTIFACT-NORMALIZATION-001: Transform to canonical format
   let normalizedContent;
   if (adapter === 'openai') {
     normalizedContent = normalizeOpenAIResponse(rawOutput);
@@ -268,9 +268,9 @@ async function executeOpenAIAdapter(contract) {
 
   const result = await openaiRequest(requestPayload, timeoutMs);
   
-  // Per AGOII–ARTIFACT-SPINE-VALIDATION-002 §STEP-1:
+  // Per AGOII-ARTIFACT-SPINE-VALIDATION-002 §STEP-1:
   // Contractor MUST produce artifact as part of its output
-  // Per AGOII–ARTIFACT-NORMALIZATION-001: Use normalized canonical output
+  // Per AGOII-ARTIFACT-NORMALIZATION-001: Use normalized canonical output
   const artifact = buildArtifact(result.rawOutput || '', 'openai');
   
   return {
