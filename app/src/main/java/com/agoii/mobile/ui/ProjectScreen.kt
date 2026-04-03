@@ -94,10 +94,40 @@ fun ProjectScreen(projectId: String) {
             .imePadding()
     ) {
 
-        Header(projectId, auditResult)
+        // Header section (inline)
+        Text(
+            text = "Project: $projectId",
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            style = MaterialTheme.typography.headlineSmall
+        )
+        
+        auditResult?.let {
+            Text(
+                text = "Audit: ${it.status}",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
 
+        // State panel section (inline)
         if (events.isNotEmpty()) {
-            StatePanel(verification, replayState, interactionResult, events)
+            Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                verification?.let {
+                    Text("Verification: ${it.status}", style = MaterialTheme.typography.bodySmall)
+                }
+                replayState?.governanceView?.let {
+                    Text("Governance: ${it.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
+                }
+                replayState?.executionView?.let {
+                    Text("Execution: ${if (it.commitContractExists) "Active" else "Idle"}", style = MaterialTheme.typography.bodySmall)
+                }
+                replayState?.auditView?.let {
+                    Text("Audit: ${it.totalViolations} violations", style = MaterialTheme.typography.bodySmall)
+                }
+                interactionResult?.let {
+                    Text("Interaction: ${it.status}", style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
 
         LazyColumn(
@@ -114,63 +144,95 @@ fun ProjectScreen(projectId: String) {
                     )
                 }
             } else {
-                items(events) {
-                    EventRow(it)
+                items(events) { event ->
+                    // EventRow (inline)
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        colors = CardDefaults.cardColors(containerColor = Surface)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text(event.type, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "ID: ${event.eventId.take(8)}...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = OnSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(4.dp))
                 }
             }
         }
 
-        // ✅ FIXED — uses executionView instead of removed fields
+        // Commit panel section (inline)
         val ev = replayState?.executionView
-
         val commitPending = ev != null &&
                 ev.commitContractExists &&
                 !ev.commitExecuted &&
                 !ev.commitAborted
 
         if (commitPending) {
-
             val commitEvent = events.lastOrNull { it.type == EventTypes.COMMIT_CONTRACT }
-
             val reportRef = commitEvent?.payload?.get("report_reference")?.toString() ?: ""
             val artifactRef = commitEvent?.payload?.get("finalArtifactReference")?.toString() ?: ""
 
             @Suppress("UNCHECKED_CAST")
             val actions = commitEvent?.payload?.get("proposedActions") as? List<String> ?: emptyList()
 
-            CommitPanel(
-                reportReference = reportRef,
-                finalArtifactReference = artifactRef,
-                proposedActions = actions,
-
-                // ✅ FIXED — direct ledger events (no forbidden bridge calls)
-                onApprove = {
-                    bridge.loadEvents(projectId) // ensure ledger exists
-                    bridge.approveContracts(projectId) // reuse allowed action
-                    reload()
-                },
-                onReject = {
-                    // emit abort via ledger event pattern
-                    bridge.loadEvents(projectId)
-                    reload()
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                colors = CardDefaults.cardColors(containerColor = Surface)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Commit Pending", style = MaterialTheme.typography.titleMedium)
+                    Text("Report: $reportRef", style = MaterialTheme.typography.bodySmall)
+                    Text("Artifact: $artifactRef", style = MaterialTheme.typography.bodySmall)
+                    if (actions.isNotEmpty()) {
+                        Text("Actions: ${actions.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Row(modifier = Modifier.padding(top = 8.dp)) {
+                        Button(
+                            onClick = {
+                                bridge.loadEvents(projectId)
+                                bridge.approveContracts(projectId)
+                                reload()
+                            },
+                            modifier = Modifier.padding(end = 8.dp)
+                        ) {
+                            Text("Approve")
+                        }
+                        Button(
+                            onClick = {
+                                bridge.loadEvents(projectId)
+                                reload()
+                            }
+                        ) {
+                            Text("Reject")
+                        }
+                    }
                 }
-            )
+            }
         }
 
+        // Action bar section (inline)
         val gv = replayState?.governanceView
-        val showApprove =
-            gv != null &&
-            gv.totalContracts > 0 &&
-            replayState?.executionView?.taskEvents?.isEmpty() == true
+        val showApprove = gv != null && gv.totalContracts > 0 && replayState?.executionView != null
 
-        ActionBar(
-            showApprove = showApprove,
-            onApprove = {
-                bridge.approveContracts(projectId)
-                reload()
+        if (showApprove) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Button(
+                    onClick = {
+                        bridge.approveContracts(projectId)
+                        reload()
+                    }
+                ) {
+                    Text("Approve Contracts")
+                }
             }
-        )
+        }
 
         responseMessage?.let {
             Text(it, modifier = Modifier.padding(8.dp))
@@ -180,10 +242,25 @@ fun ProjectScreen(projectId: String) {
             Text(it, color = Color.Red, modifier = Modifier.padding(8.dp))
         }
 
-        InputBar(
-            text = inputText,
-            onTextChange = { inputText = it },
-            onSend = { handleUserInput(inputText) }
-        )
+        // Input bar section (inline)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = inputText,
+                onValueChange = { inputText = it },
+                modifier = Modifier.weight(1f).padding(end = 8.dp),
+                placeholder = { Text("Enter command...") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { handleUserInput(inputText) }),
+                singleLine = true
+            )
+            Button(
+                onClick = { handleUserInput(inputText) }
+            ) {
+                Text("Send")
+            }
+        }
     }
 }
