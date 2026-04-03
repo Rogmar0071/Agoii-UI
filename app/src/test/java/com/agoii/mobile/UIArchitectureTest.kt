@@ -74,7 +74,10 @@ class UIArchitectureTest {
         executionView  = emptyExecutionView(),
         auditView      = AuditView(
             intent    = IntentStructuralState(structurallyComplete = true),
-            contracts = ContractStructuralState(generated = true, valid = true),
+            // totalContracts is intentionally set in both GovernanceView and ContractStructuralState
+            // because each view serves a different authority.  In production both are derived from
+            // the same CONTRACTS_GENERATED event so they always agree.
+            contracts = ContractStructuralState(generated = true, valid = true, totalContracts = 1),
             execution = ExecutionStructuralState(0, 0, 0, 0, false),
             assembly  = AssemblyStructuralState(false, false, false, false),
             executionValid = false,
