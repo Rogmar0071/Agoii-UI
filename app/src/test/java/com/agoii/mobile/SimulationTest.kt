@@ -1,8 +1,11 @@
 package com.agoii.mobile
 
 import com.agoii.mobile.core.AssemblyStructuralState
+import com.agoii.mobile.core.AuditView
 import com.agoii.mobile.core.ContractStructuralState
 import com.agoii.mobile.core.ExecutionStructuralState
+import com.agoii.mobile.core.ExecutionView
+import com.agoii.mobile.core.GovernanceView
 import com.agoii.mobile.core.IntentStructuralState
 import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.simulation.SimulationContract
@@ -36,39 +39,92 @@ class SimulationTest {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
+    private fun emptyGovernanceView() = GovernanceView(
+        lastEventType = null, lastEventPayload = emptyMap(),
+        totalContracts = 0, reportReference = "",
+        deltaContractRecoveryIds = emptySet(), taskAssignedTaskIds = emptySet(),
+        lastContractStartedId = "", lastContractStartedPosition = null
+    )
+
+    private fun emptyExecutionView() = ExecutionView(
+        taskStatus = emptyMap(), icsStarted = false, icsCompleted = false,
+        commitContractExists = false, commitExecuted = false,
+        commitAborted = false, commitPending = false
+    )
+
     private fun idleState() = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = false),
-        contracts = ContractStructuralState(generated = false, valid = false),
-        execution = ExecutionStructuralState(0, 0, 0, 0, false),
-        assembly  = AssemblyStructuralState(false, false, false, false)
+        governanceView = emptyGovernanceView(),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = false),
+            contracts = ContractStructuralState(generated = false, valid = false),
+            execution = ExecutionStructuralState(0, 0, 0, 0, false),
+            assembly  = AssemblyStructuralState(false, false, false, false),
+            executionValid = false,
+            assemblyValid  = false,
+            icsValid       = false,
+            commitValid    = false
+        )
     )
 
     private fun executionStartedState() = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = true),
-        contracts = ContractStructuralState(generated = true, valid = true),
-        execution = ExecutionStructuralState(3, 1, 0, 0, false),
-        assembly  = AssemblyStructuralState(false, false, false, false)
+        governanceView = emptyGovernanceView(),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = true),
+            contracts = ContractStructuralState(generated = true, valid = true),
+            execution = ExecutionStructuralState(3, 1, 0, 0, false),
+            assembly  = AssemblyStructuralState(false, false, false, false),
+            executionValid = false,
+            assemblyValid  = false,
+            icsValid       = false,
+            commitValid    = false
+        )
     )
 
     private fun executionCompleteState() = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = true),
-        contracts = ContractStructuralState(generated = true, valid = true),
-        execution = ExecutionStructuralState(3, 3, 3, 3, true),
-        assembly  = AssemblyStructuralState(false, false, false, false)
+        governanceView = emptyGovernanceView(),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = true),
+            contracts = ContractStructuralState(generated = true, valid = true),
+            execution = ExecutionStructuralState(3, 3, 3, 3, true),
+            assembly  = AssemblyStructuralState(false, false, false, false),
+            executionValid = true,
+            assemblyValid  = false,
+            icsValid       = false,
+            commitValid    = false
+        )
     )
 
     private fun assemblyCompleteState() = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = true),
-        contracts = ContractStructuralState(generated = true, valid = true),
-        execution = ExecutionStructuralState(3, 3, 3, 3, true),
-        assembly  = AssemblyStructuralState(true, true, true, true)
+        governanceView = emptyGovernanceView(),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = true),
+            contracts = ContractStructuralState(generated = true, valid = true),
+            execution = ExecutionStructuralState(3, 3, 3, 3, true),
+            assembly  = AssemblyStructuralState(true, true, true, true),
+            executionValid = true,
+            assemblyValid  = true,
+            icsValid       = false,
+            commitValid    = false
+        )
     )
 
     private fun assemblyInProgressState() = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = true),
-        contracts = ContractStructuralState(generated = true, valid = true),
-        execution = ExecutionStructuralState(3, 3, 3, 3, true),
-        assembly  = AssemblyStructuralState(true, false, false, false)
+        governanceView = emptyGovernanceView(),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = true),
+            contracts = ContractStructuralState(generated = true, valid = true),
+            execution = ExecutionStructuralState(3, 3, 3, 3, true),
+            assembly  = AssemblyStructuralState(true, false, false, false),
+            executionValid = true,
+            assemblyValid  = false,
+            icsValid       = false,
+            commitValid    = false
+        )
     )
 
     private fun minimalContract(
@@ -415,15 +471,15 @@ class SimulationTest {
     fun `simulate does not mutate the input ReplayStructuralState`() {
         val state = executionStartedState()
 
-        val assignedBefore = state.execution.assignedTasks
-        val assemblyBefore = state.assembly.assemblyStarted
+        val assignedBefore = state.auditView.execution.assignedTasks
+        val assemblyBefore = state.auditView.assembly.assemblyStarted
 
         engine.simulate(state, minimalContract(mode = SimulationMode.FEASIBILITY))
         engine.simulate(state, minimalContract(mode = SimulationMode.UNDERSTAND))
         engine.simulate(state, minimalContract(mode = SimulationMode.SCENARIO))
 
-        assertEquals("assignedTasks must be unchanged", assignedBefore, state.execution.assignedTasks)
-        assertEquals("assemblyStarted must be unchanged", assemblyBefore, state.assembly.assemblyStarted)
+        assertEquals("assignedTasks must be unchanged", assignedBefore, state.auditView.execution.assignedTasks)
+        assertEquals("assemblyStarted must be unchanged", assemblyBefore, state.auditView.assembly.assemblyStarted)
     }
 
     // ── 9. Determinism ────────────────────────────────────────────────────────
