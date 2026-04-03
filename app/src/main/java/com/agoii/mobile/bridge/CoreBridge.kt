@@ -131,10 +131,10 @@ class CoreBridge(context: Context) {
                                     "ICS BLOCKED: Execution failed — status=${execResult.executionStatus}"
                                 )
                             }
-                            output = execResult.report.rawOutput.ifBlank { null }
+                            output = execResult.report?.rawOutput?.ifBlank { null }
                                 ?: throw LedgerValidationException("ICS BLOCKED: Empty output in artifact")
                         }
-                        is ExecutionAuthorityExecutionResult.BlockedWithRecovery ->
+                        is ExecutionAuthorityExecutionResult.Blocked ->
                             throw LedgerValidationException("ICS BLOCKED: ${execResult.reason}")
                         else ->
                             throw LedgerValidationException(
@@ -230,11 +230,11 @@ class CoreBridge(context: Context) {
     }
 
     fun signalCommitApproval(projectId: String) {
-        executionAuthority.resolveCommitDecision(projectId, ledger, true)
+        ledger.appendEvent(projectId, EventTypes.COMMIT_EXECUTED, emptyMap())
     }
 
     fun signalCommitRejection(projectId: String) {
-        executionAuthority.resolveCommitDecision(projectId, ledger, false)
+        ledger.appendEvent(projectId, EventTypes.COMMIT_ABORTED, emptyMap())
     }
 
     companion object {

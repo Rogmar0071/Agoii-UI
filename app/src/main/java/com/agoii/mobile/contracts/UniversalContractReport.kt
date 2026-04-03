@@ -87,10 +87,11 @@ class UniversalContractReport {
      * @return Immutable [AnchorState] snapshot.
      */
     fun extractAnchorState(report: ContractReport): AnchorState = AnchorState(
-        reportReference    = report.reportReference,
-        validatedTypes     = report.typeInventory.toList(),
-        validatedStructure = report.typeInventory.toSet(),
-        validatedPaths     = report.logicFlow.toList()
+        validatedSections = ValidatedSections(report.typeInventory.toSet()),
+        mutationSurface   = MutationSurface(
+            allowedFields   = emptyList(),
+            allowedSections = report.logicFlow.toList()
+        )
     )
 
     companion object {

@@ -215,8 +215,8 @@ fun ProjectScreen(projectId: String) {
         val lastContractType = events
             .lastOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
             ?.payload?.get("type")?.toString()
-        val showApprove = replayState?.contracts?.valid == true &&
-                          replayState?.execution?.assignedTasks == 0 &&
+        val showApprove = replayState?.auditView?.contracts?.valid == true &&
+                          replayState?.auditView?.execution?.assignedTasks == 0 &&
                           lastContractType != "interaction"
 
         ActionBar(
