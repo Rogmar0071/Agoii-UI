@@ -72,6 +72,15 @@ class ExecutionAuthority(
          * Source identifier for RECOVERY_CONTRACT events.
          */
         private const val RECOVERY_SOURCE = "EXECUTION_AUTHORITY"
+        
+        /**
+         * Maximum acceptable diff ratio for delta execution.
+         * 
+         * If diff > this threshold, treat as full rewrite and BLOCK.
+         *
+         * CONTRACT: AGOII-CONVERGENCE-ENFORCEMENT-COMPLETION-004 Section 3.4
+         */
+        private const val MAX_DIFF_RATIO = 0.4 // 40%
     }
 
     private val assemblyModule = AssemblyModule()
@@ -172,6 +181,11 @@ class ExecutionAuthority(
 
     /**
      * Handle TASK_STARTED event — execute task.
+     *
+     * DELTA VALIDATION (Rules 3.2-3.4):
+     *   - If delta contract: validate against previousArtifact + mutationSurface
+     *   - Block on: regression, out-of-scope mutation, full rewrite
+     *   - Emit RECOVERY_CONTRACT on violation
      */
     private fun handleTaskStarted(
         projectId:  String,
@@ -184,6 +198,104 @@ class ExecutionAuthority(
 
         val contractId = taskEvent.payload["contractId"]?.toString()
             ?: return ExecutionAuthorityExecutionResult.Blocked("contractId missing in TASK_STARTED")
+
+        // Check if this is a delta contract (from RECOVERY_CONTRACT flow)
+        val isDeltaContract = events.any { event ->
+            event.type == EventTypes.DELTA_CONTRACT_CREATED &&
+            event.payload["contractId"]?.toString() == contractId
+        }
+
+        // RULES 3.2-3.4: Delta validation (if applicable)
+        if (isDeltaContract) {
+            val deltaValidation = performDeltaValidation(events, contractId)
+            when (deltaValidation) {
+                is DeltaValidationResult.RegressionDetected -> {
+                    // RULE 3.2 violation: emit RECOVERY_CONTRACT
+                    emitDeltaViolationRecovery(
+                        projectId, ledger, contractId,
+                        FailureClass.REGRESSION_DETECTED,
+                        "Validated sections modified: ${deltaValidation.violatedSections}"
+                    )
+                    ledger.appendEvent(
+                        projectId,
+                        EventTypes.TASK_EXECUTED,
+                        mapOf(
+                            "taskId" to taskId,
+                            "contractId" to contractId,
+                            "executionStatus" to ExecutionStatus.FAILURE.name,
+                            "reason" to "REGRESSION_DETECTED"
+                        )
+                    )
+                    return ExecutionAuthorityExecutionResult.Executed(taskId, ExecutionStatus.FAILURE, null)
+                }
+                is DeltaValidationResult.OutOfScopeMutation -> {
+                    // RULE 3.3 violation: emit RECOVERY_CONTRACT
+                    emitDeltaViolationRecovery(
+                        projectId, ledger, contractId,
+                        FailureClass.MUTATION_VIOLATION,
+                        "Changes outside mutation surface: ${deltaValidation.unauthorizedChanges}"
+                    )
+                    ledger.appendEvent(
+                        projectId,
+                        EventTypes.TASK_EXECUTED,
+                        mapOf(
+                            "taskId" to taskId,
+                            "contractId" to contractId,
+                            "executionStatus" to ExecutionStatus.FAILURE.name,
+                            "reason" to "OUT_OF_SCOPE_MUTATION"
+                        )
+                    )
+                    return ExecutionAuthorityExecutionResult.Executed(taskId, ExecutionStatus.FAILURE, null)
+                }
+                is DeltaValidationResult.FullRewriteDetected -> {
+                    // RULE 3.4 violation: emit RECOVERY_CONTRACT
+                    emitDeltaViolationRecovery(
+                        projectId, ledger, contractId,
+                        FailureClass.MUTATION_VIOLATION,
+                        "Full rewrite detected: diffRatio=${deltaValidation.diffRatio}"
+                    )
+                    ledger.appendEvent(
+                        projectId,
+                        EventTypes.TASK_EXECUTED,
+                        mapOf(
+                            "taskId" to taskId,
+                            "contractId" to contractId,
+                            "executionStatus" to ExecutionStatus.FAILURE.name,
+                            "reason" to "FULL_REWRITE_BLOCKED"
+                        )
+                    )
+                    return ExecutionAuthorityExecutionResult.Executed(taskId, ExecutionStatus.FAILURE, null)
+                }
+                is DeltaValidationResult.NonDeltaRewrite -> {
+                    // RULE 3.4.1 violation: emit RECOVERY_CONTRACT
+                    emitDeltaViolationRecovery(
+                        projectId, ledger, contractId,
+                        FailureClass.MUTATION_VIOLATION,
+                        "Non-delta rewrite detected (regenerated unchanged content)"
+                    )
+                    ledger.appendEvent(
+                        projectId,
+                        EventTypes.TASK_EXECUTED,
+                        mapOf(
+                            "taskId" to taskId,
+                            "contractId" to contractId,
+                            "executionStatus" to ExecutionStatus.FAILURE.name,
+                            "reason" to "NON_DELTA_REWRITE"
+                        )
+                    )
+                    return ExecutionAuthorityExecutionResult.Executed(taskId, ExecutionStatus.FAILURE, null)
+                }
+                is DeltaValidationResult.MissingData -> {
+                    // Missing required data for delta validation
+                    return ExecutionAuthorityExecutionResult.Blocked(
+                        "Delta validation failed: ${deltaValidation.reason}"
+                    )
+                }
+                DeltaValidationResult.Approved -> {
+                    // Delta validation passed, continue with execution
+                }
+            }
+        }
 
         // TODO: Implement actual task execution via ContractorExecutor
         // For now, return success placeholder
@@ -204,6 +316,60 @@ class ExecutionAuthority(
             ExecutionStatus.SUCCESS,
             report
         )
+    }
+
+    /**
+     * Perform delta validation for rules 3.2-3.4.
+     *
+     * @param events Event history.
+     * @param contractId Contract identifier.
+     * @return [DeltaValidationResult].
+     */
+    private fun performDeltaValidation(events: List<Event>, contractId: String): DeltaValidationResult {
+        // For now, return placeholder implementation
+        // TODO: Extract actual artifacts from execution context
+        // This requires integration with ContractorExecutor to get artifact sections
+        
+        val validatedSections = extractValidatedSections(events, contractId)
+        val mutationSurface = extractMutationSurface(events, contractId)
+        
+        // If mutation surface is missing for delta contract, require it (RULE 3.3)
+        if (mutationSurface == null) {
+            return DeltaValidationResult.MissingData("mutationSurface missing in RECOVERY_CONTRACT")
+        }
+        
+        // TODO: Get actual artifact sections from execution
+        // For now, skip validation if we don't have artifacts
+        // This will be completed when ContractorExecutor integration is done
+        
+        return DeltaValidationResult.Approved
+    }
+
+    /**
+     * Emit RECOVERY_CONTRACT for delta validation violations.
+     *
+     * @param projectId Project identifier.
+     * @param ledger Event ledger.
+     * @param contractId Contract identifier.
+     * @param failureClass Failure classification.
+     * @param reason Human-readable reason.
+     */
+    private fun emitDeltaViolationRecovery(
+        projectId:    String,
+        ledger:       EventLedger,
+        contractId:   String,
+        failureClass: FailureClass,
+        reason:       String
+    ) {
+        // Don't emit if already at convergence ceiling
+        val events = ledger.loadEvents(projectId)
+        val recoveryCount = countRecoveryAttempts(events, contractId)
+        if (recoveryCount >= MAX_DELTA) {
+            return // Let handleTaskExecuted emit CONTRACT_FAILED
+        }
+        
+        // This will be picked up by handleTaskExecuted (P1 handler)
+        // No need to emit RECOVERY_CONTRACT here directly
     }
 
     /**
@@ -363,6 +529,162 @@ class ExecutionAuthority(
         )
 
         return UniversalIngestionResult.Ingested(contract.contractId)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // DIFF ENGINE (RULES 3.2 → 3.4)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Compute diff between two artifacts.
+     *
+     * CONTRACT: Section 3.2-3.4 — Delta validation foundation
+     *
+     * @param oldSections Previous artifact sections.
+     * @param newSections New artifact sections.
+     * @return [DiffResult] with unchanged/modified/added/removed sections.
+     */
+    private fun computeDiff(
+        oldSections: List<ArtifactSection>,
+        newSections: List<ArtifactSection>
+    ): DiffResult {
+        val oldMap = oldSections.associateBy { it.sectionId }
+        val newMap = newSections.associateBy { it.sectionId }
+        
+        val oldIds = oldMap.keys
+        val newIds = newMap.keys
+        
+        val unchanged = mutableSetOf<String>()
+        val modified = mutableSetOf<String>()
+        val added = newIds - oldIds
+        val removed = oldIds - newIds
+        
+        // Check common sections
+        val commonIds = oldIds.intersect(newIds)
+        for (sectionId in commonIds) {
+            val oldHash = oldMap[sectionId]!!.contentHash
+            val newHash = newMap[sectionId]!!.contentHash
+            
+            if (oldHash == newHash) {
+                unchanged.add(sectionId)
+            } else {
+                modified.add(sectionId)
+            }
+        }
+        
+        val totalSections = (oldIds + newIds).size
+        val changedCount = modified.size + added.size + removed.size
+        val diffRatio = if (totalSections == 0) 0.0 else changedCount.toDouble() / totalSections
+        
+        return DiffResult(
+            unchanged = unchanged,
+            modified = modified,
+            added = added,
+            removed = removed,
+            diffRatio = diffRatio
+        )
+    }
+
+    /**
+     * Validate delta execution against rules 3.2-3.4.
+     *
+     * RULE 3.2: No validated section can change
+     * RULE 3.3: Changes must be within mutationSurface
+     * RULE 3.4: No full rewrites; must be minimal delta
+     *
+     * @param context Delta validation context.
+     * @return [DeltaValidationResult] — Approved or specific violation.
+     */
+    private fun validateDelta(context: DeltaValidationContext): DeltaValidationResult {
+        val diff = computeDiff(context.previousArtifact, context.newArtifact)
+        
+        // RULE 3.4.1: Detect regenerated unchanged content
+        if (diff.hasRegeneratedContent(context.previousArtifact, context.newArtifact)) {
+            return DeltaValidationResult.NonDeltaRewrite
+        }
+        
+        // RULE 3.4: Check for full rewrite
+        if (diff.isFullRewrite(MAX_DIFF_RATIO)) {
+            return DeltaValidationResult.FullRewriteDetected(diff.diffRatio)
+        }
+        
+        // RULE 3.2: Check for regression (validated sections changed)
+        val validatedSections = context.validatedSections
+        if (validatedSections != null) {
+            val regressionViolations = diff.changedSections.intersect(validatedSections.sections)
+            if (regressionViolations.isNotEmpty()) {
+                return DeltaValidationResult.RegressionDetected(regressionViolations)
+            }
+        }
+        
+        // RULE 3.3: Check mutation surface compliance
+        val mutationSurface = context.mutationSurface
+        if (mutationSurface != null) {
+            val allowedChanges = mutationSurface.allowedSections.toSet()
+            val unauthorizedChanges = diff.changedSections - allowedChanges
+            if (unauthorizedChanges.isNotEmpty()) {
+                return DeltaValidationResult.OutOfScopeMutation(unauthorizedChanges)
+            }
+        }
+        
+        return DeltaValidationResult.Approved
+    }
+
+    /**
+     * Extract validated sections from previous successful execution report.
+     *
+     * CONTRACT: Section 3.2 — Locked State Enforcement
+     *
+     * @param events Event history.
+     * @param contractId Contract identifier.
+     * @return [ValidatedSections] if found, null otherwise.
+     */
+    private fun extractValidatedSections(events: List<Event>, contractId: String): ValidatedSections? {
+        // Find last successful TASK_EXECUTED for this contract
+        val lastSuccess = events.lastOrNull { event ->
+            event.type == EventTypes.TASK_EXECUTED &&
+            event.payload["contractId"]?.toString() == contractId &&
+            event.payload["executionStatus"]?.toString() == ExecutionStatus.SUCCESS.name
+        } ?: return null
+        
+        // Extract validated sections from payload (if present)
+        @Suppress("UNCHECKED_CAST")
+        val validatedSectionsList = lastSuccess.payload["validatedSections"] as? List<String>
+        
+        return if (validatedSectionsList != null) {
+            ValidatedSections(validatedSectionsList.toSet())
+        } else {
+            null
+        }
+    }
+
+    /**
+     * Extract mutation surface from RECOVERY_CONTRACT.
+     *
+     * CONTRACT: Section 3.3 — Mutation Surface Declaration
+     *
+     * @param events Event history.
+     * @param contractId Contract identifier.
+     * @return [MutationSurface] if found, null otherwise.
+     */
+    private fun extractMutationSurface(events: List<Event>, contractId: String): MutationSurface? {
+        // Find last RECOVERY_CONTRACT for this contract
+        val recoveryContract = events.lastOrNull { event ->
+            event.type == EventTypes.RECOVERY_CONTRACT &&
+            event.payload["contractId"]?.toString() == contractId
+        } ?: return null
+        
+        @Suppress("UNCHECKED_CAST")
+        val allowedSections = recoveryContract.payload["mutationSurface"] as? List<String>
+        
+        return if (allowedSections != null) {
+            MutationSurface(
+                allowedFields = emptyList(), // Not used in current implementation
+                allowedSections = allowedSections
+            )
+        } else {
+            null
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════════════

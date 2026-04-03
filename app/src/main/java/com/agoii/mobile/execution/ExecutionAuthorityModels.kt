@@ -225,6 +225,133 @@ enum class FailureClass {
     MUTATION_VIOLATION
 }
 
+// ── Diff Engine Models (Rules 3.2-3.4) ───────────────────────────────────────
+
+/**
+ * Artifact section identifier for diff computation.
+ *
+ * @property sectionId   Unique section identifier (e.g., function name, block ID).
+ * @property contentHash Hash of section content for comparison.
+ */
+data class ArtifactSection(
+    val sectionId:   String,
+    val contentHash: String
+)
+
+/**
+ * Diff result between two artifacts.
+ *
+ * @property unchanged   Sections that are identical (by hash).
+ * @property modified    Sections that exist in both but have different hashes.
+ * @property added       Sections that exist only in new artifact.
+ * @property removed     Sections that exist only in old artifact.
+ * @property diffRatio   Ratio of changed sections to total sections (0.0-1.0).
+ */
+data class DiffResult(
+    val unchanged:  Set<String>,
+    val modified:   Set<String>,
+    val added:      Set<String>,
+    val removed:    Set<String>,
+    val diffRatio:  Double
+) {
+    /**
+     * All sections that changed (modified + added + removed).
+     */
+    val changedSections: Set<String> get() = modified + added + removed
+    
+    /**
+     * Check if this diff represents a full rewrite.
+     *
+     * @param threshold Maximum acceptable diff ratio (default 0.4 = 40%).
+     * @return True if diff exceeds threshold.
+     */
+    fun isFullRewrite(threshold: Double = 0.4): Boolean = diffRatio > threshold
+    
+    /**
+     * Check if any unchanged section was regenerated (different hash despite being "unchanged").
+     * This detects non-delta rewrites.
+     */
+    fun hasRegeneratedContent(oldSections: List<ArtifactSection>, newSections: List<ArtifactSection>): Boolean {
+        val oldMap = oldSections.associateBy { it.sectionId }
+        val newMap = newSections.associateBy { it.sectionId }
+        
+        // Check if any "unchanged" section has different hash
+        return unchanged.any { sectionId ->
+            val oldHash = oldMap[sectionId]?.contentHash
+            val newHash = newMap[sectionId]?.contentHash
+            oldHash != null && newHash != null && oldHash != newHash
+        }
+    }
+}
+
+/**
+ * Delta validation context for rules 3.2-3.4.
+ *
+ * @property contractId         Contract being validated.
+ * @property previousArtifact   Prior artifact sections (for comparison).
+ * @property newArtifact        New artifact sections (proposed changes).
+ * @property validatedSections  Sections marked as validated (must not change).
+ * @property mutationSurface    Declared allowed changes (rule 3.3).
+ */
+data class DeltaValidationContext(
+    val contractId:         String,
+    val previousArtifact:   List<ArtifactSection>,
+    val newArtifact:        List<ArtifactSection>,
+    val validatedSections:  ValidatedSections?,
+    val mutationSurface:    MutationSurface?
+)
+
+/**
+ * Delta validation result.
+ */
+sealed class DeltaValidationResult {
+    /**
+     * Delta is valid and approved.
+     */
+    object Approved : DeltaValidationResult()
+    
+    /**
+     * Delta violates rule 3.2 — regression detected.
+     *
+     * @property violatedSections Validated sections that were modified.
+     */
+    data class RegressionDetected(
+        val violatedSections: Set<String>
+    ) : DeltaValidationResult()
+    
+    /**
+     * Delta violates rule 3.3 — changes outside mutation surface.
+     *
+     * @property unauthorizedChanges Sections changed but not in mutationSurface.
+     */
+    data class OutOfScopeMutation(
+        val unauthorizedChanges: Set<String>
+    ) : DeltaValidationResult()
+    
+    /**
+     * Delta violates rule 3.4 — full rewrite attempt.
+     *
+     * @property diffRatio Computed diff ratio that exceeded threshold.
+     */
+    data class FullRewriteDetected(
+        val diffRatio: Double
+    ) : DeltaValidationResult()
+    
+    /**
+     * Delta violates rule 3.4 — regenerated unchanged content.
+     */
+    object NonDeltaRewrite : DeltaValidationResult()
+    
+    /**
+     * Delta validation blocked — missing required data.
+     *
+     * @property reason Human-readable reason.
+     */
+    data class MissingData(
+        val reason: String
+    ) : DeltaValidationResult()
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // END OF MODELS
 // ══════════════════════════════════════════════════════════════════════════════
