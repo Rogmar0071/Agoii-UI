@@ -3,6 +3,8 @@ package com.agoii.mobile.contracts
 import com.agoii.mobile.contractors.ResolutionTrace
 import com.agoii.mobile.execution.AnchorState
 import com.agoii.mobile.execution.ContractorExecutionOutput
+import com.agoii.mobile.execution.ValidatedSections
+import com.agoii.mobile.execution.MutationSurface
 
 // AGOII CONTRACT — UNIVERSAL CONTRACT REPORT (UCS-1)
 // SURFACE 9: CONTRACT REPORT INTEGRATION (AERP-1 BINDING)
