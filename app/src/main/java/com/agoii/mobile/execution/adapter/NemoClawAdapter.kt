@@ -160,15 +160,24 @@ class NemoClawAdapter {
      *   "input": { "prompt": string },
      *   "execution_policy": { "process": { "timeoutMs": number } }
      * }
+     *
+     * Note: contractor_id is hardcoded to "openai-inference" as this is currently
+     * the only supported contractor in NemoClaw. Future enhancement: add contractor_id
+     * field to ExecutionContract to support multiple contractors.
+     *
+     * Note: Using contract.name as the prompt is a temporary approach. In production,
+     * ExecutionContract should include an explicit `input` field containing the full
+     * prompt/task description. The contract name is used here as it's the most
+     * relevant field available in the current model.
      */
     private fun serializeContract(contract: ExecutionContract): String {
         val json = JSONObject()
         json.put("execution_id", contract.executionId)
-        json.put("contractor_id", "openai-inference") // Default contractor
+        json.put("contractor_id", "openai-inference") // TODO: Make configurable via ExecutionContract
         
         // Build input object
         val input = JSONObject()
-        input.put("prompt", contract.name) // Use contract name as prompt
+        input.put("prompt", contract.name) // TODO: Use explicit input field when available
         json.put("input", input)
         
         // Build execution policy

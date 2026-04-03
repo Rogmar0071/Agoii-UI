@@ -220,10 +220,15 @@ class ExecutionAuthority(
         val contractName = extractContractName(events, contractId) ?: contractId
 
         // Build ExecutionContract
+        // Note: Position is set to 1 as it's not relevant for single task execution.
+        // The position field is used for batch execution ordering, but handleTaskStarted
+        // processes one task at a time. If position tracking becomes necessary for
+        // traceability, it should be extracted from the TASK_ASSIGNED or CONTRACT_CREATED
+        // event payload.
         val contract = ExecutionContract(
             contractId = contractId,
             name = contractName,
-            position = 1, // Position not relevant for single task execution
+            position = 1,
             reportReference = reportReference
         )
 
