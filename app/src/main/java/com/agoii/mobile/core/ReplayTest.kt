@@ -28,31 +28,45 @@ class ReplayTest(private val eventStore: EventRepository) {
         val invariantErrors = mutableListOf<String>()
 
         // Invariant 1: totalTasks is derived from TASK_ASSIGNED, so they must always match
-        if (state.execution.assignedTasks != state.execution.totalTasks) {
+        if (state.auditView.execution.assignedTasks != state.auditView.execution.totalTasks) {
             invariantErrors.add(
-                "Invariant: assignedTasks (${state.execution.assignedTasks}) " +
-                        "!= totalTasks (${state.execution.totalTasks})"
+                "Invariant: assignedTasks (${state.auditView.execution.assignedTasks}) " +
+                        "!= totalTasks (${state.auditView.execution.totalTasks})"
             )
         }
 
         // Invariant 2: completedTasks cannot exceed assignedTasks
-        if (state.execution.completedTasks > state.execution.assignedTasks) {
+        if (state.auditView.execution.completedTasks > state.auditView.execution.assignedTasks) {
             invariantErrors.add(
-                "Invariant: completedTasks (${state.execution.completedTasks}) " +
-                        "> assignedTasks (${state.execution.assignedTasks})"
+                "Invariant: completedTasks (${state.auditView.execution.completedTasks}) " +
+                        "> assignedTasks (${state.auditView.execution.assignedTasks})"
             )
         }
 
         // Invariant 3: validatedTasks cannot exceed completedTasks
-        if (state.execution.validatedTasks > state.execution.completedTasks) {
+        if (state.auditView.execution.validatedTasks > state.auditView.execution.completedTasks) {
             invariantErrors.add(
-                "Invariant: validatedTasks (${state.execution.validatedTasks}) " +
-                        "> completedTasks (${state.execution.completedTasks})"
+                "Invariant: validatedTasks (${state.auditView.execution.validatedTasks}) " +
+                        "> completedTasks (${state.auditView.execution.completedTasks})"
             )
         }
 
         // Invariant 4: assemblyValid requires fullyExecuted
-        if (state.assembly.assemblyValid && !state.execution.fullyExecuted) {
+        // fullyExecuted: totalTasks > 0 && validatedTasks == totalTasks
+        // assemblyValid: assemblyStarted && assemblyCompleted && executionValid
+        val fullyExecuted = state.auditView.execution.totalTasks > 0 && 
+                           state.auditView.execution.validatedTasks == state.auditView.execution.totalTasks
+        
+        // executionValid: totalContracts > 0 && successfulTasks == totalContracts
+        val executionValid = state.governanceView.totalContracts > 0 && 
+                            state.auditView.execution.successfulTasks == state.governanceView.totalContracts
+        
+        // assemblyValid: assemblyStarted && assemblyCompleted && executionValid
+        val assemblyValid = state.auditView.assembly.assemblyStarted && 
+                           state.auditView.assembly.assemblyCompleted && 
+                           executionValid
+        
+        if (assemblyValid && !fullyExecuted) {
             invariantErrors.add(
                 "Invariant: assemblyValid=true but fullyExecuted=false"
             )

@@ -17,13 +17,18 @@ class InteractionMapper {
      * All 5 structural fields are always mapped — no conditions, no defaults,
      * no substitution.
      */
-    fun extract(state: ReplayStructuralState): StateSlice = StateSlice(
-        executionStarted   = state.execution.assignedTasks > 0,
-        executionCompleted = state.execution.fullyExecuted,
-        assemblyStarted    = state.assembly.assemblyStarted,
-        assemblyValidated  = state.assembly.assemblyValidated,
-        assemblyCompleted  = state.assembly.assemblyCompleted
-    )
+    fun extract(state: ReplayStructuralState): StateSlice {
+        val av = state.auditView
+        // AGOII-REPLAY-AUTHORITY-PURGE-001: Compute fullyExecuted locally
+        val executionCompleted = av.execution.totalTasks > 0 && av.execution.validatedTasks == av.execution.totalTasks
+        return StateSlice(
+            executionStarted   = av.execution.assignedTasks > 0,
+            executionCompleted = executionCompleted,
+            assemblyStarted    = av.assembly.assemblyStarted,
+            assemblyValidated  = av.assembly.assemblyValidated,
+            assemblyCompleted  = av.assembly.assemblyCompleted
+        )
+    }
 }
 
 /**

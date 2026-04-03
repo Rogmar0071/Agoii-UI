@@ -3,6 +3,7 @@ package com.agoii.mobile.governor
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.core.ReplayStructuralState
 
 /**
  * Governor — deterministic ledger-driven state machine.
@@ -78,18 +79,19 @@ class Governor(
     /**
      * Advance the ledger by one evaluation step and return the outcome.
      *
-     * Reads the current ledger state from [store], computes ALL next events via
-     * [nextEvents], appends each one to [store] in order, and returns
-     * [GovernorResult.ADVANCED]. Returns a non-ADVANCED result for known wait
-     * states, the terminal state, or when no valid transition exists.
+     * AGOII-REPLAY-STATE-001: reads authoritative [ReplayStructuralState] from [store]
+     * via [EventRepository.replayState]; raw event lists are NOT used for decision-making.
+     *
+     * Computes ALL next events via [nextEvents], appends each one to [store] in order,
+     * and returns [GovernorResult.ADVANCED].  Returns a non-ADVANCED result for known
+     * wait states, the terminal state, or when no valid transition exists.
      */
     fun runGovernor(projectId: String): GovernorResult {
-        val events = store.loadEvents(projectId)
-        if (events.isEmpty()) return GovernorResult.NO_EVENT
+        val state = store.replayState(projectId)
+        val gv = state.governanceView
+        if (gv.lastEventType == null) return GovernorResult.NO_EVENT
 
-        val last = events.last()
-
-        return when (last.type) {
+        return when (gv.lastEventType) {
             // CONTRACTS_GENERATED is authored by ExecutionAuthority — not by Governor.
             // Governor reads from the ledger only; if it has not yet been written, wait.
             EventTypes.INTENT_SUBMITTED    -> GovernorResult.NO_EVENT
@@ -98,7 +100,7 @@ class Governor(
             EventTypes.EXECUTION_COMPLETED -> GovernorResult.COMPLETED
 
             else -> {
-                val nextList = nextEvents(events)
+                val nextList = nextEvents(state)
                 if (nextList.isNotEmpty()) {
                     nextList.forEach { next ->
                         store.appendEvent(projectId, next.type, next.payload)
@@ -120,6 +122,10 @@ class Governor(
      * Use [nextEvents] when all events must be obtained.
      *
      * This function has no side effects.
+     *
+     * @deprecated Prefer [nextEvents] with a [ReplayStructuralState] obtained from
+     * [EventRepository.replayState].  This overload is retained for backward
+     * compatibility with existing tests.
      */
     fun nextEvent(events: List<Event>): Event? = nextEvents(events).firstOrNull()
 
@@ -134,24 +140,53 @@ class Governor(
      *
      * This function has no side effects. The caller is responsible for persisting
      * all returned events via [com.agoii.mobile.core.EventRepository].
+     *
+     * AGOII-REPLAY-STATE-001: This overload derives a [ReplayStructuralState] from
+     * [events] and delegates to [nextEvents(ReplayStructuralState)].  The state-based
+     * overload is the canonical implementation; this overload exists solely to
+     * maintain backward compatibility with tests that pass raw event lists.
      */
     fun nextEvents(events: List<Event>): List<Event> {
         if (events.isEmpty()) return emptyList()
-
-        // All transitions produce at most one event; multi-event steps have been removed
-        // as part of AGOII-ALIGN-1 (ASSEMBLY_FAILED recovery is now owned by ExecutionAuthority).
-        return listOfNotNull(nextEventSingle(events))
+        // Build state from the given event list using an ephemeral repository so that
+        // the state-based transition logic operates on the supplied snapshot rather
+        // than the live ledger.  The projectId is irrelevant because the ephemeral
+        // repository ignores it.
+        val ephemeral = object : EventRepository {
+            override fun appendEvent(projectId: String, type: String, payload: Map<String, Any>) = Unit
+            override fun loadEvents(projectId: String): List<Event> = events
+        }
+        return nextEvents(ephemeral.replayState(""))
     }
 
     /**
-     * Internal single-event projection for all non-ASSEMBLY_FAILED transitions.
-     * Returns null when no transition is applicable.
+     * Pure projection: given an authoritative [ReplayStructuralState], returns ALL
+     * events to append in this evaluation step, or an empty list when no Governor-owned
+     * transition exists.
+     *
+     * AGOII-REPLAY-STATE-001: This is the canonical entry point for Governor transition
+     * logic.  Decision-making is based exclusively on pre-computed state; no raw event
+     * list is consumed.
+     *
+     * This function has no side effects.
      */
-    private fun nextEventSingle(events: List<Event>): Event? {
-        if (events.isEmpty()) return null
-        val last = events.last()
+    fun nextEvents(state: ReplayStructuralState): List<Event> {
+        if (state.governanceView.lastEventType == null) return emptyList()
+        return listOfNotNull(nextEventSingle(state))
+    }
 
-        return when (last.type) {
+    /**
+     * Internal single-event projection operating exclusively on [ReplayStructuralState].
+     *
+     * AGOII-REPLAY-STATE-001: all decision-making reads state fields; no raw event list
+     * is consumed inside this function.  Returns null when no transition is applicable.
+     */
+    private fun nextEventSingle(state: ReplayStructuralState): Event? {
+        val gv          = state.governanceView
+        val lastType    = gv.lastEventType ?: return null
+        val lastPayload = gv.lastEventPayload
+
+        return when (lastType) {
 
             // User approves contracts → Governor advances to EXECUTION_STARTED
             EventTypes.CONTRACTS_APPROVED -> {
@@ -160,7 +195,7 @@ class Governor(
 
             // EXECUTION_STARTED → begin first contract
             EventTypes.EXECUTION_STARTED -> {
-                val total = deriveTotal(events) ?: return null
+                val total = gv.totalContracts.takeIf { it > 0 } ?: return null
                 canIssue(1) ?: return null
                 Event(
                     type    = EventTypes.CONTRACT_STARTED,
@@ -175,14 +210,14 @@ class Governor(
             // ── Simple passthrough transitions (empty payload) ────────────────────
 
             in VALID_TRANSITIONS.keys -> {
-                val target = VALID_TRANSITIONS.getValue(last.type)
+                val target = VALID_TRANSITIONS.getValue(lastType)
                 Event(type = target, payload = emptyMap())
             }
 
             // ── Execution spine ───────────────────────────────────────────────────
 
             EventTypes.CONTRACTS_READY -> {
-                val total = deriveTotal(events) ?: return null
+                val total = gv.totalContracts.takeIf { it > 0 } ?: return null
                 canIssue(1) ?: return null
                 Event(
                     type    = EventTypes.CONTRACT_STARTED,
@@ -191,10 +226,9 @@ class Governor(
             }
 
             EventTypes.CONTRACT_STARTED -> {
-                val contractId = last.payload["contract_id"] as? String ?: return null
-                val position   = resolveInt(last.payload["position"])    ?: return null
-                val total      = deriveTotal(events)                      ?: return null
-                val reportRef  = deriveReportReference(events)
+                val contractId = lastPayload["contract_id"] as? String ?: return null
+                val position   = resolveInt(lastPayload["position"])    ?: return null
+                val total      = gv.totalContracts.takeIf { it > 0 }   ?: return null
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
@@ -202,7 +236,7 @@ class Governor(
                         "contractId"       to contractId,
                         "position"         to position,
                         "total"            to total,
-                        "report_reference" to reportRef,
+                        "report_reference" to gv.reportReference,
                         "requirements"     to emptyList<Any>(),
                         "constraints"      to emptyList<Any>()
                     )
@@ -210,13 +244,12 @@ class Governor(
             }
 
             EventTypes.TASK_ASSIGNED -> {
-                val taskId   = last.payload["taskId"] as? String ?: return null
-                val position = resolveInt(last.payload["position"])
-                    ?: events.lastOrNull { it.type == EventTypes.CONTRACT_STARTED }
-                        ?.payload?.let { resolveInt(it["position"]) }
+                val taskId   = lastPayload["taskId"] as? String ?: return null
+                val position = resolveInt(lastPayload["position"])
+                    ?: gv.lastContractStartedPosition
                     ?: return null
-                val total = resolveInt(last.payload["total"])
-                    ?: deriveTotal(events)
+                val total = resolveInt(lastPayload["total"])
+                    ?: gv.totalContracts.takeIf { it > 0 }
                     ?: return null
                 Event(
                     type    = EventTypes.TASK_STARTED,
@@ -228,11 +261,11 @@ class Governor(
             EventTypes.TASK_STARTED -> null
 
             EventTypes.TASK_EXECUTED -> {
-                val taskId      = last.payload["taskId"]          as? String ?: return null
-                val position    = resolveInt(last.payload["position"])       ?: return null
-                val total       = resolveInt(last.payload["total"])          ?: return null
-                val execStatus  = last.payload["executionStatus"] as? String ?: return null
-                val validStatus = last.payload["validationStatus"] as? String ?: return null
+                val taskId      = lastPayload["taskId"]          as? String ?: return null
+                val position    = resolveInt(lastPayload["position"])       ?: return null
+                val total       = resolveInt(lastPayload["total"])          ?: return null
+                val execStatus  = lastPayload["executionStatus"] as? String ?: return null
+                val validStatus = lastPayload["validationStatus"] as? String ?: return null
                 if (execStatus == "SUCCESS" && validStatus == "VALIDATED") {
                     Event(
                         type    = EventTypes.TASK_COMPLETED,
@@ -247,22 +280,16 @@ class Governor(
             }
 
             EventTypes.TASK_COMPLETED -> {
-                val position = resolveInt(last.payload["position"]) ?: return null
-                val total    = resolveInt(last.payload["total"])    ?: return null
-
-                val contractId = events
-                    .lastOrNull { it.type == EventTypes.CONTRACT_STARTED }
-                    ?.payload?.get("contract_id") as? String ?: ""
-
-                val reportReference = deriveReportReference(events)
+                val position = resolveInt(lastPayload["position"]) ?: return null
+                val total    = resolveInt(lastPayload["total"])    ?: return null
 
                 Event(
                     type    = EventTypes.CONTRACT_COMPLETED,
                     payload = mapOf(
                         "position"         to position,
                         "total"            to total,
-                        "contractId"       to contractId,
-                        "report_reference" to reportReference
+                        "contractId"       to gv.lastContractStartedId,
+                        "report_reference" to gv.reportReference
                     )
                 )
             }
@@ -277,15 +304,15 @@ class Governor(
             // AGOII-ALIGN-1 RULE 3 — ICS ENTRY LOCK:
             // Governor is the sole emitter of ICS_STARTED; source=GOVERNOR is mandatory.
             EventTypes.ASSEMBLY_COMPLETED -> {
-                val reportReference = last.payload["report_reference"]?.toString()
+                val reportRef = lastPayload["report_reference"]?.toString()
                     ?.takeIf { it.isNotBlank() } ?: return null
-                val finalArtifactReference = last.payload["finalArtifactReference"]?.toString()
+                val finalArtifactReference = lastPayload["finalArtifactReference"]?.toString()
                     ?.takeIf { it.isNotBlank() } ?: return null
-                val taskId = "ICS::$reportReference"
+                val taskId = "ICS::$reportRef"
                 Event(
                     type    = EventTypes.ICS_STARTED,
                     payload = mapOf(
-                        "report_reference"       to reportReference,
+                        "report_reference"       to reportRef,
                         "finalArtifactReference" to finalArtifactReference,
                         "taskId"                 to taskId,
                         "source"                 to "GOVERNOR"
@@ -294,57 +321,51 @@ class Governor(
             }
 
             // CLC-1 delta loop: RECOVERY_CONTRACT → DELTA_CONTRACT_CREATED
-            // Governor extracts recoveryId, contractId, taskId, report_reference from the
-            // recovery payload and issues DELTA_CONTRACT_CREATED (idempotency by recoveryId).
+            // Reads recoveryId, contractId, taskId, report_reference from the state's
+            // last-event payload; idempotency is checked against the pre-computed
+            // deltaContractRecoveryIds set in GovernanceView.
             EventTypes.RECOVERY_CONTRACT -> {
-                val recoveryId      = last.payload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
+                val recoveryId = lastPayload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val contractId      = last.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+                val contractId = lastPayload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val taskId          = last.payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
+                val taskId     = lastPayload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val reportReference = last.payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+                val reportRef  = lastPayload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val alreadyExists = events.any {
-                    it.type == EventTypes.DELTA_CONTRACT_CREATED &&
-                    it.payload["recoveryId"] == recoveryId
-                }
-                if (alreadyExists) return null
+                if (gv.deltaContractRecoveryIds.contains(recoveryId)) return null
                 Event(
                     type    = EventTypes.DELTA_CONTRACT_CREATED,
                     payload = mapOf(
                         "recoveryId"       to recoveryId,
                         "contractId"       to contractId,
                         "taskId"           to taskId,
-                        "report_reference" to reportReference,
+                        "report_reference" to reportRef,
                         "source"           to "GOVERNOR"
                     )
                 )
             }
 
             // CLC-1 delta loop: DELTA_CONTRACT_CREATED → TASK_ASSIGNED
-            // Reads recoveryId, contractId, taskId, report_reference from the delta payload.
-            // Idempotency: skip if TASK_ASSIGNED with the same taskId already exists.
+            // Reads fields from the state's last-event payload; idempotency is checked
+            // against the pre-computed taskAssignedTaskIds set in GovernanceView.
             EventTypes.DELTA_CONTRACT_CREATED -> {
-                val recoveryId      = last.payload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
+                // recoveryId required in payload (contract enforcement — mirrors ValidationLayer).
+                val recoveryId  = lastPayload["recoveryId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val contractId      = last.payload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
+                val contractId  = lastPayload["contractId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val taskId          = last.payload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
+                val taskId      = lastPayload["taskId"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val reportReference = last.payload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
+                val reportRef   = lastPayload["report_reference"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: return null
-                val alreadyAssigned = events.any {
-                    it.type == EventTypes.TASK_ASSIGNED &&
-                    it.payload["taskId"] == taskId
-                }
-                if (alreadyAssigned) return null
+                if (gv.taskAssignedTaskIds.contains(taskId)) return null
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf(
                         "taskId"           to taskId,
                         "contractId"       to contractId,
-                        "report_reference" to reportReference,
+                        "report_reference" to reportRef,
                         "position"         to 1,
                         "total"            to 1
                     )
@@ -352,8 +373,8 @@ class Governor(
             }
 
             EventTypes.CONTRACTOR_REASSIGNED -> {
-                val taskId          = last.payload["taskId"]          as? String ?: return null
-                val newContractorId = last.payload["newContractorId"] as? String ?: return null
+                val taskId          = lastPayload["taskId"]          as? String ?: return null
+                val newContractorId = lastPayload["newContractorId"] as? String ?: return null
                 Event(
                     type    = EventTypes.TASK_ASSIGNED,
                     payload = mapOf("taskId" to taskId)
@@ -361,8 +382,8 @@ class Governor(
             }
 
             EventTypes.CONTRACT_COMPLETED -> {
-                val position = resolveInt(last.payload["position"]) ?: return null
-                val total    = deriveTotal(events)                   ?: return null
+                val position = resolveInt(lastPayload["position"]) ?: return null
+                val total    = gv.totalContracts.takeIf { it > 0 } ?: return null
                 if (position < total) {
                     val next = position + 1
                     canIssue(next) ?: return null
@@ -409,41 +430,6 @@ class Governor(
         is Long   -> value.toInt()
         is String -> value.toIntOrNull()
         else      -> null
-    }
-
-    /**
-     * Derives the report reference (RRID) from the first [EventTypes.CONTRACTS_GENERATED]
-     * event in the ledger for RRIL-1 propagation into TASK_ASSIGNED payload.
-     *
-     * Reads "report_reference" (canonical key after FS-5 normalization) with "report_id"
-     * as legacy fallback for backward compatibility.
-     * Returns empty string when no CONTRACTS_GENERATED event or field is found.
-     */
-    private fun deriveReportReference(events: List<Event>): String {
-        val contractsGen = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
-            ?: return ""
-        return contractsGen.payload["report_reference"]?.toString()
-            ?: contractsGen.payload["report_id"]?.toString()
-            ?: ""
-    }
-
-    /**
-     * Derives the total contract count from the first [EventTypes.CONTRACTS_GENERATED]
-     * event in the ledger.
-     *
-     * Supports two payload formats:
-     *  1. `"contracts"` list — written by [com.agoii.mobile.execution.ExecutionAuthority]
-     *     via ContractSystemOrchestrator.
-     *  2. `"total"` numeric key — used in test fixtures and legacy ledgers.
-     *
-     * Returns null if no CONTRACTS_GENERATED event exists or total cannot be derived.
-     */
-    private fun deriveTotal(events: List<Event>): Int? {
-        val contractsGen = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
-            ?: return null
-        val contractsList = contractsGen.payload["contracts"] as? List<*>
-        if (!contractsList.isNullOrEmpty()) return contractsList.size
-        return contractsGen.payload["total"]?.let { resolveInt(it) }
     }
 
 }

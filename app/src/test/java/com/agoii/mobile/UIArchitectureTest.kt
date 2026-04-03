@@ -1,10 +1,13 @@
 package com.agoii.mobile
 
 import com.agoii.mobile.core.AssemblyStructuralState
+import com.agoii.mobile.core.AuditView
 import com.agoii.mobile.core.ContractStructuralState
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.ExecutionStructuralState
+import com.agoii.mobile.core.ExecutionView
+import com.agoii.mobile.core.GovernanceView
 import com.agoii.mobile.core.IntentStructuralState
 import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.ui.core.ActionGate
@@ -28,39 +31,109 @@ class UIArchitectureTest {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
+    /** Builds an empty [GovernanceView] with all defaults for test states. */
+    private fun emptyGovernanceView() = GovernanceView(
+        lastEventType            = null,
+        lastEventPayload         = emptyMap(),
+        totalContracts           = 0,
+        reportReference          = "",
+        deltaContractRecoveryIds = emptySet(),
+        taskAssignedTaskIds      = emptySet(),
+        lastContractStartedId    = "",
+        lastContractStartedPosition = null
+    )
+
+    /** Builds an empty [ExecutionView] with all flags false for test states. */
+    private fun emptyExecutionView() = ExecutionView(
+        taskStatus           = emptyMap(),
+        icsStarted           = false,
+        icsCompleted         = false,
+        commitContractExists = false,
+        commitExecuted       = false,
+        commitAborted        = false
+    )
+
     private fun idle() = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = false),
-        contracts = ContractStructuralState(generated = false, valid = false),
-        execution = ExecutionStructuralState(0, 0, 0, 0, false),
-        assembly  = AssemblyStructuralState(false, false, false, false)
+        governanceView = emptyGovernanceView(),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = false),
+            contracts = ContractStructuralState(generated = false, valid = false),
+            execution = ExecutionStructuralState(0, 0, 0, 0),
+            assembly  = AssemblyStructuralState(false, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
+        )
     )
 
     private fun contractsValid() = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = true),
-        contracts = ContractStructuralState(generated = true, valid = true),
-        execution = ExecutionStructuralState(0, 0, 0, 0, false),
-        assembly  = AssemblyStructuralState(false, false, false, false)
+        governanceView = emptyGovernanceView().copy(totalContracts = 1),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = true),
+            // totalContracts is intentionally set in both GovernanceView and ContractStructuralState
+            // because each view serves a different authority.  In production both are derived from
+            // the same CONTRACTS_GENERATED event so they always agree.
+            contracts = ContractStructuralState(generated = true, valid = true, totalContracts = 1),
+            execution = ExecutionStructuralState(0, 0, 0, 0),
+            assembly  = AssemblyStructuralState(false, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
+        )
     )
 
     private fun executionStarted() = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = true),
-        contracts = ContractStructuralState(generated = true, valid = true),
-        execution = ExecutionStructuralState(3, 1, 0, 0, false),
-        assembly  = AssemblyStructuralState(false, false, false, false)
+        governanceView = emptyGovernanceView().copy(totalContracts = 3),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = true),
+            contracts = ContractStructuralState(generated = true, valid = true, totalContracts = 3),
+            execution = ExecutionStructuralState(3, 1, 0, 0),
+            assembly  = AssemblyStructuralState(false, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
+        )
     )
 
     private fun executionCompleted() = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = true),
-        contracts = ContractStructuralState(generated = true, valid = true),
-        execution = ExecutionStructuralState(3, 3, 3, 3, true),
-        assembly  = AssemblyStructuralState(false, false, false, false)
+        governanceView = emptyGovernanceView().copy(totalContracts = 3),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = true),
+            contracts = ContractStructuralState(generated = true, valid = true, totalContracts = 3),
+            execution = ExecutionStructuralState(3, 3, 3, 3),
+            assembly  = AssemblyStructuralState(false, false, false),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
+        )
     )
 
     private fun assemblyCompleted() = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = true),
-        contracts = ContractStructuralState(generated = true, valid = true),
-        execution = ExecutionStructuralState(3, 3, 3, 3, true),
-        assembly  = AssemblyStructuralState(true, true, true, true)
+        governanceView = emptyGovernanceView().copy(totalContracts = 3),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = true),
+            contracts = ContractStructuralState(generated = true, valid = true, totalContracts = 3),
+            execution = ExecutionStructuralState(3, 3, 3, 3),
+            assembly  = AssemblyStructuralState(true, true, true),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
+        )
     )
 
     // ── StateProjection ───────────────────────────────────────────────────────

@@ -2,11 +2,14 @@ package com.agoii.mobile
 
 import com.agoii.mobile.assembly.AssemblyValidator
 import com.agoii.mobile.core.AssemblyStructuralState
+import com.agoii.mobile.core.AuditView
 import com.agoii.mobile.core.ContractStructuralState
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.ExecutionStructuralState
+import com.agoii.mobile.core.ExecutionView
+import com.agoii.mobile.core.GovernanceView
 import com.agoii.mobile.core.IntentStructuralState
 import com.agoii.mobile.core.Replay
 import com.agoii.mobile.core.ReplayStructuralState
@@ -28,6 +31,19 @@ import org.junit.Test
 class AssemblyTest {
 
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    private fun emptyGovernanceView() = GovernanceView(
+        lastEventType = null, lastEventPayload = emptyMap(),
+        totalContracts = 0, reportReference = "",
+        deltaContractRecoveryIds = emptySet(), taskAssignedTaskIds = emptySet(),
+        lastContractStartedId = "", lastContractStartedPosition = null
+    )
+
+    private fun emptyExecutionView() = ExecutionView(
+        taskStatus = emptyMap(), icsStarted = false, icsCompleted = false,
+        commitContractExists = false, commitExecuted = false,
+        commitAborted = false
+    )
 
     private fun store(): EventRepository = object : EventRepository {
         override fun appendEvent(projectId: String, type: String, payload: Map<String, Any>) {}
@@ -112,14 +128,17 @@ class AssemblyTest {
     @Test
     fun `assembly_started before execution_completed is an illegal transition`() {
         val state = ReplayStructuralState(
-            intent    = IntentStructuralState(structurallyComplete = true),
-            contracts = ContractStructuralState(generated = true, valid = true),
-            execution = ExecutionStructuralState(1, 1, 0, 0, fullyExecuted = false),
-            assembly  = AssemblyStructuralState(
-                assemblyStarted   = true,
-                assemblyValidated = false,
-                assemblyCompleted = false,
-                assemblyValid     = false
+            governanceView = emptyGovernanceView(),
+            executionView  = emptyExecutionView(),
+            auditView      = AuditView(
+                intent    = IntentStructuralState(structurallyComplete = true),
+                contracts = ContractStructuralState(generated = true, valid = true),
+                execution = ExecutionStructuralState(1, 1, 0, 0),
+                assembly  = AssemblyStructuralState(
+                    assemblyStarted   = true,
+                    assemblyValidated = false,
+                    assemblyCompleted = false
+                )
             )
         )
         val result = AssemblyValidator().validate(state)
@@ -143,9 +162,15 @@ class AssemblyTest {
     @Test
     fun `assembly validation produces no side effects — state unchanged`() {
         val state = replayStateAt(singleContractLedger())
-        val executionBefore = state.execution.fullyExecuted
+        val totalTasksBefore = state.auditView.execution.totalTasks
+        val validatedTasksBefore = state.auditView.execution.validatedTasks
         AssemblyValidator().validate(state)
-        assertEquals(executionBefore, state.execution.fullyExecuted)
+        // Verify fullyExecuted computation: totalTasks > 0 && validatedTasks == totalTasks
+        val fullyExecutedBefore = totalTasksBefore > 0 && validatedTasksBefore == totalTasksBefore
+        val totalTasksAfter = state.auditView.execution.totalTasks
+        val validatedTasksAfter = state.auditView.execution.validatedTasks
+        val fullyExecutedAfter = totalTasksAfter > 0 && validatedTasksAfter == totalTasksAfter
+        assertEquals(fullyExecutedBefore, fullyExecutedAfter)
     }
 
     // ── ReplayStructuralState: assemblyCompleted is derived from ledger ───────
@@ -154,24 +179,24 @@ class AssemblyTest {
     fun `assemblyCompleted is false before assembly_completed event`() {
         val state = Replay(store()).deriveStructuralState(singleContractLedger())
         // ledger ends at assembly_validated — assemblyCompleted must be false
-        assertFalse(state.assembly.assemblyCompleted)
-        assertTrue(state.assembly.assemblyStarted)
-        assertTrue(state.assembly.assemblyValidated)
+        assertFalse(state.auditView.assembly.assemblyCompleted)
+        assertTrue(state.auditView.assembly.assemblyStarted)
+        assertTrue(state.auditView.assembly.assemblyValidated)
     }
 
     @Test
     fun `assemblyCompleted is true after assembly_completed event`() {
         val events = singleContractLedger() + Event(EventTypes.ASSEMBLY_COMPLETED, emptyMap())
         val state = Replay(store()).deriveStructuralState(events)
-        assertTrue(state.assembly.assemblyCompleted)
+        assertTrue(state.auditView.assembly.assemblyCompleted)
     }
 
     @Test
     fun `assembly flags all false on empty ledger`() {
         val state = Replay(store()).deriveStructuralState(emptyList())
-        assertFalse(state.assembly.assemblyStarted)
-        assertFalse(state.assembly.assemblyValidated)
-        assertFalse(state.assembly.assemblyCompleted)
+        assertFalse(state.auditView.assembly.assemblyStarted)
+        assertFalse(state.auditView.assembly.assemblyValidated)
+        assertFalse(state.auditView.assembly.assemblyCompleted)
     }
 
     // ── UI integration: assembly visibility in StateProjection ────────────────
@@ -198,10 +223,18 @@ class AssemblyTest {
     @Test
     fun `StateProjection assembly flags all false on idle state`() {
         val idleState = ReplayStructuralState(
-            intent    = IntentStructuralState(structurallyComplete = false),
-            contracts = ContractStructuralState(generated = false, valid = false),
-            execution = ExecutionStructuralState(0, 0, 0, 0, false),
-            assembly  = AssemblyStructuralState(false, false, false, false)
+            governanceView = emptyGovernanceView(),
+            executionView  = emptyExecutionView(),
+            auditView      = AuditView(
+                intent    = IntentStructuralState(structurallyComplete = false),
+                contracts = ContractStructuralState(generated = false, valid = false),
+                execution = ExecutionStructuralState(0, 0, 0, 0, false),
+                assembly  = AssemblyStructuralState(false, false, false, false),
+                executionValid = false,
+                assemblyValid  = false,
+                icsValid       = false,
+                commitValid    = false
+            )
         )
         val ui = StateProjection().project(idleState)
         assertFalse(ui.assemblyStarted)

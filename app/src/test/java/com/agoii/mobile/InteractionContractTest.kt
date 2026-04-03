@@ -1,8 +1,11 @@
 package com.agoii.mobile
 
 import com.agoii.mobile.core.AssemblyStructuralState
+import com.agoii.mobile.core.AuditView
 import com.agoii.mobile.core.ContractStructuralState
 import com.agoii.mobile.core.ExecutionStructuralState
+import com.agoii.mobile.core.ExecutionView
+import com.agoii.mobile.core.GovernanceView
 import com.agoii.mobile.core.IntentStructuralState
 import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.interaction.InteractionContract
@@ -33,6 +36,19 @@ class InteractionContractTest {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
+    private fun emptyGovernanceView() = GovernanceView(
+        lastEventType = null, lastEventPayload = emptyMap(),
+        totalContracts = 0, reportReference = "",
+        deltaContractRecoveryIds = emptySet(), taskAssignedTaskIds = emptySet(),
+        lastContractStartedId = "", lastContractStartedPosition = null
+    )
+
+    private fun emptyExecutionView() = ExecutionView(
+        taskStatus = emptyMap(), icsStarted = false, icsCompleted = false,
+        commitContractExists = false, commitExecuted = false,
+        commitAborted = false
+    )
+
     private fun state(
         assignedTasks: Int = 0,
         fullyExecuted: Boolean = false,
@@ -41,20 +57,27 @@ class InteractionContractTest {
         assemblyCompleted: Boolean = false,
         contractsValid: Boolean = false
     ) = ReplayStructuralState(
-        intent    = IntentStructuralState(structurallyComplete = assignedTasks > 0 || contractsValid),
-        contracts = ContractStructuralState(generated = contractsValid, valid = contractsValid),
-        execution = ExecutionStructuralState(
-            totalTasks     = if (fullyExecuted) 3 else assignedTasks,
-            assignedTasks  = assignedTasks,
-            completedTasks = if (fullyExecuted) 3 else 0,
-            validatedTasks = if (fullyExecuted) 3 else 0,
-            fullyExecuted  = fullyExecuted
-        ),
-        assembly  = AssemblyStructuralState(
-            assemblyStarted   = assemblyStarted,
-            assemblyValidated = assemblyValidated,
-            assemblyCompleted = assemblyCompleted,
-            assemblyValid     = assemblyStarted && assemblyValidated && assemblyCompleted && fullyExecuted
+        governanceView = emptyGovernanceView(),
+        executionView  = emptyExecutionView(),
+        auditView      = AuditView(
+            intent    = IntentStructuralState(structurallyComplete = assignedTasks > 0 || contractsValid),
+            contracts = ContractStructuralState(generated = contractsValid, valid = contractsValid),
+            execution = ExecutionStructuralState(
+                totalTasks     = if (fullyExecuted) 3 else assignedTasks,
+                assignedTasks  = assignedTasks,
+                completedTasks = if (fullyExecuted) 3 else 0,
+                validatedTasks = if (fullyExecuted) 3 else 0
+            ),
+            assembly  = AssemblyStructuralState(
+                assemblyStarted   = assemblyStarted,
+                assemblyValidated = assemblyValidated,
+                assemblyCompleted = assemblyCompleted
+            ),
+            icsStarted = false,
+            icsCompleted = false,
+            commitContractExists = false,
+            commitExecuted = false,
+            commitAborted = false
         )
     )
 
@@ -80,7 +103,7 @@ class InteractionContractTest {
         val s = state(contractsValid = true)
         val contract = InteractionContract("id-x", "q", InteractionScope.CONTRACT, OutputType.STATUS, SourceType.LEDGER)
         repeat(5) { engine.execute(contract, InteractionInput.LedgerInput(s)) }
-        assertTrue(s.contracts.valid)
+        assertTrue(s.auditView.contracts.valid)
     }
 
     // ── 2. Correct scope extraction ───────────────────────────────────────────

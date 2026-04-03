@@ -23,4 +23,19 @@ interface EventRepository {
      *         Implementations that do not persist data (e.g. in-memory) never throw.
      */
     fun loadEvents(projectId: String): List<Event>
+
+    /**
+     * Return the authoritative [ReplayStructuralState] for the given project by running the
+     * Replay Engine over all persisted events.
+     *
+     * AGOII-REPLAY-STATE-001: This is the ONLY method decision-making modules (Governor,
+     * ExecutionAuthority, ValidationLayer) are permitted to call for state derivation.
+     * Raw event lists MUST NOT be passed into decision logic; use this method instead.
+     *
+     * The default implementation delegates to [Replay.replayStructuralState], which is the
+     * canonical Replay Engine.  Implementations may override this method (e.g. to cache the
+     * result) but MUST NOT change its semantics.
+     */
+    fun replayState(projectId: String): ReplayStructuralState =
+        Replay(this).replayStructuralState(projectId)
 }

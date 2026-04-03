@@ -15,7 +15,7 @@ import com.agoii.mobile.core.ReplayStructuralState
  *
  * Validation checks:
  *  B. Execution Closure   — executionStarted and executionCompleted are both true.
- *  C. Task Resolution     — verified via fullyExecuted flag.
+ *  C. Task Resolution     — verified via validatedTasks count.
  *  D. Transition Integrity — assembly state is only reached after execution completion.
  */
 class AssemblyValidator {
@@ -31,8 +31,10 @@ class AssemblyValidator {
         val missingElements = mutableListOf<String>()
         val failedChecks    = mutableListOf<String>()
 
-        val executionStarted   = replayState.execution.assignedTasks > 0
-        val executionCompleted = replayState.execution.fullyExecuted
+        val av = replayState.auditView
+        val executionStarted   = av.execution.assignedTasks > 0
+        // AGOII-REPLAY-AUTHORITY-PURGE-001: Compute fullyExecuted locally
+        val executionCompleted = av.execution.totalTasks > 0 && av.execution.validatedTasks == av.execution.totalTasks
 
         // B. Execution Closure
         if (!executionStarted) {
@@ -43,10 +45,10 @@ class AssemblyValidator {
         }
 
         // D. Transition Integrity
-        if (replayState.assembly.assemblyStarted && !executionCompleted) {
+        if (av.assembly.assemblyStarted && !executionCompleted) {
             failedChecks.add("assembly_started appeared before execution_completed")
         }
-        if (replayState.assembly.assemblyValidated && !replayState.assembly.assemblyStarted) {
+        if (av.assembly.assemblyValidated && !av.assembly.assemblyStarted) {
             failedChecks.add("assembly_validated appeared before assembly_started")
         }
 
