@@ -205,9 +205,10 @@ class ExecutionAuthority(
         val contractId = taskEvent.payload["contractId"]?.toString()
             ?: return ExecutionAuthorityExecutionResult.Blocked("contractId missing in TASK_STARTED")
 
-        // TODO: Implement actual task execution via ContractorExecutor
-        // For now, create placeholder ExecutionReport for validation testing
-        val executionReport: ExecutionReport? = null // Will be from ContractorExecutor
+        // TODO(Phase 2): Implement actual task execution via ContractorExecutor
+        // When wired: ContractorExecutor.execute() → ContractorExecutionOutput.artifact → ExecutionReport
+        // Reference: ARTIFACT_SPINE_IMPLEMENTATION_REPORT.md Section "Future Integration Points"
+        val executionReport: ExecutionReport? = null // Placeholder until execution integration
         
         // Check if this is a delta contract (from RECOVERY_CONTRACT flow)
         val isDeltaContract = events.any { event ->
@@ -332,8 +333,8 @@ class ExecutionAuthority(
             eventPayload["validatedSections"] = executionReport.artifact.sections.map { it.sectionId }
         }
         
-        // TODO: Implement actual task execution via ContractorExecutor
-        val report = null // TODO: Generate ContractReport from execution
+        // TODO(Phase 2): Generate ContractReport from ExecutionReport when execution is wired
+        val report = null // Placeholder until execution integration
         
         ledger.appendEvent(
             projectId,
