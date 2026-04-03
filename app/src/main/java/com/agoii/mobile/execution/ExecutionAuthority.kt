@@ -191,13 +191,12 @@ class ExecutionAuthority(
 
     /**
      * Assembly execution is NOT allowed inside ExecutionAuthority.
-     * This enforces strict architectural boundaries.
      */
     fun assembleFromLedger(
         projectId: String,
         ledger: EventLedger
     ): AssemblyExecutionResult {
-        return AssemblyExecutionResult.Failure(
+        return AssemblyExecutionResult.Blocked(
             "Assembly execution not permitted in ExecutionAuthority"
         )
     }
