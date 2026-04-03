@@ -3,6 +3,8 @@ package com.agoii.mobile.contracts
 import com.agoii.mobile.contractors.ResolutionTrace
 import com.agoii.mobile.execution.AnchorState
 import com.agoii.mobile.execution.ContractorExecutionOutput
+import com.agoii.mobile.execution.ValidatedSections
+import com.agoii.mobile.execution.MutationSurface
 
 class UniversalContractReport {
 
@@ -29,7 +31,12 @@ class UniversalContractReport {
             else null,
             exitCode           = if (executionOutput.error == null) 0 else 1,
             failureSurface     = listOfNotNull(executionOutput.error),
-            policyViolations   = emptyList()
+            policyViolations   = emptyList(),
+            validatedSections  = ValidatedSections(emptySet()),
+            mutationSurface    = MutationSurface(
+                allowedFields = emptyList(),
+                allowedSections = emptyList()
+            )
         )
     }
 

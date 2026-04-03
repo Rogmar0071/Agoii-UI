@@ -9,6 +9,8 @@ package com.agoii.mobile.contracts
 // traceStructure MUST be ResolutionTrace — NO generic Map.
 
 import com.agoii.mobile.contractor.ResolutionTrace
+import com.agoii.mobile.execution.ValidatedSections
+import com.agoii.mobile.execution.MutationSurface
 
 data class ContractReport(
     val reportReference: String,
@@ -29,5 +31,9 @@ data class ContractReport(
 
     // VALIDATION SURFACE
     val failureSurface:   List<String>,
-    val policyViolations: List<String>
+    val policyViolations: List<String>,
+
+    // EXECUTION CONTROL SURFACES (optional with defaults for backward compatibility)
+    val validatedSections: ValidatedSections = ValidatedSections(emptySet()),
+    val mutationSurface: MutationSurface = MutationSurface(emptyList(), emptyList())
 )
