@@ -15,7 +15,7 @@ import com.agoii.mobile.core.ReplayStructuralState
  *
  * Validation checks:
  *  B. Execution Closure   — executionStarted and executionCompleted are both true.
- *  C. Task Resolution     — verified via fullyExecuted flag.
+ *  C. Task Resolution     — verified via validatedTasks count.
  *  D. Transition Integrity — assembly state is only reached after execution completion.
  */
 class AssemblyValidator {
@@ -33,7 +33,8 @@ class AssemblyValidator {
 
         val av = replayState.auditView
         val executionStarted   = av.execution.assignedTasks > 0
-        val executionCompleted = av.execution.fullyExecuted
+        // AGOII-REPLAY-AUTHORITY-PURGE-001: Compute fullyExecuted locally
+        val executionCompleted = av.execution.totalTasks > 0 && av.execution.validatedTasks == av.execution.totalTasks
 
         // B. Execution Closure
         if (!executionStarted) {

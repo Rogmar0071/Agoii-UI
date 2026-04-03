@@ -28,9 +28,9 @@ data class LedgerIntegrityCheck(
  * Result of a replay-consistency check against structural state invariants.
  *
  * @property passed           True when none of the three structural FAIL conditions are triggered.
- * @property fullyExecuted    Whether [ReplayStructuralState.execution.fullyExecuted] is true.
+ * @property fullyExecuted    Whether execution is fully completed (totalTasks == validatedTasks).
  * @property assemblyCompleted Whether [ReplayStructuralState.assembly.assemblyCompleted] is true.
- * @property assemblyValid    Whether [ReplayStructuralState.assembly.assemblyValid] is true.
+ * @property assemblyValid    Whether assembly is valid (started && completed && executionComplete).
  */
 data class ReplayConsistencyCheck(
     val passed: Boolean,
@@ -177,15 +177,18 @@ class SystemVerificationContract(private val eventStore: EventRepository) {
 
     private fun checkReplayConsistency(state: ReplayStructuralState): ReplayConsistencyCheck {
         val av = state.auditView
-        val failCondition1 = !av.execution.fullyExecuted && av.assembly.assemblyCompleted
-        val failCondition2 = av.execution.totalTasks != av.execution.completedTasks &&
-                             av.execution.fullyExecuted
-        val failCondition3 = av.assembly.assemblyValid && !av.execution.fullyExecuted
+        // AGOII-REPLAY-AUTHORITY-PURGE-001: Compute derived state locally
+        val fullyExecuted = av.execution.totalTasks > 0 && av.execution.validatedTasks == av.execution.totalTasks
+        val assemblyValid = av.assembly.assemblyStarted && av.assembly.assemblyCompleted && fullyExecuted
+        
+        val failCondition1 = !fullyExecuted && av.assembly.assemblyCompleted
+        val failCondition2 = av.execution.totalTasks != av.execution.completedTasks && fullyExecuted
+        val failCondition3 = assemblyValid && !fullyExecuted
         return ReplayConsistencyCheck(
             passed            = !failCondition1 && !failCondition2 && !failCondition3,
-            fullyExecuted     = av.execution.fullyExecuted,
+            fullyExecuted     = fullyExecuted,
             assemblyCompleted = av.assembly.assemblyCompleted,
-            assemblyValid     = av.assembly.assemblyValid
+            assemblyValid     = assemblyValid
         )
     }
 

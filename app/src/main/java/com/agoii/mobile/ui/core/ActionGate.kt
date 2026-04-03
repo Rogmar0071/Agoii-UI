@@ -38,6 +38,10 @@ class ActionGate {
     private fun canStartExecution(state: ReplayStructuralState): Boolean =
         state.auditView.contracts.valid && state.auditView.execution.assignedTasks == 0
 
-    private fun canRetry(state: ReplayStructuralState): Boolean =
-        state.auditView.execution.assignedTasks > 0 && !state.auditView.execution.fullyExecuted
+    private fun canRetry(state: ReplayStructuralState): Boolean {
+        // AGOII-REPLAY-AUTHORITY-PURGE-001: Compute fullyExecuted locally
+        val av = state.auditView
+        val fullyExecuted = av.execution.totalTasks > 0 && av.execution.validatedTasks == av.execution.totalTasks
+        return av.execution.assignedTasks > 0 && !fullyExecuted
+    }
 }

@@ -24,10 +24,12 @@ class StateProjection {
 
     fun project(state: ReplayStructuralState): UIState {
         val av = state.auditView
+        // AGOII-REPLAY-AUTHORITY-PURGE-001: Compute fullyExecuted locally
+        val fullyExecuted = av.execution.totalTasks > 0 && av.execution.validatedTasks == av.execution.totalTasks
         return UIState(
             isComplete         = av.assembly.assemblyCompleted,
             executionStarted   = av.execution.assignedTasks > 0,
-            executionCompleted = av.execution.fullyExecuted,
+            executionCompleted = fullyExecuted,
             assemblyStarted    = av.assembly.assemblyStarted,
             assemblyValidated  = av.assembly.assemblyValidated,
             assemblyCompleted  = av.assembly.assemblyCompleted

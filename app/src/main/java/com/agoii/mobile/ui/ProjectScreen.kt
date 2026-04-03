@@ -178,7 +178,9 @@ fun ProjectScreen(projectId: String) {
         }
 
         // ── COMMIT PANEL — shown only when COMMIT_CONTRACT is PENDING ────────
-        val commitPending = replayState?.executionView?.commitPending == true
+        // AGOII-REPLAY-AUTHORITY-PURGE-001: Compute commitPending locally
+        val ev = replayState?.executionView
+        val commitPending = ev != null && ev.commitContractExists && !ev.commitExecuted && !ev.commitAborted
         if (commitPending) {
             // Read commit metadata directly from the event payload (Replay is boolean-only)
             val commitEvent = events.lastOrNull { it.type == EventTypes.COMMIT_CONTRACT }
@@ -318,15 +320,24 @@ private fun StatePanel(
         if (replayState != null) {
             val av = replayState.auditView
             val ev = replayState.executionView
-            val execColor   = if (av.executionValid) EventComplete else OnSurface.copy(alpha = 0.5f)
-            val asmColor    = if (av.assemblyValid)  EventComplete else OnSurface.copy(alpha = 0.5f)
-            val icsColor    = if (av.icsValid)       EventComplete else OnSurface.copy(alpha = 0.5f)
-            val commitColor = if (av.commitValid)    EventComplete else OnSurface.copy(alpha = 0.5f)
+            val gv = replayState.governanceView
+            
+            // AGOII-REPLAY-AUTHORITY-PURGE-001: Compute validity flags locally
+            val totalContracts = gv.totalContracts
+            val executionValid = totalContracts > 0 && av.execution.successfulTasks == totalContracts
+            val assemblyValid = av.assembly.assemblyStarted && av.assembly.assemblyCompleted && executionValid
+            val icsValid = ev.icsStarted && ev.icsCompleted && assemblyValid
+            val commitValid = ev.commitContractExists && (ev.commitExecuted || ev.commitAborted)
+            
+            val execColor   = if (executionValid) EventComplete else OnSurface.copy(alpha = 0.5f)
+            val asmColor    = if (assemblyValid)  EventComplete else OnSurface.copy(alpha = 0.5f)
+            val icsColor    = if (icsValid)       EventComplete else OnSurface.copy(alpha = 0.5f)
+            val commitColor = if (commitValid)    EventComplete else OnSurface.copy(alpha = 0.5f)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("executionValid=${av.executionValid}", color = execColor,   style = MonoStyle, fontSize = 10.sp)
-                Text("assemblyValid=${av.assemblyValid}",  color = asmColor,    style = MonoStyle, fontSize = 10.sp)
-                Text("icsValid=${av.icsValid}",            color = icsColor,    style = MonoStyle, fontSize = 10.sp)
-                Text("commitValid=${av.commitValid}",      color = commitColor, style = MonoStyle, fontSize = 10.sp)
+                Text("executionValid=$executionValid", color = execColor,   style = MonoStyle, fontSize = 10.sp)
+                Text("assemblyValid=$assemblyValid",  color = asmColor,    style = MonoStyle, fontSize = 10.sp)
+                Text("icsValid=$icsValid",            color = icsColor,    style = MonoStyle, fontSize = 10.sp)
+                Text("commitValid=$commitValid",      color = commitColor, style = MonoStyle, fontSize = 10.sp)
             }
             // Per-contract execution status
             val exec = av.execution
