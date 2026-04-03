@@ -17,12 +17,14 @@ import com.agoii.mobile.contracts.UniversalContract
  * @property name            Human-readable contract description.
  * @property position        Ordinal position in execution sequence (1-indexed).
  * @property reportReference Immutable report reference (RRID) for traceability.
+ * @property executionId     Unique execution identifier (generated per execution attempt).
  */
 data class ExecutionContract(
     val contractId:      String,
     val name:            String,
     val position:        Int,
-    val reportReference: String
+    val reportReference: String,
+    val executionId:     String = java.util.UUID.randomUUID().toString()
 )
 
 /**
