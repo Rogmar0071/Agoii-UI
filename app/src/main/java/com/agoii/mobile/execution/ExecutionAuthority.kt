@@ -182,6 +182,12 @@ class ExecutionAuthority(
     /**
      * Handle TASK_STARTED event — execute task.
      *
+     * EXECUTION FLOW (AGOII-ARTIFACT-SPINE-001):
+     *   1. Execute task via ContractorExecutor
+     *   2. Receive ExecutionReport + Artifact
+     *   3. If delta: Validate artifact (rules 3.2-3.4)
+     *   4. Emit TASK_EXECUTED with artifact
+     *
      * DELTA VALIDATION (Rules 3.2-3.4):
      *   - If delta contract: validate against previousArtifact + mutationSurface
      *   - Block on: regression, out-of-scope mutation, full rewrite
@@ -199,15 +205,19 @@ class ExecutionAuthority(
         val contractId = taskEvent.payload["contractId"]?.toString()
             ?: return ExecutionAuthorityExecutionResult.Blocked("contractId missing in TASK_STARTED")
 
+        // TODO: Implement actual task execution via ContractorExecutor
+        // For now, create placeholder ExecutionReport for validation testing
+        val executionReport: ExecutionReport? = null // Will be from ContractorExecutor
+        
         // Check if this is a delta contract (from RECOVERY_CONTRACT flow)
         val isDeltaContract = events.any { event ->
             event.type == EventTypes.DELTA_CONTRACT_CREATED &&
             event.payload["contractId"]?.toString() == contractId
         }
 
-        // RULES 3.2-3.4: Delta validation (if applicable)
-        if (isDeltaContract) {
-            val deltaValidation = performDeltaValidation(events, contractId)
+        // RULES 3.2-3.4: Delta validation (if applicable and we have execution report)
+        if (isDeltaContract && executionReport != null) {
+            val deltaValidation = performDeltaValidation(events, contractId, executionReport)
             when (deltaValidation) {
                 is DeltaValidationResult.RegressionDetected -> {
                     // RULE 3.2 violation: emit RECOVERY_CONTRACT
@@ -286,7 +296,17 @@ class ExecutionAuthority(
                     return ExecutionAuthorityExecutionResult.Executed(taskId, ExecutionStatus.FAILURE, null)
                 }
                 is DeltaValidationResult.MissingData -> {
-                    // Missing required data for delta validation
+                    // ARTIFACT MANDATORY: Missing artifact blocks execution
+                    ledger.appendEvent(
+                        projectId,
+                        EventTypes.TASK_EXECUTED,
+                        mapOf(
+                            "taskId" to taskId,
+                            "contractId" to contractId,
+                            "executionStatus" to ExecutionStatus.FAILURE.name,
+                            "reason" to "ARTIFACT_MISSING"
+                        )
+                    )
                     return ExecutionAuthorityExecutionResult.Blocked(
                         "Delta validation failed: ${deltaValidation.reason}"
                     )
@@ -297,18 +317,28 @@ class ExecutionAuthority(
             }
         }
 
+        // Build TASK_EXECUTED event payload with artifact (if present)
+        val eventPayload = mutableMapOf<String, Any>(
+            "taskId" to taskId,
+            "contractId" to contractId,
+            "executionStatus" to ExecutionStatus.SUCCESS.name
+        )
+        
+        // Add artifact to payload (AGOII-ARTIFACT-SPINE-001)
+        if (executionReport?.artifact != null) {
+            eventPayload["artifact"] = serializeArtifact(executionReport.artifact)
+            
+            // Add validated sections (section IDs from artifact)
+            eventPayload["validatedSections"] = executionReport.artifact.sections.map { it.sectionId }
+        }
+        
         // TODO: Implement actual task execution via ContractorExecutor
-        // For now, return success placeholder
         val report = null // TODO: Generate ContractReport from execution
         
         ledger.appendEvent(
             projectId,
             EventTypes.TASK_EXECUTED,
-            mapOf(
-                "taskId" to taskId,
-                "contractId" to contractId,
-                "executionStatus" to ExecutionStatus.SUCCESS.name
-            )
+            eventPayload
         )
 
         return ExecutionAuthorityExecutionResult.Executed(
@@ -321,14 +351,27 @@ class ExecutionAuthority(
     /**
      * Perform delta validation for rules 3.2-3.4.
      *
+     * CONTRACT: AGOII-ARTIFACT-SPINE-001 — Artifact Mandatory Check
+     * CONTRACT: AGOII-CONVERGENCE-ENFORCEMENT-COMPLETION-004 — Delta Rules
+     *
      * @param events Event history.
      * @param contractId Contract identifier.
+     * @param report Execution report (contains artifact).
      * @return [DeltaValidationResult].
      */
-    private fun performDeltaValidation(events: List<Event>, contractId: String): DeltaValidationResult {
-        // For now, return placeholder implementation
-        // TODO: Extract actual artifacts from execution context
-        // This requires integration with ContractorExecutor to get artifact sections
+    private fun performDeltaValidation(
+        events: List<Event>,
+        contractId: String,
+        report: ExecutionReport?
+    ): DeltaValidationResult {
+        // RULE: ARTIFACT MANDATORY (AGOII-ARTIFACT-SPINE-001)
+        if (report == null) {
+            return DeltaValidationResult.MissingData("execution report missing")
+        }
+        
+        if (report.artifact == null) {
+            return DeltaValidationResult.MissingData("artifact missing from execution report")
+        }
         
         val validatedSections = extractValidatedSections(events, contractId)
         val mutationSurface = extractMutationSurface(events, contractId)
@@ -338,11 +381,23 @@ class ExecutionAuthority(
             return DeltaValidationResult.MissingData("mutationSurface missing in RECOVERY_CONTRACT")
         }
         
-        // TODO: Get actual artifact sections from execution
-        // For now, skip validation if we don't have artifacts
-        // This will be completed when ContractorExecutor integration is done
+        // Load previous artifact for comparison
+        val previousArtifact = loadPreviousArtifact(events, contractId)
+        if (previousArtifact == null) {
+            // First execution or no prior artifact — allow
+            return DeltaValidationResult.Approved
+        }
         
-        return DeltaValidationResult.Approved
+        // Build validation context and perform delta validation
+        val context = DeltaValidationContext(
+            contractId = contractId,
+            previousArtifact = previousArtifact,
+            newArtifact = report.artifact.sections,
+            validatedSections = validatedSections,
+            mutationSurface = mutationSurface
+        )
+        
+        return validateDelta(context)
     }
 
     /**
@@ -685,6 +740,73 @@ class ExecutionAuthority(
         } else {
             null
         }
+    }
+
+    /**
+     * Load previous artifact from last successful execution.
+     *
+     * CONTRACT: AGOII-ARTIFACT-SPINE-001 — Artifact Retrieval
+     *
+     * Used for:
+     *   - Regression detection (rule 3.2)
+     *   - Mutation enforcement (rule 3.3)
+     *   - Diff computation (rule 3.4)
+     *
+     * @param events Event history.
+     * @param contractId Contract identifier.
+     * @return List of [ArtifactSection] from previous execution, or null if not found.
+     */
+    private fun loadPreviousArtifact(events: List<Event>, contractId: String): List<ArtifactSection>? {
+        // Find last successful TASK_EXECUTED for this contract
+        val lastSuccess = events.lastOrNull { event ->
+            event.type == EventTypes.TASK_EXECUTED &&
+            event.payload["contractId"]?.toString() == contractId &&
+            event.payload["executionStatus"]?.toString() == ExecutionStatus.SUCCESS.name
+        } ?: return null
+        
+        // Extract artifact from payload (if present)
+        @Suppress("UNCHECKED_CAST")
+        val artifactData = lastSuccess.payload["artifact"] as? Map<String, Any> ?: return null
+        
+        @Suppress("UNCHECKED_CAST")
+        val sectionsData = artifactData["sections"] as? List<Map<String, Any>> ?: return null
+        
+        // Reconstruct artifact sections
+        return sectionsData.mapNotNull { sectionMap ->
+            val sectionId = sectionMap["sectionId"]?.toString()
+            val content = sectionMap["content"]?.toString()
+            val contentHash = sectionMap["contentHash"]?.toString()
+            
+            if (sectionId != null && content != null && contentHash != null) {
+                ArtifactSection(sectionId, content, contentHash)
+            } else {
+                null
+            }
+        }
+    }
+
+    /**
+     * Store artifact in TASK_EXECUTED event payload.
+     *
+     * CONTRACT: AGOII-ARTIFACT-SPINE-001 — Artifact Storage
+     *
+     * Artifacts stored in-memory via event payload (pilot phase).
+     * Future: External object store.
+     *
+     * @param artifact Artifact to serialize.
+     * @return Map representation suitable for event payload.
+     */
+    private fun serializeArtifact(artifact: Artifact): Map<String, Any> {
+        return mapOf(
+            "executionId" to artifact.executionId,
+            "sections" to artifact.sections.map { section ->
+                mapOf(
+                    "sectionId" to section.sectionId,
+                    "content" to section.content,
+                    "contentHash" to section.contentHash
+                )
+            }
+        )
     }
 
     // ══════════════════════════════════════════════════════════════════════════
