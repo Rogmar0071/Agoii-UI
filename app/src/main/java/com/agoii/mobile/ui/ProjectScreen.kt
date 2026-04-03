@@ -187,3 +187,223 @@ fun ProjectScreen(projectId: String) {
         )
     }
 }
+
+@Composable
+private fun Header(projectId: String, auditResult: AuditResult?) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Primary,
+        shadowElevation = 4.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Project: $projectId",
+                color = OnPrimary,
+                style = MaterialTheme.typography.titleLarge
+            )
+            auditResult?.let { result ->
+                Text(
+                    text = if (result.isValid) "✓ Valid" else "✗ Invalid",
+                    color = if (result.isValid) Color.Green else Color.Red,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StatePanel(
+    verification: ReplayVerification?,
+    replayState: ReplayStructuralState?,
+    interactionResult: InteractionResult?,
+    events: List<Event>
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(8.dp),
+        color = Surface,
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 2.dp
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                "State Overview",
+                style = MaterialTheme.typography.titleMedium,
+                color = OnSurface
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            verification?.let {
+                Text(
+                    "Replay: ${if (it.isValid) "✓" else "✗"}",
+                    color = if (it.isValid) Color.Green else Color.Red,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            
+            replayState?.governanceView?.let { gv ->
+                Text(
+                    "Contracts: ${gv.totalContracts}",
+                    color = OnSurface,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            
+            Text(
+                "Events: ${events.size}",
+                color = OnSurface,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
+private fun EventRow(event: Event) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Surface,
+        shape = RoundedCornerShape(4.dp),
+        shadowElevation = 1.dp
+    ) {
+        Column(modifier = Modifier.padding(8.dp)) {
+            Text(
+                text = event.type,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Primary
+            )
+            Text(
+                text = "ID: ${event.eventId.take(8)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = OnSurface.copy(alpha = 0.6f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun CommitPanel(
+    reportReference: String,
+    finalArtifactReference: String,
+    proposedActions: List<String>,
+    onApprove: () -> Unit,
+    onReject: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(8.dp),
+        color = Primary.copy(alpha = 0.1f),
+        shape = RoundedCornerShape(8.dp),
+        shadowElevation = 4.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                "Commit Pending",
+                style = MaterialTheme.typography.titleMedium,
+                color = Primary
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text(
+                "Report: $reportReference",
+                style = MaterialTheme.typography.bodySmall,
+                color = OnSurface
+            )
+            
+            if (finalArtifactReference.isNotEmpty()) {
+                Text(
+                    "Artifact: $finalArtifactReference",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurface
+                )
+            }
+            
+            if (proposedActions.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    "Actions: ${proposedActions.size}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = OnSurface
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(12.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = onApprove,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Green)
+                ) {
+                    Text("Approve")
+                }
+                Button(
+                    onClick = onReject,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
+                ) {
+                    Text("Reject")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActionBar(
+    showApprove: Boolean,
+    onApprove: () -> Unit
+) {
+    if (showApprove) {
+        Surface(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            color = Primary,
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Button(
+                onClick = onApprove,
+                modifier = Modifier.fillMaxWidth().padding(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent)
+            ) {
+                Text("Approve Contracts", color = OnPrimary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun InputBar(
+    text: String,
+    onTextChange: (String) -> Unit,
+    onSend: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Surface,
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextField(
+                value = text,
+                onValueChange = onTextChange,
+                modifier = Modifier.weight(1f),
+                placeholder = { Text("Enter command...") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { onSend() }),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Surface,
+                    unfocusedContainerColor = Surface
+                )
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(onClick = onSend) {
+                Text("Send")
+            }
+        }
+    }
+}
