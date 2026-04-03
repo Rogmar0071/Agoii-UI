@@ -216,6 +216,15 @@ class ExecutionAuthority(
             event.payload["contractId"]?.toString() == contractId
         }
 
+        // ADMISSION CONTROL: Delta contracts require execution grounding (artifact)
+        // CONTRACT: AGOII–EXECUTION-GROUNDING-GATE-001
+        // Eliminates bypass: SUCCESS without validation
+        if (isDeltaContract && executionReport == null) {
+            return ExecutionAuthorityExecutionResult.Blocked(
+                "Delta contract execution requires ExecutionReport with artifact (grounding missing)"
+            )
+        }
+
         // RULES 3.2-3.4: Delta validation (if applicable and we have execution report)
         if (isDeltaContract && executionReport != null) {
             val deltaValidation = performDeltaValidation(events, contractId, executionReport)
