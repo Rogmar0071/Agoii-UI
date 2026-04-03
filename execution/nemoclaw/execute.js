@@ -186,22 +186,72 @@ function computeContentHash(content) {
 }
 
 /**
+ * Normalizes OpenAI response to canonical result format.
+ * Per AGOII–ARTIFACT-NORMALIZATION-001: Extract only deterministic result content.
+ * 
+ * Transforms raw OpenAI response JSON (which contains non-deterministic fields 
+ * like id, created, system_fingerprint) into normalized canonical output:
+ * { "result": "<actual-message-content>" }
+ * 
+ * This ensures artifact hashing is deterministic and replay validation succeeds.
+ *
+ * @param {string} rawOutput - The raw OpenAI API response JSON string
+ * @returns {string} Normalized canonical output as JSON string
+ */
+function normalizeOpenAIResponse(rawOutput) {
+  if (!rawOutput || rawOutput.trim() === '') {
+    return JSON.stringify({ result: '' });
+  }
+
+  try {
+    const response = JSON.parse(rawOutput);
+    
+    // Extract canonical result from OpenAI response structure
+    // OpenAI response: { choices: [{ message: { content: "..." } }], ... }
+    if (response.choices && 
+        Array.isArray(response.choices) && 
+        response.choices.length > 0 &&
+        response.choices[0].message &&
+        typeof response.choices[0].message.content === 'string') {
+      
+      const result = response.choices[0].message.content;
+      return JSON.stringify({ result });
+    }
+    
+    // If response doesn't match expected structure, return empty result
+    return JSON.stringify({ result: '' });
+  } catch (err) {
+    // If JSON parsing fails, treat as plain text result
+    return JSON.stringify({ result: rawOutput });
+  }
+}
+
+/**
  * Builds a deterministic artifact from execution output.
  * Per AGOII–ARTIFACT-SPINE-VALIDATION-002: contractor MUST produce artifact.
+ * Per AGOII–ARTIFACT-NORMALIZATION-001: Use normalized canonical output.
  *
  * @param {string} rawOutput - The raw output from execution
+ * @param {string} adapter - The adapter type ('openai', etc.) for normalization
  * @returns {object} ExecutionArtifact with sections array
  */
-function buildArtifact(rawOutput) {
-  // Default strategy: single-section artifact containing the full output
-  const content = rawOutput || '';
-  const contentHash = computeContentHash(content);
+function buildArtifact(rawOutput, adapter) {
+  // Per AGOII–ARTIFACT-NORMALIZATION-001: Transform to canonical format
+  let normalizedContent;
+  if (adapter === 'openai') {
+    normalizedContent = normalizeOpenAIResponse(rawOutput);
+  } else {
+    // Default strategy for non-OpenAI adapters: use raw output
+    normalizedContent = rawOutput || '';
+  }
+  
+  const contentHash = computeContentHash(normalizedContent);
 
   return {
     sections: [
       {
         section_id: 'main',
-        content: content,
+        content: normalizedContent,
         content_hash: contentHash,
       },
     ],
@@ -220,7 +270,8 @@ async function executeOpenAIAdapter(contract) {
   
   // Per AGOII–ARTIFACT-SPINE-VALIDATION-002 §STEP-1:
   // Contractor MUST produce artifact as part of its output
-  const artifact = buildArtifact(result.rawOutput || '');
+  // Per AGOII–ARTIFACT-NORMALIZATION-001: Use normalized canonical output
+  const artifact = buildArtifact(result.rawOutput || '', 'openai');
   
   return {
     ...result,
