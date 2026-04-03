@@ -8,6 +8,7 @@ import com.agoii.mobile.contracts.UniversalContract
 import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
+import com.agoii.mobile.execution.adapter.NemoClawAdapter
 
 // ══════════════════════════════════════════════════════════════════════════════
 // AGOII-CONVERGENCE-ENFORCEMENT-LOCK-003
@@ -56,6 +57,9 @@ class ExecutionAuthority(
     private val contractorRegistry: ContractorRegistry,
     private val driverRegistry:     DriverRegistry
 ) {
+
+    private val nemoClawAdapter = NemoClawAdapter()
+    private val resolutionLayer = ExecutionResolutionLayer()
 
     companion object {
         /**
@@ -148,11 +152,12 @@ class ExecutionAuthority(
     /**
      * Execute task from ledger when TASK_STARTED is the last event.
      *
+     * CONTRACT: AGOII–EXECUTION-RESOLUTION-LAYER-001
+     *
      * Flow:
-     *   1. Check last event type
-     *   2. If TASK_STARTED → execute task
-     *   3. If TASK_EXECUTED(FAILURE) → emit RECOVERY_CONTRACT (P1 handler)
-     *   4. Otherwise → NotTriggered
+     *   1. ExecutionAuthority DECIDES (pure, side-effect free)
+     *   2. ResolutionLayer COMMITS (translates decision → event)
+     *   3. Ledger STORES (persists events)
      *
      * Convergence Enforcement:
      *   - Track recovery chains per contractId
@@ -172,11 +177,18 @@ class ExecutionAuthority(
         val lastEvent = events.lastOrNull()
             ?: return ExecutionAuthorityExecutionResult.NotTriggered
 
-        return when (lastEvent.type) {
+        // RULE 1: ExecutionAuthority DECIDES (pure decision gate)
+        val result = when (lastEvent.type) {
             EventTypes.TASK_STARTED -> handleTaskStarted(projectId, lastEvent, events, ledger)
             EventTypes.TASK_EXECUTED -> handleTaskExecuted(projectId, lastEvent, events, ledger)
             else -> ExecutionAuthorityExecutionResult.NotTriggered
         }
+        
+        // RULE 2: ResolutionLayer COMMITS (decision → event translation)
+        // CONTRACT: AGOII–EXECUTION-RESOLUTION-LAYER-001
+        resolutionLayer.resolve(result, projectId, ledger, events)
+        
+        return result
     }
 
     /**
@@ -205,10 +217,72 @@ class ExecutionAuthority(
         val contractId = taskEvent.payload["contractId"]?.toString()
             ?: return ExecutionAuthorityExecutionResult.Blocked("contractId missing in TASK_STARTED")
 
-        // TODO(Phase 2): Implement actual task execution via ContractorExecutor
-        // When wired: ContractorExecutor.execute() → ContractorExecutionOutput.artifact → ExecutionReport
-        // Reference: ARTIFACT_SPINE_IMPLEMENTATION_REPORT.md Section "Future Integration Points"
-        val executionReport: ExecutionReport? = null // Placeholder until execution integration
+        // Extract report reference from CONTRACT_CREATED event
+        val reportReference = extractReportReference(events, contractId)
+        if (reportReference.isBlank()) {
+            return ExecutionAuthorityExecutionResult.Blocked(
+                "Contract execution blocked: report_reference missing (3.1 violation)"
+            )
+        }
+
+        // Extract contract name from CONTRACT_CREATED event (or use contractId as fallback)
+        val contractName = extractContractName(events, contractId) ?: contractId
+
+        // Build ExecutionContract
+        // Note: Position is set to 1 as it's not relevant for single task execution.
+        // The position field is used for batch execution ordering, but handleTaskStarted
+        // processes one task at a time. If position tracking becomes necessary for
+        // traceability, it should be extracted from the TASK_ASSIGNED or CONTRACT_CREATED
+        // event payload.
+        val contract = ExecutionContract(
+            contractId = contractId,
+            name = contractName,
+            position = 1,
+            reportReference = reportReference
+        )
+
+        // CONTRACT: AGOII–EXECUTION-AUTHORITY-PURITY-002
+        // Execute via NemoClawAdapter with hard failure wrapper
+        // RULE 1: No ledger writes - pure decision gate
+        val executionReport = try {
+            nemoClawAdapter.execute(contract)
+        } catch (e: Exception) {
+            // Adapter execution failure → BLOCKED (adapter crash)
+            return ExecutionAuthorityExecutionResult.Blocked(
+                "Adapter execution failure: ${e.message}"
+            )
+        }
+
+        // ADMISSION CONTROL — Execution report must exist (grounding required)
+        // (Note: adapter never returns null due to fail-closed design, but keeping for defense)
+
+        // ADMISSION CONTROL — Artifact must exist (grounding required)
+        // RULE 3: Missing artifact → BLOCKED
+        if (executionReport.artifact == null) {
+            return ExecutionAuthorityExecutionResult.Blocked(
+                "Execution failed: missing artifact (grounding violation)"
+            )
+        }
+
+        // EXECUTION_ID INTEGRITY CHECK
+        // RULE 3: executionId mismatch → FAILURE (executed but failed validation)
+        if (executionReport.executionId != contract.executionId) {
+            return ExecutionAuthorityExecutionResult.Executed(
+                taskId,
+                ExecutionStatus.FAILURE,
+                null
+            )
+        }
+
+        // EXECUTION STATUS GATE
+        // RULE 3: status != SUCCESS → FAILURE
+        if (executionReport.status != "SUCCESS") {
+            return ExecutionAuthorityExecutionResult.Executed(
+                taskId,
+                ExecutionStatus.FAILURE,
+                null
+            )
+        }
         
         // Check if this is a delta contract (from RECOVERY_CONTRACT flow)
         val isDeltaContract = events.any { event ->
@@ -216,107 +290,45 @@ class ExecutionAuthority(
             event.payload["contractId"]?.toString() == contractId
         }
 
-        // ADMISSION CONTROL: Delta contracts require execution grounding (artifact)
-        // CONTRACT: AGOII–EXECUTION-GROUNDING-GATE-001
-        // Eliminates bypass: SUCCESS without validation
-        if (isDeltaContract && executionReport == null) {
-            return ExecutionAuthorityExecutionResult.Blocked(
-                "Delta contract execution requires ExecutionReport with artifact (grounding missing)"
-            )
-        }
-
-        // RULES 3.2-3.4: Delta validation (if applicable and we have execution report)
-        if (isDeltaContract && executionReport != null) {
+        // DELTA VALIDATION (MANDATORY FOR DELTA CONTRACTS)
+        // RULE 2: Pure decision - no side effects
+        if (isDeltaContract) {
             val deltaValidation = performDeltaValidation(events, contractId, executionReport)
             when (deltaValidation) {
                 is DeltaValidationResult.RegressionDetected -> {
-                    // RULE 3.2 violation: emit RECOVERY_CONTRACT
-                    emitDeltaViolationRecovery(
-                        projectId, ledger, contractId,
-                        FailureClass.REGRESSION_DETECTED,
-                        "Validated sections modified: ${deltaValidation.violatedSections}"
+                    // RULE 3.2 violation → FAILURE
+                    return ExecutionAuthorityExecutionResult.Executed(
+                        taskId,
+                        ExecutionStatus.FAILURE,
+                        null
                     )
-                    ledger.appendEvent(
-                        projectId,
-                        EventTypes.TASK_EXECUTED,
-                        mapOf(
-                            "taskId" to taskId,
-                            "contractId" to contractId,
-                            "executionStatus" to ExecutionStatus.FAILURE.name,
-                            "reason" to "REGRESSION_DETECTED"
-                        )
-                    )
-                    return ExecutionAuthorityExecutionResult.Executed(taskId, ExecutionStatus.FAILURE, null)
                 }
                 is DeltaValidationResult.OutOfScopeMutation -> {
-                    // RULE 3.3 violation: emit RECOVERY_CONTRACT
-                    emitDeltaViolationRecovery(
-                        projectId, ledger, contractId,
-                        FailureClass.MUTATION_VIOLATION,
-                        "Changes outside mutation surface: ${deltaValidation.unauthorizedChanges}"
+                    // RULE 3.3 violation → FAILURE
+                    return ExecutionAuthorityExecutionResult.Executed(
+                        taskId,
+                        ExecutionStatus.FAILURE,
+                        null
                     )
-                    ledger.appendEvent(
-                        projectId,
-                        EventTypes.TASK_EXECUTED,
-                        mapOf(
-                            "taskId" to taskId,
-                            "contractId" to contractId,
-                            "executionStatus" to ExecutionStatus.FAILURE.name,
-                            "reason" to "OUT_OF_SCOPE_MUTATION"
-                        )
-                    )
-                    return ExecutionAuthorityExecutionResult.Executed(taskId, ExecutionStatus.FAILURE, null)
                 }
                 is DeltaValidationResult.FullRewriteDetected -> {
-                    // RULE 3.4 violation: emit RECOVERY_CONTRACT
-                    emitDeltaViolationRecovery(
-                        projectId, ledger, contractId,
-                        FailureClass.MUTATION_VIOLATION,
-                        "Full rewrite detected: diffRatio=${deltaValidation.diffRatio}"
+                    // RULE 3.4 violation → FAILURE
+                    return ExecutionAuthorityExecutionResult.Executed(
+                        taskId,
+                        ExecutionStatus.FAILURE,
+                        null
                     )
-                    ledger.appendEvent(
-                        projectId,
-                        EventTypes.TASK_EXECUTED,
-                        mapOf(
-                            "taskId" to taskId,
-                            "contractId" to contractId,
-                            "executionStatus" to ExecutionStatus.FAILURE.name,
-                            "reason" to "FULL_REWRITE_BLOCKED"
-                        )
-                    )
-                    return ExecutionAuthorityExecutionResult.Executed(taskId, ExecutionStatus.FAILURE, null)
                 }
                 is DeltaValidationResult.NonDeltaRewrite -> {
-                    // RULE 3.4.1 violation: emit RECOVERY_CONTRACT
-                    emitDeltaViolationRecovery(
-                        projectId, ledger, contractId,
-                        FailureClass.MUTATION_VIOLATION,
-                        "Non-delta rewrite detected (regenerated unchanged content)"
+                    // RULE 3.4.1 violation → FAILURE
+                    return ExecutionAuthorityExecutionResult.Executed(
+                        taskId,
+                        ExecutionStatus.FAILURE,
+                        null
                     )
-                    ledger.appendEvent(
-                        projectId,
-                        EventTypes.TASK_EXECUTED,
-                        mapOf(
-                            "taskId" to taskId,
-                            "contractId" to contractId,
-                            "executionStatus" to ExecutionStatus.FAILURE.name,
-                            "reason" to "NON_DELTA_REWRITE"
-                        )
-                    )
-                    return ExecutionAuthorityExecutionResult.Executed(taskId, ExecutionStatus.FAILURE, null)
                 }
                 is DeltaValidationResult.MissingData -> {
                     // ARTIFACT MANDATORY: Missing artifact blocks execution
-                    ledger.appendEvent(
-                        projectId,
-                        EventTypes.TASK_EXECUTED,
-                        mapOf(
-                            "taskId" to taskId,
-                            "contractId" to contractId,
-                            "executionStatus" to ExecutionStatus.FAILURE.name,
-                            "reason" to "ARTIFACT_MISSING"
-                        )
-                    )
                     return ExecutionAuthorityExecutionResult.Blocked(
                         "Delta validation failed: ${deltaValidation.reason}"
                     )
@@ -324,33 +336,29 @@ class ExecutionAuthority(
                 DeltaValidationResult.Approved -> {
                     // Delta validation passed, continue with execution
                 }
+                else -> {
+                    // Any other delta validation result is a failure
+                    // Note: Unexpected validation result - consider updating when clause
+                    return ExecutionAuthorityExecutionResult.Executed(
+                        taskId,
+                        ExecutionStatus.FAILURE,
+                        null
+                    )
+                }
             }
         }
 
-        // Build TASK_EXECUTED event payload with artifact (if present)
-        val eventPayload = mutableMapOf<String, Any>(
-            "taskId" to taskId,
-            "contractId" to contractId,
-            "executionStatus" to ExecutionStatus.SUCCESS.name
-        )
-        
-        // Add artifact to payload (AGOII-ARTIFACT-SPINE-001)
-        if (executionReport?.artifact != null) {
-            eventPayload["artifact"] = serializeArtifact(executionReport.artifact)
-            
-            // Add validated sections (section IDs from artifact)
-            eventPayload["validatedSections"] = executionReport.artifact.sections.map { it.sectionId }
-        }
+        // SUCCESS EMISSION (SINGLE POINT)
+        // CONTRACT: AGOII–EXECUTION-AUTHORITY-PURITY-002
+        // RULE 2: Pure return - no side effects
+        // Only reached if:
+        // - executionReport.status == SUCCESS
+        // - executionReport.artifact exists
+        // - (if delta) deltaValidation == Approved
         
         // TODO(Phase 2): Generate ContractReport from ExecutionReport when execution is wired
         val report = null // Placeholder until execution integration
         
-        ledger.appendEvent(
-            projectId,
-            EventTypes.TASK_EXECUTED,
-            eventPayload
-        )
-
         return ExecutionAuthorityExecutionResult.Executed(
             taskId,
             ExecutionStatus.SUCCESS,
@@ -440,7 +448,11 @@ class ExecutionAuthority(
     /**
      * Handle TASK_EXECUTED(FAILURE) event — P1 recovery handler.
      *
-     * Emits RECOVERY_CONTRACT with source=EXECUTION_AUTHORITY.
+     * CONTRACT: AGOII–EXECUTION-AUTHORITY-PURITY-002
+     * CONTRACT: AGOII–EXECUTION-RESOLUTION-LAYER-001
+     *
+     * PURE DECISION GATE: Returns result without side effects.
+     * ResolutionLayer handles recovery emission based on result.
      *
      * CONTRACT: Section 3.5 — Convergence Limit Enforcement
      * CONTRACT: Section 3.6 — Failure Escalation
@@ -461,43 +473,8 @@ class ExecutionAuthority(
 
         val contractId = taskEvent.payload["contractId"]?.toString() ?: taskId
 
-        // RULE 3.5: Check convergence ceiling
-        val recoveryCount = countRecoveryAttempts(events, contractId)
-        if (recoveryCount >= MAX_DELTA) {
-            // Emit CONTRACT_FAILED (convergence ceiling reached)
-            ledger.appendEvent(
-                projectId,
-                EventTypes.CONTRACT_FAILED,
-                mapOf(
-                    "contractId" to contractId,
-                    "reason" to "NON_CONVERGENT_SYSTEM",
-                    "recoveryAttempts" to recoveryCount,
-                    "maxDelta" to MAX_DELTA
-                )
-            )
-            return ExecutionAuthorityExecutionResult.Blocked(
-                "Convergence ceiling reached for $contractId ($recoveryCount >= $MAX_DELTA)"
-            )
-        }
-
-        // Emit RECOVERY_CONTRACT (P1 handler)
-        val recoveryId = deriveRecoveryId(projectId, contractId, recoveryCount)
-        val reportReference = extractReportReference(events, contractId)
-
-        ledger.appendEvent(
-            projectId,
-            EventTypes.RECOVERY_CONTRACT,
-            mapOf(
-                "recoveryId" to recoveryId,
-                "contractId" to contractId,
-                "taskId" to contractId, // Delta uses contractId as taskId
-                "report_reference" to reportReference,
-                "failureClass" to FailureClass.VALIDATION_FAILURE.name,
-                "violationField" to "unknown", // TODO: Extract from failure context
-                "source" to RECOVERY_SOURCE
-            )
-        )
-
+        // PURE DECISION: Return Executed(FAILURE) to trigger recovery via ResolutionLayer
+        // ResolutionLayer will check convergence ceiling and emit appropriate events
         return ExecutionAuthorityExecutionResult.Executed(
             taskId,
             ExecutionStatus.FAILURE,
@@ -534,6 +511,17 @@ class ExecutionAuthority(
 
         val contractsGenerated = events.firstOrNull { it.type == EventTypes.CONTRACTS_GENERATED }
         return contractsGenerated?.payload?.get("report_reference")?.toString() ?: ""
+    }
+
+    /**
+     * Extract contract name from CONTRACT_CREATED event.
+     */
+    private fun extractContractName(events: List<Event>, contractId: String): String? {
+        val contractCreated = events.firstOrNull { event ->
+            event.type == EventTypes.CONTRACT_CREATED &&
+            event.payload["contractId"]?.toString() == contractId
+        }
+        return contractCreated?.payload?.get("name")?.toString()
     }
 
     // ══════════════════════════════════════════════════════════════════════════
