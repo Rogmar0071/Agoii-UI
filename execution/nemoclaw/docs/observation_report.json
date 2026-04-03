@@ -1,0 +1,197 @@
+{
+  "observation_id": "AGOII–EXECUTION-OBSERVATION-001",
+  "timestamp": "2026-04-03T08:27:03.522Z",
+  "summary": {
+    "system_status": "UNSTABLE",
+    "total_executions": 16,
+    "anomaly_count": 1
+  },
+  "metrics": {
+    "total_executions": 16,
+    "success_count": 0,
+    "failure_count": 14,
+    "timeout_count": 0,
+    "rejection_count": 2,
+    "success_rate_pct": "0.00",
+    "failure_rate_pct": "87.50",
+    "timeout_rate_pct": "0.00",
+    "rejection_rate_pct": "12.50",
+    "latency": {
+      "avg_ms": 39.13,
+      "max_ms": 42,
+      "min_ms": 37
+    }
+  },
+  "failure_classification": {
+    "timeout": 0,
+    "execution_error": 14,
+    "contract_rejection": 2
+  },
+  "latency_profile": {
+    "avg_ms": 39.13,
+    "max_ms": 42,
+    "min_ms": 37,
+    "samples": 16
+  },
+  "anomalies": [
+    {
+      "execution_id": "obs-timeout-001",
+      "description": "STEP-3B: Timeout",
+      "issue": "Status mismatch: expected timeout, got failure"
+    }
+  ],
+  "executions": [
+    {
+      "description": "STEP-3A: Missing API key",
+      "execution_id": "obs-failure-001",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 42,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-3B: Timeout",
+      "execution_id": "obs-timeout-001",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 40,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-3C: Invalid contractor",
+      "execution_id": "obs-invalid-contractor-001",
+      "status": "rejected",
+      "exit_code": 1,
+      "durationMs": 41,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-3D: Malformed contract",
+      "execution_id": "obs-malformed-001",
+      "status": "rejected",
+      "exit_code": 1,
+      "durationMs": 38,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-5: Replay #1",
+      "execution_id": "obs-replay-001",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 39,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-5: Replay #2",
+      "execution_id": "obs-replay-001",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 38,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-6: Load test #1",
+      "execution_id": "obs-load-1",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 37,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-6: Load test #2",
+      "execution_id": "obs-load-2",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 42,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-6: Load test #3",
+      "execution_id": "obs-load-3",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 39,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-6: Load test #4",
+      "execution_id": "obs-load-4",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 39,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-6: Load test #5",
+      "execution_id": "obs-load-5",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 39,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-6: Load test #6",
+      "execution_id": "obs-load-6",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 38,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-6: Load test #7",
+      "execution_id": "obs-load-7",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 38,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-6: Load test #8",
+      "execution_id": "obs-load-8",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 40,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-6: Load test #9",
+      "execution_id": "obs-load-9",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 37,
+      "has_failure_surface": true,
+      "parse_error": null
+    },
+    {
+      "description": "STEP-6: Load test #10",
+      "execution_id": "obs-load-10",
+      "status": "failure",
+      "exit_code": 1,
+      "durationMs": 39,
+      "has_failure_surface": true,
+      "parse_error": null
+    }
+  ],
+  "validation_results": {
+    "success_path_works": false,
+    "failure_paths_validated": true,
+    "deterministic_structure": true,
+    "replay_stable": true,
+    "no_crashes_under_load": true
+  }
+}
+[OUTPUT] Observation complete: 1 anomalies detected
