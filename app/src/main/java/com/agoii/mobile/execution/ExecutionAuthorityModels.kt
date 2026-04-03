@@ -226,16 +226,62 @@ enum class FailureClass {
 }
 
 // ── Diff Engine Models (Rules 3.2-3.4) ───────────────────────────────────────
+// ── Extended by AGOII-ARTIFACT-SPINE-001 ──────────────────────────────────────
 
 /**
- * Artifact section identifier for diff computation.
+ * Artifact section — deterministic, hash-addressable execution output section.
  *
- * @property sectionId   Unique section identifier (e.g., function name, block ID).
- * @property contentHash Hash of section content for comparison.
+ * CONTRACT: AGOII-ARTIFACT-SPINE-001
+ *
+ * @property sectionId   Unique section identifier (stable across executions).
+ * @property content     Raw section content.
+ * @property contentHash SHA-256 hash of content (deterministic).
  */
 data class ArtifactSection(
     val sectionId:   String,
+    val content:     String,
     val contentHash: String
+)
+
+/**
+ * Artifact — deterministic, structured, hash-addressable execution output.
+ *
+ * CONTRACT: AGOII-ARTIFACT-SPINE-001
+ *
+ * Invariants:
+ *   - contentHash MUST be deterministic (SHA-256 of content)
+ *   - sectionId MUST be stable across executions
+ *   - sections MUST be ordered
+ *   - Artifact MUST be complete (no partial return)
+ *   - Artifact MUST NOT be mutated after creation
+ *
+ * @property executionId Execution identifier (linkage to TASK_EXECUTED).
+ * @property sections    Ordered list of artifact sections.
+ */
+data class Artifact(
+    val executionId: String,
+    val sections:    List<ArtifactSection>
+)
+
+/**
+ * Execution report — output from NemoCore execution with embedded artifact.
+ *
+ * CONTRACT: AGOII-ARTIFACT-SPINE-001
+ *
+ * @property executionId    Execution identifier.
+ * @property status         Execution status (SUCCESS | FAILURE | TIMEOUT | CONTRACT_REJECTED).
+ * @property exitCode       Process exit code (if applicable).
+ * @property outputs        Raw outputs (legacy, may be deprecated).
+ * @property artifact       Artifact (MANDATORY for SUCCESS status).
+ * @property failureSurface Failure metadata (if status == FAILURE).
+ */
+data class ExecutionReport(
+    val executionId:    String,
+    val status:         String,
+    val exitCode:       Int = 0,
+    val outputs:        List<String> = emptyList(),
+    val artifact:       Artifact? = null,
+    val failureSurface: Map<String, Any>? = null
 )
 
 /**
