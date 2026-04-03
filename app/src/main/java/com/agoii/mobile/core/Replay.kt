@@ -119,10 +119,7 @@ data class ExecutionView(
     val commitExecuted: Boolean,
 
     /** True when COMMIT_ABORTED has been seen (commit rejected). */
-    val commitAborted: Boolean,
-
-    /** Derived: commitContractExists && !commitExecuted && !commitAborted. */
-    val commitPending: Boolean
+    val commitAborted: Boolean
 )
 
 // ── AuditView ─────────────────────────────────────────────────────────────────
@@ -144,31 +141,7 @@ data class AuditView(
     val execution: ExecutionStructuralState,
 
     /** Assembly phase structural state. */
-    val assembly: AssemblyStructuralState,
-
-    /**
-     * Canonical execution validity flag.
-     * True when count(TASK_EXECUTED SUCCESS) == totalContracts (FS-2).
-     */
-    val executionValid: Boolean,
-
-    /**
-     * Canonical assembly validity flag.
-     * True when assemblyStarted && assemblyCompleted && executionValid.
-     */
-    val assemblyValid: Boolean,
-
-    /**
-     * Canonical ICS validity flag.
-     * True when icsStarted && icsCompleted && assemblyValid.
-     */
-    val icsValid: Boolean,
-
-    /**
-     * Canonical commit validity flag (V3).
-     * True when commitContractExists && (commitExecuted || commitAborted).
-     */
-    val commitValid: Boolean
+    val assembly: AssemblyStructuralState
 )
 
 // ── Nested structural sub-states (unchanged) ─────────────────────────────────
@@ -188,16 +161,13 @@ data class ExecutionStructuralState(
     val assignedTasks: Int,
     val completedTasks: Int,
     val validatedTasks: Int,
-    val fullyExecuted: Boolean,
     val successfulTasks: Int = 0
 )
 
 data class AssemblyStructuralState(
     val assemblyStarted: Boolean,
     val assemblyValidated: Boolean,
-    val assemblyCompleted: Boolean,
-    /** Legacy field — uses fullyExecuted gate for backward compat with old tests/consumers. */
-    val assemblyValid: Boolean
+    val assemblyCompleted: Boolean
 )
 
 // ── Replay Engine ─────────────────────────────────────────────────────────────
@@ -331,28 +301,7 @@ class Replay(private val eventStore: EventRepository) {
         val lastEventPayload: Map<String, Any> = lastEvent?.payload ?: emptyMap()
 
         val totalTasks = assignedTasks
-
-        // Legacy fullyExecuted: validatedTasks gate (backward compat for pre-TASK_EXECUTED ledgers)
-        val fullyExecuted = totalTasks > 0 && validatedTasks == totalTasks
-
-        // Canonical executionValid: count(TASK_EXECUTED SUCCESS) == totalContracts (FS-2)
         val totalContracts = if (totalContractsFromLedger > 0) totalContractsFromLedger else totalTasks
-        val executionValid  = totalContracts > 0 && successfulTaskExecutions == totalContracts
-
-        // Legacy assemblyValid — fullyExecuted gate (backward compat with existing tests)
-        val legacyAssemblyValid = assemblyStarted && assemblyCompleted && fullyExecuted
-
-        // Canonical assemblyValid — executionValid gate
-        val assemblyValidCanonical = assemblyStarted && assemblyCompleted && executionValid
-
-        // icsValid = icsStarted && icsCompleted && canonical assemblyValid
-        val icsValid = icsStarted && icsCompleted && assemblyValidCanonical
-
-        // commitPending: COMMIT_CONTRACT seen but not yet resolved
-        val commitPending = commitContractExists && !commitExecuted && !commitAborted
-
-        // commitValid (V3): COMMIT_CONTRACT seen AND resolved
-        val commitValid = commitContractExists && (commitExecuted || commitAborted)
 
         // ── Assemble views ────────────────────────────────────────────────────
 
@@ -373,8 +322,7 @@ class Replay(private val eventStore: EventRepository) {
                 icsCompleted          = icsCompleted,
                 commitContractExists  = commitContractExists,
                 commitExecuted        = commitExecuted,
-                commitAborted         = commitAborted,
-                commitPending         = commitPending
+                commitAborted         = commitAborted
             ),
             auditView = AuditView(
                 intent = IntentStructuralState(
@@ -390,21 +338,13 @@ class Replay(private val eventStore: EventRepository) {
                     assignedTasks   = assignedTasks,
                     completedTasks  = completedTasks,
                     validatedTasks  = validatedTasks,
-                    fullyExecuted   = fullyExecuted,
                     successfulTasks = successfulTaskExecutions
                 ),
                 assembly = AssemblyStructuralState(
                     assemblyStarted   = assemblyStarted,
                     assemblyValidated = assemblyValidated,
-                    assemblyCompleted = assemblyCompleted,
-                    // Legacy assemblyValid uses fullyExecuted gate for backward compat.
-                    // Canonical truth-layer assemblyValid is AuditView.assemblyValid below.
-                    assemblyValid     = legacyAssemblyValid
-                ),
-                executionValid = executionValid,
-                assemblyValid  = assemblyValidCanonical,
-                icsValid       = icsValid,
-                commitValid    = commitValid
+                    assemblyCompleted = assemblyCompleted
+                )
             )
         )
     }
