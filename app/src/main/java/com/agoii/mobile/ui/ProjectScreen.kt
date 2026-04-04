@@ -106,17 +106,9 @@ fun ProjectScreen(projectId: String) {
         Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
             Text("Governance: ${replay.governanceView.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
             
-            // Execution state from executionView ONLY (no event inspection)
+            // Execution state from executionView.executionStatus ONLY (NO derivation)
             replay.executionView?.let { execView ->
-                execView.taskStatus.values.firstOrNull { it == "EXECUTED_FAILURE" || it == "FAILED" }?.let {
-                    Text("Execution: failed", style = MaterialTheme.typography.bodySmall)
-                }
-                if (execView.taskStatus.values.all { it == "COMPLETED" || it == "VALIDATED" } && execView.taskStatus.isNotEmpty()) {
-                    Text("Execution: success", style = MaterialTheme.typography.bodySmall)
-                }
-                if (execView.taskStatus.values.none { it == "EXECUTED_FAILURE" || it == "FAILED" || it == "COMPLETED" || it == "VALIDATED" } && execView.taskStatus.isNotEmpty()) {
-                    Text("Execution: running", style = MaterialTheme.typography.bodySmall)
-                }
+                Text("Execution: ${execView.executionStatus}", style = MaterialTheme.typography.bodySmall)
             }
             
             Text("Audit: ${replay.auditView.contracts.valid}", style = MaterialTheme.typography.bodySmall)
@@ -161,9 +153,9 @@ fun ProjectScreen(projectId: String) {
             }
         }
 
-        // Commit panel - use replay.governanceView.lastEventPayload ONLY
+        // Commit panel - use executionView.showCommitPanel ONLY (NO boolean composition)
         replay.executionView?.let { ev ->
-            if (ev.commitContractExists && !ev.commitExecuted && !ev.commitAborted) {
+            if (ev.showCommitPanel) {
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(8.dp),
                     colors = CardDefaults.cardColors(containerColor = Surface)
