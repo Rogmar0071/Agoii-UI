@@ -115,17 +115,16 @@ fun ProjectScreen(projectId: String) {
                 replayState?.governanceView?.let {
                     Text("Governance: ${it.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
                 }
-                replayState?.executionView?.let { execView ->
-                    // SECTION B: Execution state mapping from executionView.taskStatus
-                    val executionStatus = when {
-                        execView.taskStatus.isEmpty() -> "not_started"
-                        execView.taskStatus.values.any { it == "EXECUTED_FAILURE" || it == "FAILED" } -> "failed"
-                        execView.taskStatus.values.all { it == "COMPLETED" || it == "VALIDATED" } -> "success"
-                        execView.taskStatus.isNotEmpty() -> "running"
-                        else -> "not_started"
-                    }
-                    Text("Execution: $executionStatus", style = MaterialTheme.typography.bodySmall)
+                // SECTION B: Execution state mapping from executionView.taskStatus
+                val execView = replayState?.executionView
+                val executionStatus = when {
+                    execView == null -> "not_started"
+                    execView.taskStatus.values.any { it == "EXECUTED_FAILURE" || it == "FAILED" } -> "failed"
+                    execView.taskStatus.values.all { it == "COMPLETED" || it == "VALIDATED" } && execView.taskStatus.isNotEmpty() -> "success"
+                    execView.taskStatus.isNotEmpty() -> "running"
+                    else -> "not_started"
                 }
+                Text("Execution: $executionStatus", style = MaterialTheme.typography.bodySmall)
                 replayState?.auditView?.let {
                     Text("Audit: ${it.contracts.valid}", style = MaterialTheme.typography.bodySmall)
                 }
