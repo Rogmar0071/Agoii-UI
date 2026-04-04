@@ -73,7 +73,7 @@ fun ProjectScreen(projectId: String) {
     LaunchedEffect(projectId) { reload() }
 
     LaunchedEffect(events.size) {
-        if (events.isNotEmpty()) listState.animateScrollToItem(events.size - 1)
+        listState.animateScrollToItem(maxOf(0, events.size - 1))
     }
 
     Column(
@@ -126,33 +126,22 @@ fun ProjectScreen(projectId: String) {
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp)
         ) {
-            if (events.isEmpty()) {
-                item {
-                    Text(
-                        "No events yet",
-                        color = OnSurface.copy(alpha = 0.5f),
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        textAlign = TextAlign.Center
-                    )
-                }
-            } else {
-                items(events) { event ->
-                    // EventRow (inline)
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                        colors = CardDefaults.cardColors(containerColor = Surface)
-                    ) {
-                        Column(modifier = Modifier.padding(8.dp)) {
-                            Text("type=${event.type}", style = MaterialTheme.typography.bodyMedium)
-                            Text(
-                                "payload=${event.payload}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = OnSurface.copy(alpha = 0.6f)
-                            )
-                        }
+            items(events) { event ->
+                // EventRow (inline)
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                    colors = CardDefaults.cardColors(containerColor = Surface)
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Text("type=${event.type}", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "payload=${event.payload}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = OnSurface.copy(alpha = 0.6f)
+                        )
                     }
-                    Spacer(modifier = Modifier.height(4.dp))
                 }
+                Spacer(modifier = Modifier.height(4.dp))
             }
         }
 
