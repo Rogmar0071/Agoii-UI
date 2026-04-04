@@ -28,9 +28,7 @@ fun ProjectScreen(projectId: String) {
     val bridge  = remember { CoreBridge(context) }
     val interactionEngine = remember { InteractionEngine() }
 
-    var events            by remember { mutableStateOf(emptyList<Event>()) }
     var replayState       by remember { mutableStateOf<ReplayStructuralState?>(null) }
-    var interactionResult by remember { mutableStateOf<InteractionResult?>(null) }
 
     var inputText       by remember { mutableStateOf("") }
     var sendMessage     by remember { mutableStateOf<String?>(null) }
@@ -39,19 +37,7 @@ fun ProjectScreen(projectId: String) {
     val listState = rememberLazyListState()
 
     fun reload() {
-        events      = bridge.loadEvents(projectId)
         replayState = bridge.replayState(projectId)
-
-        interactionResult = replayState?.let {
-            interactionEngine.execute(
-                InteractionContract(
-                    contractId = projectId,
-                    query = "system state",
-                    outputType = OutputType.DETAILED
-                ),
-                InteractionInput(it)
-            )
-        }
     }
 
     fun handleUserInput(input: String) {
@@ -72,10 +58,6 @@ fun ProjectScreen(projectId: String) {
 
     LaunchedEffect(projectId) { reload() }
 
-    LaunchedEffect(events.size) {
-        listState.animateScrollToItem(maxOf(0, events.size - 1))
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -91,8 +73,16 @@ fun ProjectScreen(projectId: String) {
             style = MaterialTheme.typography.headlineSmall
         )
 
-        // SECTION C: Single entry point
-        val replay = replayState ?: return@Column
+        // SECTION C: Single entry point - mandatory guard
+        val replay = replayState ?: run {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
+            }
+            return@Column
+        }
 
         // State panel section (inline) - SECTION D: Strict read from replay only
         Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
@@ -102,48 +92,23 @@ fun ProjectScreen(projectId: String) {
             
             // SECTION E: No fallback logic - strict execution status from executionView
             replay.executionView?.let { execView ->
-                val executionStatus = when {
-                    execView.taskStatus.values.any { it == "EXECUTED_FAILURE" || it == "FAILED" } -> "failed"
-                    execView.taskStatus.values.all { it == "COMPLETED" || it == "VALIDATED" } && execView.taskStatus.isNotEmpty() -> "success"
-                    execView.taskStatus.isNotEmpty() -> "running"
-                    else -> ""
-                }
-                if (executionStatus.isNotEmpty()) {
-                    Text("Execution: $executionStatus", style = MaterialTheme.typography.bodySmall)
+                execView.taskStatus.values.firstOrNull { it == "EXECUTED_FAILURE" || it == "FAILED" }?.let {
+                    Text("Execution: failed", style = MaterialTheme.typography.bodySmall)
+                } ?: run {
+                    if (execView.taskStatus.values.all { it == "COMPLETED" || it == "VALIDATED" } && execView.taskStatus.isNotEmpty()) {
+                        Text("Execution: success", style = MaterialTheme.typography.bodySmall)
+                    } else if (execView.taskStatus.isNotEmpty()) {
+                        Text("Execution: running", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
             
             replay.auditView.let {
                 Text("Audit: ${it.contracts.valid}", style = MaterialTheme.typography.bodySmall)
             }
-            
-            interactionResult?.let {
-                Text("Interaction: ${it.content}", style = MaterialTheme.typography.bodySmall)
-            }
         }
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp)
-        ) {
-            items(events) { event ->
-                // EventRow (inline)
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                    colors = CardDefaults.cardColors(containerColor = Surface)
-                ) {
-                    Column(modifier = Modifier.padding(8.dp)) {
-                        Text("type=${event.type}", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "payload=${event.payload}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = OnSurface.copy(alpha = 0.6f)
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-            }
-        }
+        Spacer(modifier = Modifier.weight(1f))
 
         // Commit panel section (inline) - SECTION D: Use replay.governanceView only
         val ev = replay.executionView
@@ -154,11 +119,11 @@ fun ProjectScreen(projectId: String) {
 
         if (commitPending) {
             val lastPayload = replay.governanceView.lastEventPayload
-            val reportRef = lastPayload["report_reference"]?.toString() ?: ""
-            val artifactRef = lastPayload["finalArtifactReference"]?.toString() ?: ""
+            val reportRef = lastPayload["report_reference"]?.toString()
+            val artifactRef = lastPayload["finalArtifactReference"]?.toString()
 
             @Suppress("UNCHECKED_CAST")
-            val actions = lastPayload["proposedActions"] as? List<String> ?: emptyList()
+            val actions = lastPayload["proposedActions"] as? List<String>
 
             Card(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
@@ -166,19 +131,20 @@ fun ProjectScreen(projectId: String) {
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Commit Pending", style = MaterialTheme.typography.titleMedium)
-                    if (reportRef.isNotEmpty()) {
-                        Text("Report: $reportRef", style = MaterialTheme.typography.bodySmall)
+                    reportRef?.let {
+                        Text("Report: $it", style = MaterialTheme.typography.bodySmall)
                     }
-                    if (artifactRef.isNotEmpty()) {
-                        Text("Artifact: $artifactRef", style = MaterialTheme.typography.bodySmall)
+                    artifactRef?.let {
+                        Text("Artifact: $it", style = MaterialTheme.typography.bodySmall)
                     }
-                    if (actions.isNotEmpty()) {
-                        Text("Actions: ${actions.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
+                    actions?.let {
+                        if (it.isNotEmpty()) {
+                            Text("Actions: ${it.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                     Row(modifier = Modifier.padding(top = 8.dp)) {
                         Button(
                             onClick = {
-                                bridge.loadEvents(projectId)
                                 bridge.approveContracts(projectId)
                                 reload()
                             },
@@ -188,7 +154,6 @@ fun ProjectScreen(projectId: String) {
                         }
                         Button(
                             onClick = {
-                                bridge.loadEvents(projectId)
                                 reload()
                             }
                         ) {
