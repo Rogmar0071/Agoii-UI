@@ -70,7 +70,6 @@ fun ProjectScreen(projectId: String) {
             inputText = ""
             responseMessage = response
             sendMessage = null
-            reload()
         } catch (e: Exception) {
             // SECTION C: Do not show raw exception messages
             // Execution state is shown deterministically from replay
@@ -79,6 +78,7 @@ fun ProjectScreen(projectId: String) {
                 sendMessage = errorMsg
             }
             responseMessage = null
+        } finally {
             reload()
         }
     }
