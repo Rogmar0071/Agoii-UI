@@ -112,7 +112,8 @@ fun ProjectScreen(projectId: String) {
             )
         }
 
-        // State panel section (inline)
+        // State panel section (inline) - MQP-UI-REPLAY-ALIGNMENT-013
+        // UI state derived ONLY from ReplayStructuralState (Replay → Render)
         if (events.isNotEmpty()) {
             Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
                 verification?.let {
@@ -122,31 +123,15 @@ fun ProjectScreen(projectId: String) {
                     Text("Governance: ${gv.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
                 }
                 
-                // SECTION B: Event-driven execution state (CONTRACT AGOII-UI-EXECUTION-STATE-001)
-                // Derive execution state from events ONLY, not from derived maps
-                val lastTaskStarted = events.lastOrNull { it.type == EventTypes.TASK_STARTED }
-                val lastTaskExecuted = events.lastOrNull { it.type == EventTypes.TASK_EXECUTED }
-                
-                val executionStatus = when {
-                    lastTaskStarted == null -> "not_started"
-                    lastTaskExecuted == null -> "running"
-                    else -> {
-                        // Both exist: compare positions using sequenceNumber
-                        val startedAfterExecuted = lastTaskStarted.sequenceNumber > lastTaskExecuted.sequenceNumber
-                        if (startedAfterExecuted) {
-                            "running"
-                        } else {
-                            // Last execution determines final state (CONTRACT AGOII-UI-EXECUTION-STATE-002)
-                            val executionResult = lastTaskExecuted.payload["executionStatus"]?.toString()
-                            when (executionResult) {
-                                "SUCCESS" -> "success"
-                                "FAILURE" -> "failed"
-                                else -> "running" // fallback for null/unknown - DO NOT guess success
-                            }
-                        }
+                // Execution state from executionView ONLY (MQP-UI-REPLAY-ALIGNMENT-013 SECTION C)
+                replayState?.executionView?.let { ev ->
+                    val executionStatus = when {
+                        ev.icsCompleted -> "completed"
+                        ev.icsStarted -> "finalizing"
+                        else -> "in_progress"
                     }
+                    Text("Execution: $executionStatus", style = MaterialTheme.typography.bodySmall)
                 }
-                Text("Execution: $executionStatus", style = MaterialTheme.typography.bodySmall)
                 
                 replayState?.auditView?.let {
                     Text("Audit: ${it.contracts.valid}", style = MaterialTheme.typography.bodySmall)
@@ -191,20 +176,21 @@ fun ProjectScreen(projectId: String) {
             }
         }
 
-        // Commit panel section (inline)
+        // Commit panel section (inline) - MQP-UI-REPLAY-ALIGNMENT-013
+        // Use ReplayStructuralState ONLY (no event inspection)
         val ev = replayState?.executionView
+        val gv = replayState?.governanceView
         val commitPending = ev != null &&
                 ev.commitContractExists &&
                 !ev.commitExecuted &&
                 !ev.commitAborted
 
-        if (commitPending) {
-            val commitEvent = events.lastOrNull { it.type == EventTypes.COMMIT_CONTRACT }
-            val reportRef = commitEvent?.payload?.get("report_reference")?.toString() ?: ""
-            val artifactRef = commitEvent?.payload?.get("finalArtifactReference")?.toString() ?: ""
+        if (commitPending && gv != null && gv.lastEventType == EventTypes.COMMIT_CONTRACT) {
+            val reportRef = gv.lastEventPayload["report_reference"]?.toString() ?: ""
+            val artifactRef = gv.lastEventPayload["finalArtifactReference"]?.toString() ?: ""
 
             @Suppress("UNCHECKED_CAST")
-            val actions = commitEvent?.payload?.get("proposedActions") as? List<String> ?: emptyList()
+            val actions = gv.lastEventPayload["proposedActions"] as? List<String> ?: emptyList()
 
             Card(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
@@ -241,9 +227,9 @@ fun ProjectScreen(projectId: String) {
             }
         }
 
-        // Action bar section (inline)
-        val gv = replayState?.governanceView
-        val showApprove = gv != null && gv.totalContracts > 0 && replayState?.executionView != null
+        // Action bar section (inline) - MQP-UI-REPLAY-ALIGNMENT-013
+        val gvAction = replayState?.governanceView
+        val showApprove = gvAction != null && gvAction.totalContracts > 0 && replayState?.executionView != null
 
         if (showApprove) {
             Row(
