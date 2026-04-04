@@ -130,8 +130,7 @@ fun ProjectScreen(projectId: String) {
                     val executionStatus = when {
                         !ev.icsStarted -> "Not started"
                         ev.icsStarted && !ev.icsCompleted -> "Running"
-                        ev.icsCompleted -> "Completed"
-                        else -> "Not started"
+                        else -> "Completed" // icsCompleted must be true
                     }
                     Column {
                         Text("EXECUTION", style = MaterialTheme.typography.labelSmall, color = OnSurface.copy(alpha = 0.6f))
@@ -142,11 +141,7 @@ fun ProjectScreen(projectId: String) {
                 // SECTION D: ASSEMBLY PANEL
                 replayState?.auditView?.assembly?.let { assembly ->
                     if (assembly.assemblyStarted) {
-                        val assemblyStatus = when {
-                            assembly.assemblyStarted && !assembly.assemblyCompleted -> "Assembling"
-                            assembly.assemblyCompleted -> "Assembled"
-                            else -> "Assembling"
-                        }
+                        val assemblyStatus = if (assembly.assemblyCompleted) "Assembled" else "Assembling"
                         Column {
                             Text("ASSEMBLY", style = MaterialTheme.typography.labelSmall, color = OnSurface.copy(alpha = 0.6f))
                             Text(assemblyStatus, style = MaterialTheme.typography.bodyMedium)
