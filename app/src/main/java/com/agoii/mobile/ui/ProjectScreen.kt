@@ -28,14 +28,30 @@ fun ProjectScreen(projectId: String) {
     val bridge  = remember { CoreBridge(context) }
     val interactionEngine = remember { InteractionEngine() }
 
+    var events            by remember { mutableStateOf(emptyList<Event>()) }
     var replayState       by remember { mutableStateOf<ReplayStructuralState?>(null) }
+    var interactionResult by remember { mutableStateOf<InteractionResult?>(null) }
 
     var inputText       by remember { mutableStateOf("") }
+    var sendMessage     by remember { mutableStateOf<String?>(null) }
+    var responseMessage by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
 
     fun reload() {
+        events      = bridge.loadEvents(projectId)
         replayState = bridge.replayState(projectId)
+
+        interactionResult = replayState?.let {
+            interactionEngine.execute(
+                InteractionContract(
+                    contractId = projectId,
+                    query = "system state",
+                    outputType = OutputType.DETAILED
+                ),
+                InteractionInput(it)
+            )
+        }
     }
 
     fun handleUserInput(input: String) {
@@ -43,15 +59,22 @@ fun ProjectScreen(projectId: String) {
         if (trimmed.isEmpty()) return
 
         try {
-            bridge.processInteraction(projectId, trimmed)
+            val response = bridge.processInteraction(projectId, trimmed)
             inputText = ""
+            responseMessage = response
+            sendMessage = null
             reload()
         } catch (e: Exception) {
-            // Errors not displayed per SECTION B (no parallel state)
+            sendMessage = e.message
+            responseMessage = null
         }
     }
 
     LaunchedEffect(projectId) { reload() }
+
+    LaunchedEffect(events.size) {
+        if (events.isNotEmpty()) listState.animateScrollToItem(events.size - 1)
+    }
 
     Column(
         modifier = Modifier
@@ -68,7 +91,7 @@ fun ProjectScreen(projectId: String) {
             style = MaterialTheme.typography.headlineSmall
         )
 
-        // SECTION C: Single entry point - mandatory guard
+        // Single entry point - mandatory guard
         val replay = replayState ?: run {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -79,11 +102,11 @@ fun ProjectScreen(projectId: String) {
             return@Column
         }
 
-        // State panel section (inline) - SECTION D: Strict read from replay only
+        // State panel section - ALL SYSTEM STATE from replay.* only
         Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
             Text("Governance: ${replay.governanceView.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
             
-            // SECTION E: No fallback logic - direct read only
+            // Execution state from executionView ONLY (no event inspection)
             replay.executionView?.let { execView ->
                 execView.taskStatus.values.firstOrNull { it == "EXECUTED_FAILURE" || it == "FAILED" }?.let {
                     Text("Execution: failed", style = MaterialTheme.typography.bodySmall)
@@ -97,63 +120,115 @@ fun ProjectScreen(projectId: String) {
             }
             
             Text("Audit: ${replay.auditView.contracts.valid}", style = MaterialTheme.typography.bodySmall)
+            
+            // Interaction result - NOT system state, interaction feedback only
+            interactionResult?.let {
+                Text("Interaction: ${it.content}", style = MaterialTheme.typography.bodySmall)
+            }
         }
 
-        Spacer(modifier = Modifier.weight(1f))
+        // Event list - READ-ONLY display (NO state derivation)
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp)
+        ) {
+            if (events.isEmpty()) {
+                item {
+                    Text(
+                        "No events yet",
+                        color = OnSurface.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            } else {
+                items(events) { event ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        colors = CardDefaults.cardColors(containerColor = Surface)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text("type=${event.type}", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "payload=${event.payload}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = OnSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            }
+        }
 
-        // Commit panel section (inline) - SECTION D: Use replay only, SECTION A: No gating
+        // Commit panel - use replay.governanceView.lastEventPayload ONLY
         replay.executionView?.let { ev ->
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                colors = CardDefaults.cardColors(containerColor = Surface)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Commit Pending", style = MaterialTheme.typography.titleMedium)
-                    replay.governanceView.lastEventPayload["report_reference"]?.let {
-                        Text("Report: $it", style = MaterialTheme.typography.bodySmall)
-                    }
-                    replay.governanceView.lastEventPayload["finalArtifactReference"]?.let {
-                        Text("Artifact: $it", style = MaterialTheme.typography.bodySmall)
-                    }
-                    @Suppress("UNCHECKED_CAST")
-                    (replay.governanceView.lastEventPayload["proposedActions"] as? List<String>)?.let { actions ->
-                        Text("Actions: ${actions.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
-                    }
-                    Row(modifier = Modifier.padding(top = 8.dp)) {
-                        Button(
-                            onClick = {
-                                bridge.approveContracts(projectId)
-                                reload()
-                            },
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) {
-                            Text("Approve")
+            if (ev.commitContractExists && !ev.commitExecuted && !ev.commitAborted) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = Surface)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Commit Pending", style = MaterialTheme.typography.titleMedium)
+                        replay.governanceView.lastEventPayload["report_reference"]?.let {
+                            Text("Report: $it", style = MaterialTheme.typography.bodySmall)
                         }
-                        Button(
-                            onClick = { reload() }
-                        ) {
-                            Text("Reject")
+                        replay.governanceView.lastEventPayload["finalArtifactReference"]?.let {
+                            Text("Artifact: $it", style = MaterialTheme.typography.bodySmall)
+                        }
+                        @Suppress("UNCHECKED_CAST")
+                        (replay.governanceView.lastEventPayload["proposedActions"] as? List<String>)?.let { actions ->
+                            if (actions.isNotEmpty()) {
+                                Text("Actions: ${actions.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        Row(modifier = Modifier.padding(top = 8.dp)) {
+                            Button(
+                                onClick = {
+                                    bridge.approveContracts(projectId)
+                                    reload()
+                                },
+                                modifier = Modifier.padding(end = 8.dp)
+                            ) {
+                                Text("Approve")
+                            }
+                            Button(
+                                onClick = { reload() }
+                            ) {
+                                Text("Reject")
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Action bar section (inline) - SECTION D: Use replay only, SECTION A: No gating  
+        // Action bar - use replay.governanceView ONLY
         replay.executionView?.let {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                horizontalArrangement = Arrangement.End
-            ) {
-                Button(
-                    onClick = {
-                        bridge.approveContracts(projectId)
-                        reload()
-                    }
+            if (replay.governanceView.totalContracts > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    horizontalArrangement = Arrangement.End
                 ) {
-                    Text("Approve Contracts")
+                    Button(
+                        onClick = {
+                            bridge.approveContracts(projectId)
+                            reload()
+                        }
+                    ) {
+                        Text("Approve Contracts")
+                    }
                 }
             }
+        }
+
+        // UI feedback messages (ephemeral state, NOT system state)
+        responseMessage?.let {
+            Text(it, modifier = Modifier.padding(8.dp))
+        }
+
+        sendMessage?.let {
+            Text(it, color = Color.Red, modifier = Modifier.padding(8.dp))
         }
 
         // Input bar section (inline)
