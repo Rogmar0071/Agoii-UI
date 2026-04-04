@@ -88,7 +88,7 @@ fun ProjectScreen(projectId: String) {
         val replay = replayState
         val interaction = interactionResult
         val response = responseMessage
-        val error = sendMessage
+        val sendError = sendMessage
 
         // Header (ALWAYS present)
         Text(
@@ -224,8 +224,8 @@ fun ProjectScreen(projectId: String) {
                 Text(response, modifier = Modifier.padding(8.dp))
             }
 
-            if (error != null) {
-                Text(error, color = Color.Red, modifier = Modifier.padding(8.dp))
+            if (sendError != null) {
+                Text(sendError, color = Color.Red, modifier = Modifier.padding(8.dp))
             }
         }
 
