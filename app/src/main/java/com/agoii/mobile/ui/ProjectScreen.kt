@@ -125,11 +125,15 @@ fun ProjectScreen(projectId: String) {
                 // SECTION B: Execution state mapping from executionView
                 val ev = replayState?.executionView
                 val executionStatus = when {
-                    ev == null -> "not_started"
-                    ev.taskStatus.values.any { it == "EXECUTED_FAILURE" } -> "failed"
-                    ev.taskStatus.values.all { it == "COMPLETED" || it == "VALIDATED" } && ev.taskStatus.isNotEmpty() -> "success"
-                    ev.taskStatus.isNotEmpty() -> "running"
-                    else -> "not_started"
+                    ev == null || ev.taskStatus.isEmpty() -> "not_started"
+                    else -> {
+                        val statuses = ev.taskStatus.values
+                        when {
+                            statuses.any { it == "EXECUTED_FAILURE" } -> "failed"
+                            statuses.all { it == "COMPLETED" || it == "VALIDATED" } -> "success"
+                            else -> "running"
+                        }
+                    }
                 }
                 Text("Execution: $executionStatus", style = MaterialTheme.typography.bodySmall)
                 
