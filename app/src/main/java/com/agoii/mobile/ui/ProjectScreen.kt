@@ -115,9 +115,19 @@ fun ProjectScreen(projectId: String) {
                 replayState?.governanceView?.let {
                     Text("Governance: ${it.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
                 }
-                replayState?.executionView?.let {
-                    Text("Execution: ${if (it.commitContractExists) "Active" else "Idle"}", style = MaterialTheme.typography.bodySmall)
+                // SECTION B: Execution state mapping from executionView.taskStatus
+                // Status values are defined in Replay.kt:102-103 as lifecycle strings:
+                // "ASSIGNED", "STARTED", "EXECUTED_SUCCESS", "EXECUTED_FAILURE", "COMPLETED", "FAILED", "VALIDATED"
+                val execView = replayState?.executionView
+                val executionStatus = when {
+                    execView == null -> "not_started"
+                    execView.taskStatus.values.any { it == "EXECUTED_FAILURE" || it == "FAILED" } -> "failed"
+                    // Note: isNotEmpty() check required because all() returns true on empty collection
+                    execView.taskStatus.values.all { it == "COMPLETED" || it == "VALIDATED" } && execView.taskStatus.isNotEmpty() -> "success"
+                    execView.taskStatus.isNotEmpty() -> "running"
+                    else -> "not_started"
                 }
+                Text("Execution: $executionStatus", style = MaterialTheme.typography.bodySmall)
                 replayState?.auditView?.let {
                     Text("Audit: ${it.contracts.valid}", style = MaterialTheme.typography.bodySmall)
                 }
