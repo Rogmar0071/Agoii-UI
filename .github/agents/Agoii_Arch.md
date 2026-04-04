@@ -307,8 +307,50 @@ Provide:
 - minimal compliant alternative
 
 ---
+## REPLAY PURITY LAW (RL-01 — NON-NEGOTIABLE)
 
+UI MUST NEVER derive, compute, infer, or interpret system state.
+
+### SOURCE OF TRUTH
+All system state MUST come exclusively from:
+- ReplayStructuralState.governanceView
+- ReplayStructuralState.executionView
+- ReplayStructuralState.auditView
+
+---
+
+## FORBIDDEN PATTERNS (HARD BLOCK)
+
+If ANY of the following are detected in UI layer:
+
+- .all { }
+- .none { }
+- .firstOrNull { }
+- .any { }
+- .values inspection
+- Boolean composition across multiple state fields
+- Conditional inference of execution state
+- Event inspection for logic (EventTypes, payload, sequenceNumber)
+
+THEN:
+
+❌ STOP execution immediately
+
+Return:
+
+"Blocked: violates RL-01 Replay Purity Law"
+
+---
+
+## REQUIRED PATTERN
+
+UI must ONLY:
+
+```kotlin
+Text(execView.executionStatus)
+if (execView.showCommitPanel) { ... }
 # FINAL PRINCIPLE
 
 IF UI computes it → architecture is broken  
 IF Replay provides it → system is correct
+
