@@ -100,7 +100,7 @@ fun ProjectScreen(projectId: String) {
         
         auditResult?.let {
             Text(
-                text = "Audit: ${it.status}",
+                text = "Audit: ${it.valid}",
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -119,7 +119,7 @@ fun ProjectScreen(projectId: String) {
                     Text("Execution: ${if (it.commitContractExists) "Active" else "Idle"}", style = MaterialTheme.typography.bodySmall)
                 }
                 replayState?.auditView?.let {
-                    Text("Audit: ${it.totalViolations} violations", style = MaterialTheme.typography.bodySmall)
+                    Text("Audit: ${it.contracts.valid}", style = MaterialTheme.typography.bodySmall)
                 }
                 interactionResult?.let {
                     Text("Interaction: ${it.status}", style = MaterialTheme.typography.bodySmall)
@@ -148,9 +148,9 @@ fun ProjectScreen(projectId: String) {
                         colors = CardDefaults.cardColors(containerColor = Surface)
                     ) {
                         Column(modifier = Modifier.padding(8.dp)) {
-                            Text(event.type, style = MaterialTheme.typography.bodyMedium)
+                            Text("type=${event.type}", style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                "ID: ${event.eventId.take(8)}...",
+                                "payload=${event.payload}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = OnSurface.copy(alpha = 0.6f)
                             )
