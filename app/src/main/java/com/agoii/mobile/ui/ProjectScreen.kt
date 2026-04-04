@@ -31,8 +31,6 @@ fun ProjectScreen(projectId: String) {
     var replayState       by remember { mutableStateOf<ReplayStructuralState?>(null) }
 
     var inputText       by remember { mutableStateOf("") }
-    var sendMessage     by remember { mutableStateOf<String?>(null) }
-    var responseMessage by remember { mutableStateOf<String?>(null) }
 
     val listState = rememberLazyListState()
 
@@ -45,14 +43,11 @@ fun ProjectScreen(projectId: String) {
         if (trimmed.isEmpty()) return
 
         try {
-            val response = bridge.processInteraction(projectId, trimmed)
+            bridge.processInteraction(projectId, trimmed)
             inputText = ""
-            responseMessage = response
-            sendMessage = null
             reload()
         } catch (e: Exception) {
-            sendMessage = e.message
-            responseMessage = null
+            // Errors not displayed per SECTION B (no parallel state)
         }
     }
 
@@ -86,61 +81,43 @@ fun ProjectScreen(projectId: String) {
 
         // State panel section (inline) - SECTION D: Strict read from replay only
         Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-            replay.governanceView.let {
-                Text("Governance: ${it.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
-            }
+            Text("Governance: ${replay.governanceView.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
             
-            // SECTION E: No fallback logic - strict execution status from executionView
+            // SECTION E: No fallback logic - direct read only
             replay.executionView?.let { execView ->
                 execView.taskStatus.values.firstOrNull { it == "EXECUTED_FAILURE" || it == "FAILED" }?.let {
                     Text("Execution: failed", style = MaterialTheme.typography.bodySmall)
-                } ?: run {
-                    if (execView.taskStatus.values.all { it == "COMPLETED" || it == "VALIDATED" } && execView.taskStatus.isNotEmpty()) {
-                        Text("Execution: success", style = MaterialTheme.typography.bodySmall)
-                    } else if (execView.taskStatus.isNotEmpty()) {
-                        Text("Execution: running", style = MaterialTheme.typography.bodySmall)
-                    }
+                }
+                if (execView.taskStatus.values.all { it == "COMPLETED" || it == "VALIDATED" } && execView.taskStatus.isNotEmpty()) {
+                    Text("Execution: success", style = MaterialTheme.typography.bodySmall)
+                }
+                if (execView.taskStatus.values.none { it == "EXECUTED_FAILURE" || it == "FAILED" || it == "COMPLETED" || it == "VALIDATED" } && execView.taskStatus.isNotEmpty()) {
+                    Text("Execution: running", style = MaterialTheme.typography.bodySmall)
                 }
             }
             
-            replay.auditView.let {
-                Text("Audit: ${it.contracts.valid}", style = MaterialTheme.typography.bodySmall)
-            }
+            Text("Audit: ${replay.auditView.contracts.valid}", style = MaterialTheme.typography.bodySmall)
         }
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // Commit panel section (inline) - SECTION D: Use replay.governanceView only
-        val ev = replay.executionView
-        val commitPending = ev != null &&
-                ev.commitContractExists &&
-                !ev.commitExecuted &&
-                !ev.commitAborted
-
-        if (commitPending) {
-            val lastPayload = replay.governanceView.lastEventPayload
-            val reportRef = lastPayload["report_reference"]?.toString()
-            val artifactRef = lastPayload["finalArtifactReference"]?.toString()
-
-            @Suppress("UNCHECKED_CAST")
-            val actions = lastPayload["proposedActions"] as? List<String>
-
+        // Commit panel section (inline) - SECTION D: Use replay only, SECTION A: No gating
+        replay.executionView?.let { ev ->
             Card(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
                 colors = CardDefaults.cardColors(containerColor = Surface)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Commit Pending", style = MaterialTheme.typography.titleMedium)
-                    reportRef?.let {
+                    replay.governanceView.lastEventPayload["report_reference"]?.let {
                         Text("Report: $it", style = MaterialTheme.typography.bodySmall)
                     }
-                    artifactRef?.let {
+                    replay.governanceView.lastEventPayload["finalArtifactReference"]?.let {
                         Text("Artifact: $it", style = MaterialTheme.typography.bodySmall)
                     }
-                    actions?.let {
-                        if (it.isNotEmpty()) {
-                            Text("Actions: ${it.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
-                        }
+                    @Suppress("UNCHECKED_CAST")
+                    (replay.governanceView.lastEventPayload["proposedActions"] as? List<String>)?.let { actions ->
+                        Text("Actions: ${actions.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
                     }
                     Row(modifier = Modifier.padding(top = 8.dp)) {
                         Button(
@@ -153,9 +130,7 @@ fun ProjectScreen(projectId: String) {
                             Text("Approve")
                         }
                         Button(
-                            onClick = {
-                                reload()
-                            }
+                            onClick = { reload() }
                         ) {
                             Text("Reject")
                         }
@@ -164,11 +139,8 @@ fun ProjectScreen(projectId: String) {
             }
         }
 
-        // Action bar section (inline) - SECTION D: Use replay.governanceView only
-        val gv = replay.governanceView
-        val showApprove = gv.totalContracts > 0 && replay.executionView != null
-
-        if (showApprove) {
+        // Action bar section (inline) - SECTION D: Use replay only, SECTION A: No gating  
+        replay.executionView?.let {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(8.dp),
                 horizontalArrangement = Arrangement.End
@@ -182,14 +154,6 @@ fun ProjectScreen(projectId: String) {
                     Text("Approve Contracts")
                 }
             }
-        }
-
-        responseMessage?.let {
-            Text(it, modifier = Modifier.padding(8.dp))
-        }
-
-        sendMessage?.let {
-            Text(it, color = Color.Red, modifier = Modifier.padding(8.dp))
         }
 
         // Input bar section (inline)
