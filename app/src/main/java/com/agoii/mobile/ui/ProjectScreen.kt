@@ -112,32 +112,58 @@ fun ProjectScreen(projectId: String) {
             )
         }
 
-        // State panel section (inline) - MQP-UI-REPLAY-ALIGNMENT-013
-        // UI state derived ONLY from ReplayStructuralState (Replay → Render)
+        // State panel section - MQP-UI-STATE-PRESENTATION-001
+        // Clean 4-block presentation: GOVERNANCE, EXECUTION, ASSEMBLY, RESULT
         if (events.isNotEmpty()) {
-            Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-                verification?.let {
-                    Text("Verification: ${if (it.valid) "VALID" else "INVALID"}", style = MaterialTheme.typography.bodySmall)
-                }
+            Column(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                
+                // SECTION B: GOVERNANCE PANEL
                 replayState?.governanceView?.let { gv ->
-                    Text("Governance: ${gv.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
+                    Column {
+                        Text("GOVERNANCE", style = MaterialTheme.typography.labelSmall, color = OnSurface.copy(alpha = 0.6f))
+                        Text("Contracts: ${gv.totalContracts}", style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
                 
-                // Execution state from executionView ONLY (MQP-UI-REPLAY-ALIGNMENT-013 SECTION C)
+                // SECTION C: EXECUTION PANEL
                 replayState?.executionView?.let { ev ->
                     val executionStatus = when {
-                        ev.icsCompleted -> "completed"
-                        ev.icsStarted -> "finalizing"
-                        else -> "in_progress"
+                        !ev.icsStarted -> "Not started"
+                        ev.icsStarted && !ev.icsCompleted -> "Running"
+                        ev.icsCompleted -> "Completed"
+                        else -> "Not started"
                     }
-                    Text("Execution: $executionStatus", style = MaterialTheme.typography.bodySmall)
+                    Column {
+                        Text("EXECUTION", style = MaterialTheme.typography.labelSmall, color = OnSurface.copy(alpha = 0.6f))
+                        Text(executionStatus, style = MaterialTheme.typography.bodyMedium)
+                    }
                 }
                 
-                replayState?.auditView?.let {
-                    Text("Audit: ${it.contracts.valid}", style = MaterialTheme.typography.bodySmall)
+                // SECTION D: ASSEMBLY PANEL
+                replayState?.auditView?.assembly?.let { assembly ->
+                    if (assembly.assemblyStarted) {
+                        val assemblyStatus = when {
+                            assembly.assemblyStarted && !assembly.assemblyCompleted -> "Assembling"
+                            assembly.assemblyCompleted -> "Assembled"
+                            else -> "Assembling"
+                        }
+                        Column {
+                            Text("ASSEMBLY", style = MaterialTheme.typography.labelSmall, color = OnSurface.copy(alpha = 0.6f))
+                            Text(assemblyStatus, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
                 }
-                interactionResult?.let {
-                    Text("Interaction: ${it.content}", style = MaterialTheme.typography.bodySmall)
+                
+                // SECTION E: RESULT PANEL (only if ICS completed)
+                replayState?.executionView?.let { ev ->
+                    if (ev.icsCompleted) {
+                        interactionResult?.let { result ->
+                            Column {
+                                Text("RESULT", style = MaterialTheme.typography.labelSmall, color = OnSurface.copy(alpha = 0.6f))
+                                Text(result.content, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
                 }
             }
         }
