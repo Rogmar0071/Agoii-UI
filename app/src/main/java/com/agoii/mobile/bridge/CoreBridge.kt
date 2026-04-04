@@ -165,23 +165,6 @@ class CoreBridge(context: Context) {
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
     }
 
-    // ✅ RESTORED UI INTERFACE (STRUCTURAL ONLY — NO LOGIC LEAK)
-    fun signalCommitApproval(projectId: String) {
-        ledger.appendEvent(
-            projectId,
-            EventTypes.COMMIT_APPROVED,
-            emptyMap()
-        )
-    }
-
-    fun signalCommitRejection(projectId: String) {
-        ledger.appendEvent(
-            projectId,
-            EventTypes.COMMIT_REJECTED,
-            emptyMap()
-        )
-    }
-
     companion object {
         private const val MAX_GOVERNOR_CYCLES = 30
     }
