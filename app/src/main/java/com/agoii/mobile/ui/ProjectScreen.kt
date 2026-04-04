@@ -84,6 +84,12 @@ fun ProjectScreen(projectId: String) {
             .imePadding()
     ) {
 
+        // Local val snapshots — required for K1 smart cast on delegated vars
+        val replay = replayState
+        val interaction = interactionResult
+        val response = responseMessage
+        val error = sendMessage
+
         // Header (ALWAYS present)
         Text(
             text = "Project: $projectId",
@@ -93,30 +99,28 @@ fun ProjectScreen(projectId: String) {
 
         // LoadingContainer (ALWAYS present)
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxWidth(),
             contentAlignment = Alignment.Center
         ) {
-            if (replayState == null) {
-                CircularProgressIndicator()
+            if (replay == null) {
+                CircularProgressIndicator(modifier = Modifier.padding(16.dp))
             }
         }
 
         // StatePanelContainer (ALWAYS present)
         Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-            if (replayState != null) {
-                Text("Governance: ${replayState.governanceView.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
-                
-                // Execution state - ALWAYS show line, content from executionView
+            if (replay != null) {
+                Text("Governance: ${replay.governanceView.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
+
                 Text(
-                    "Execution: ${replayState.executionView?.executionStatus ?: "not_started"}", 
+                    "Execution: ${replay.executionView.executionStatus}",
                     style = MaterialTheme.typography.bodySmall
                 )
-                
-                Text("Audit: ${replayState.auditView.contracts.valid}", style = MaterialTheme.typography.bodySmall)
-                
-                // Interaction result display
-                if (interactionResult != null) {
-                    Text("Interaction: ${interactionResult.content}", style = MaterialTheme.typography.bodySmall)
+
+                Text("Audit: ${replay.auditView.contracts.valid}", style = MaterialTheme.typography.bodySmall)
+
+                if (interaction != null) {
+                    Text("Interaction: ${interaction.content}", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -126,7 +130,7 @@ fun ProjectScreen(projectId: String) {
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp)
         ) {
-            if (replayState != null) {
+            if (replay != null) {
                 if (events.isEmpty()) {
                     item {
                         Text(
@@ -162,17 +166,17 @@ fun ProjectScreen(projectId: String) {
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             colors = CardDefaults.cardColors(containerColor = Surface)
         ) {
-            if (replayState != null && replayState.executionView?.showCommitPanel == true) {
+            if (replay != null && replay.executionView.showCommitPanel) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Commit Pending", style = MaterialTheme.typography.titleMedium)
-                    replayState.governanceView.lastEventPayload["report_reference"]?.let {
+                    replay.governanceView.lastEventPayload["report_reference"]?.let {
                         Text("Report: $it", style = MaterialTheme.typography.bodySmall)
                     }
-                    replayState.governanceView.lastEventPayload["finalArtifactReference"]?.let {
+                    replay.governanceView.lastEventPayload["finalArtifactReference"]?.let {
                         Text("Artifact: $it", style = MaterialTheme.typography.bodySmall)
                     }
                     @Suppress("UNCHECKED_CAST")
-                    (replayState.governanceView.lastEventPayload["proposedActions"] as? List<String>)?.let { actions ->
+                    (replay.governanceView.lastEventPayload["proposedActions"] as? List<String>)?.let { actions ->
                         if (actions.isNotEmpty()) {
                             Text("Actions: ${actions.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
                         }
@@ -202,7 +206,7 @@ fun ProjectScreen(projectId: String) {
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             horizontalArrangement = Arrangement.End
         ) {
-            if (replayState != null && replayState.executionView != null && replayState.governanceView.totalContracts > 0) {
+            if (replay != null && replay.governanceView.totalContracts > 0) {
                 Button(
                     onClick = {
                         bridge.approveContracts(projectId)
@@ -216,12 +220,12 @@ fun ProjectScreen(projectId: String) {
 
         // FeedbackContainer (ALWAYS present)
         Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-            if (responseMessage != null) {
-                Text(responseMessage, modifier = Modifier.padding(8.dp))
+            if (response != null) {
+                Text(response, modifier = Modifier.padding(8.dp))
             }
-            
-            if (sendMessage != null) {
-                Text(sendMessage, color = Color.Red, modifier = Modifier.padding(8.dp))
+
+            if (error != null) {
+                Text(error, color = Color.Red, modifier = Modifier.padding(8.dp))
             }
         }
 
