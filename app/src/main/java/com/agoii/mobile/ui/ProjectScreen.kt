@@ -110,7 +110,7 @@ fun ProjectScreen(projectId: String) {
         if (events.isNotEmpty()) {
             Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
                 verification?.let {
-                    Text("Verification: ${it.status}", style = MaterialTheme.typography.bodySmall)
+                    Text("Verification: ${if (it.valid) "VALID" else "INVALID"}", style = MaterialTheme.typography.bodySmall)
                 }
                 replayState?.governanceView?.let {
                     Text("Governance: ${it.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
@@ -122,7 +122,7 @@ fun ProjectScreen(projectId: String) {
                     Text("Audit: ${it.contracts.valid}", style = MaterialTheme.typography.bodySmall)
                 }
                 interactionResult?.let {
-                    Text("Interaction: ${it.status}", style = MaterialTheme.typography.bodySmall)
+                    Text("Interaction: ${it.content}", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
