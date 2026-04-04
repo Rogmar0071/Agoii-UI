@@ -3,6 +3,8 @@ package com.agoii.mobile.contracts
 import com.agoii.mobile.contractors.ResolutionTrace
 import com.agoii.mobile.execution.AnchorState
 import com.agoii.mobile.execution.ContractorExecutionOutput
+import com.agoii.mobile.execution.ValidatedSections
+import com.agoii.mobile.execution.MutationSurface
 
 class UniversalContractReport {
 
@@ -35,10 +37,11 @@ class UniversalContractReport {
 
     fun extractAnchorState(report: ContractReport): AnchorState =
         AnchorState(
-            reportReference    = report.reportReference,
-            validatedTypes     = report.typeInventory.toList(),
-            validatedStructure = report.typeInventory.toSet(),
-            validatedPaths     = report.logicFlow.toList()
+            validatedSections = ValidatedSections(emptySet()),
+            mutationSurface = MutationSurface(
+                allowedFields = emptyList(),
+                allowedSections = emptyList()
+            )
         )
 
     companion object {
