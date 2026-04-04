@@ -72,8 +72,14 @@ fun ProjectScreen(projectId: String) {
             sendMessage = null
             reload()
         } catch (e: Exception) {
-            sendMessage = e.message
+            // SECTION C: Do not show raw exception messages
+            // Execution state is shown deterministically from replay
+            val errorMsg = e.message ?: ""
+            if (errorMsg != "Execution failed") {
+                sendMessage = errorMsg
+            }
             responseMessage = null
+            reload()
         }
     }
 
