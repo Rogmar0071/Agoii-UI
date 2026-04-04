@@ -112,12 +112,21 @@ fun ProjectScreen(projectId: String) {
                 verification?.let {
                     Text("Verification: ${if (it.valid) "VALID" else "INVALID"}", style = MaterialTheme.typography.bodySmall)
                 }
-                replayState?.governanceView?.let {
-                    Text("Governance: ${it.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
+                replayState?.governanceView?.let { gv ->
+                    Text("Governance: ${gv.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
                 }
-                replayState?.executionView?.let {
-                    Text("Execution: ${if (it.commitContractExists) "Active" else "Idle"}", style = MaterialTheme.typography.bodySmall)
+                
+                // SECTION B: Execution state mapping from executionView
+                val ev = replayState?.executionView
+                val executionStatus = when {
+                    ev == null -> "not_started"
+                    ev.taskStatus.values.any { it == "EXECUTED_FAILURE" } -> "failed"
+                    ev.taskStatus.values.all { it == "COMPLETED" || it == "VALIDATED" } && ev.taskStatus.isNotEmpty() -> "success"
+                    ev.taskStatus.isNotEmpty() -> "running"
+                    else -> "not_started"
                 }
+                Text("Execution: $executionStatus", style = MaterialTheme.typography.bodySmall)
+                
                 replayState?.auditView?.let {
                     Text("Audit: ${it.contracts.valid}", style = MaterialTheme.typography.bodySmall)
                 }
