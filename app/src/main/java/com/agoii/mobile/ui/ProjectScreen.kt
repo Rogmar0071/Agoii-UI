@@ -84,46 +84,49 @@ fun ProjectScreen(projectId: String) {
             .imePadding()
     ) {
 
-        // Header section (inline)
+        // Header (ALWAYS present)
         Text(
             text = "Project: $projectId",
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             style = MaterialTheme.typography.headlineSmall
         )
 
-        // Stable tree structure - no early returns
-        if (replayState == null) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
+        // LoadingContainer (ALWAYS present)
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            if (replayState == null) {
                 CircularProgressIndicator()
             }
-        } else {
-            val replay = replayState
+        }
 
-            // State panel section - ALL SYSTEM STATE from replay.* only
-            Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-                Text("Governance: ${replay.governanceView.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
+        // StatePanelContainer (ALWAYS present)
+        Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+            if (replayState != null) {
+                Text("Governance: ${replayState.governanceView.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
                 
-                // Execution state from executionView.executionStatus ONLY (NO derivation)
-                replay.executionView?.let { execView ->
-                    Text("Execution: ${execView.executionStatus}", style = MaterialTheme.typography.bodySmall)
-                }
+                // Execution state - ALWAYS show line, content from executionView
+                Text(
+                    "Execution: ${replayState.executionView?.executionStatus ?: "not_started"}", 
+                    style = MaterialTheme.typography.bodySmall
+                )
                 
-                Text("Audit: ${replay.auditView.contracts.valid}", style = MaterialTheme.typography.bodySmall)
+                Text("Audit: ${replayState.auditView.contracts.valid}", style = MaterialTheme.typography.bodySmall)
                 
-                // Interaction result - NOT system state, interaction feedback only
-                interactionResult?.let {
-                    Text("Interaction: ${it.content}", style = MaterialTheme.typography.bodySmall)
+                // Interaction result display
+                if (interactionResult != null) {
+                    Text("Interaction: ${interactionResult.content}", style = MaterialTheme.typography.bodySmall)
                 }
             }
+        }
 
-            // Event list - READ-ONLY display (NO state derivation)
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp)
-            ) {
+        // EventListContainer (ALWAYS present)
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp)
+        ) {
+            if (replayState != null) {
                 if (events.isEmpty()) {
                     item {
                         Text(
@@ -152,96 +155,94 @@ fun ProjectScreen(projectId: String) {
                     }
                 }
             }
+        }
 
-            // Commit panel - use executionView.showCommitPanel ONLY (NO boolean composition)
-            replay.executionView?.let { ev ->
-                if (ev.showCommitPanel) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        colors = CardDefaults.cardColors(containerColor = Surface)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text("Commit Pending", style = MaterialTheme.typography.titleMedium)
-                            replay.governanceView.lastEventPayload["report_reference"]?.let {
-                                Text("Report: $it", style = MaterialTheme.typography.bodySmall)
-                            }
-                            replay.governanceView.lastEventPayload["finalArtifactReference"]?.let {
-                                Text("Artifact: $it", style = MaterialTheme.typography.bodySmall)
-                            }
-                            @Suppress("UNCHECKED_CAST")
-                            (replay.governanceView.lastEventPayload["proposedActions"] as? List<String>)?.let { actions ->
-                                if (actions.isNotEmpty()) {
-                                    Text("Actions: ${actions.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                            Row(modifier = Modifier.padding(top = 8.dp)) {
-                                Button(
-                                    onClick = {
-                                        bridge.approveContracts(projectId)
-                                        reload()
-                                    },
-                                    modifier = Modifier.padding(end = 8.dp)
-                                ) {
-                                    Text("Approve")
-                                }
-                                Button(
-                                    onClick = { reload() }
-                                ) {
-                                    Text("Reject")
-                                }
-                            }
+        // CommitPanelContainer (ALWAYS present)
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            colors = CardDefaults.cardColors(containerColor = Surface)
+        ) {
+            if (replayState != null && replayState.executionView?.showCommitPanel == true) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Commit Pending", style = MaterialTheme.typography.titleMedium)
+                    replayState.governanceView.lastEventPayload["report_reference"]?.let {
+                        Text("Report: $it", style = MaterialTheme.typography.bodySmall)
+                    }
+                    replayState.governanceView.lastEventPayload["finalArtifactReference"]?.let {
+                        Text("Artifact: $it", style = MaterialTheme.typography.bodySmall)
+                    }
+                    @Suppress("UNCHECKED_CAST")
+                    (replayState.governanceView.lastEventPayload["proposedActions"] as? List<String>)?.let { actions ->
+                        if (actions.isNotEmpty()) {
+                            Text("Actions: ${actions.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                }
-            }
-
-            // Action bar - use replay.governanceView ONLY
-            replay.executionView?.let {
-                if (replay.governanceView.totalContracts > 0) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
-                        horizontalArrangement = Arrangement.End
-                    ) {
+                    Row(modifier = Modifier.padding(top = 8.dp)) {
                         Button(
                             onClick = {
                                 bridge.approveContracts(projectId)
                                 reload()
-                            }
+                            },
+                            modifier = Modifier.padding(end = 8.dp)
                         ) {
-                            Text("Approve Contracts")
+                            Text("Approve")
+                        }
+                        Button(
+                            onClick = { reload() }
+                        ) {
+                            Text("Reject")
                         }
                     }
                 }
             }
+        }
 
-            // UI feedback messages (ephemeral state, NOT system state)
-            responseMessage?.let {
-                Text(it, modifier = Modifier.padding(8.dp))
-            }
-
-            sendMessage?.let {
-                Text(it, color = Color.Red, modifier = Modifier.padding(8.dp))
-            }
-
-            // Input bar section (inline)
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    modifier = Modifier.weight(1f).padding(end = 8.dp),
-                    placeholder = { Text("Enter command...") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { handleUserInput(inputText) }),
-                    singleLine = true
-                )
+        // ActionBarContainer (ALWAYS present)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            if (replayState != null && replayState.executionView != null && replayState.governanceView.totalContracts > 0) {
                 Button(
-                    onClick = { handleUserInput(inputText) }
+                    onClick = {
+                        bridge.approveContracts(projectId)
+                        reload()
+                    }
                 ) {
-                    Text("Send")
+                    Text("Approve Contracts")
                 }
+            }
+        }
+
+        // FeedbackContainer (ALWAYS present)
+        Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+            if (responseMessage != null) {
+                Text(responseMessage, modifier = Modifier.padding(8.dp))
+            }
+            
+            if (sendMessage != null) {
+                Text(sendMessage, color = Color.Red, modifier = Modifier.padding(8.dp))
+            }
+        }
+
+        // InputBarContainer (ALWAYS present)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedTextField(
+                value = inputText,
+                onValueChange = { inputText = it },
+                modifier = Modifier.weight(1f).padding(end = 8.dp),
+                placeholder = { Text("Enter command...") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { handleUserInput(inputText) }),
+                singleLine = true
+            )
+            Button(
+                onClick = { handleUserInput(inputText) }
+            ) {
+                Text("Send")
             }
         }
     }
