@@ -136,12 +136,12 @@ fun ProjectScreen(projectId: String) {
                         if (startedAfterExecuted) {
                             "running"
                         } else {
-                            // Last execution determines final state
-                            val executionResult = lastTaskExecuted.payload["result"]?.toString()
+                            // Last execution determines final state (CONTRACT AGOII-UI-EXECUTION-STATE-002)
+                            val executionResult = lastTaskExecuted.payload["executionStatus"]?.toString()
                             when (executionResult) {
                                 "SUCCESS" -> "success"
                                 "FAILURE" -> "failed"
-                                else -> "running" // fallback for unknown result
+                                else -> "running" // fallback for null/unknown - DO NOT guess success
                             }
                         }
                     }
