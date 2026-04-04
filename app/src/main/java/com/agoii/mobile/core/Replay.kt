@@ -119,7 +119,34 @@ data class ExecutionView(
     val commitExecuted: Boolean,
 
     /** True when COMMIT_ABORTED has been seen (commit rejected). */
-    val commitAborted: Boolean
+    val commitAborted: Boolean,
+
+    /**
+     * Fully-resolved execution status for UI consumption.
+     *
+     * CONTRACT: MQP-EXECUTIONVIEW-COMPLETION-001
+     *
+     * Values (ENUM):
+     *   "not_started" - No task has been started
+     *   "running"     - Task started but no execution result yet
+     *   "success"     - Last TASK_EXECUTED.executionStatus == "SUCCESS"
+     *   "failed"      - Last TASK_EXECUTED.executionStatus == "FAILURE"
+     *
+     * Derived during replay construction. UI MUST NOT apply logic to determine this.
+     */
+    val executionStatus: String,
+
+    /**
+     * Fully-resolved commit panel visibility flag for UI consumption.
+     *
+     * CONTRACT: MQP-EXECUTIONVIEW-COMPLETION-001
+     *
+     * True when:
+     *   commitContractExists AND NOT commitExecuted AND NOT commitAborted
+     *
+     * Derived during replay construction. UI MUST NOT apply logic to determine this.
+     */
+    val showCommitPanel: Boolean
 )
 
 // ── AuditView ─────────────────────────────────────────────────────────────────
@@ -195,6 +222,8 @@ class Replay(private val eventStore: EventRepository) {
         var commitContractExists = false
         var commitExecuted = false
         var commitAborted = false
+        var taskStartedSeen = false
+        var lastTaskExecutedStatus: String? = null
 
         // ── Audit accumulators ────────────────────────────────────────────────
         var intentSubmitted = false
@@ -244,12 +273,14 @@ class Replay(private val eventStore: EventRepository) {
                     }
                 }
                 EventTypes.TASK_STARTED -> {
+                    taskStartedSeen = true
                     val tid = event.payload["taskId"]?.toString() ?: ""
                     if (tid.isNotEmpty()) taskStatusMutable[tid] = "STARTED"
                 }
                 EventTypes.TASK_EXECUTED -> {
                     val tid = event.payload["taskId"]?.toString() ?: ""
                     val execStatus = event.payload["executionStatus"]?.toString()
+                    lastTaskExecutedStatus = execStatus
                     if (execStatus == "SUCCESS") {
                         successfulTaskExecutions++
                         if (tid.isNotEmpty()) taskStatusMutable[tid] = "EXECUTED_SUCCESS"
@@ -303,6 +334,17 @@ class Replay(private val eventStore: EventRepository) {
         val totalTasks = assignedTasks
         val totalContracts = if (totalContractsFromLedger > 0) totalContractsFromLedger else totalTasks
 
+        // ── Compute executionStatus (MQP-EXECUTIONVIEW-COMPLETION-001) ───────
+        val executionStatus = when {
+            !taskStartedSeen -> "not_started"
+            lastTaskExecutedStatus == "SUCCESS" -> "success"
+            lastTaskExecutedStatus == "FAILURE" -> "failed"
+            else -> "running"
+        }
+
+        // ── Compute showCommitPanel (MQP-EXECUTIONVIEW-COMPLETION-001) ───────
+        val showCommitPanel = commitContractExists && !commitExecuted && !commitAborted
+
         // ── Assemble views ────────────────────────────────────────────────────
 
         return ReplayStructuralState(
@@ -322,7 +364,9 @@ class Replay(private val eventStore: EventRepository) {
                 icsCompleted          = icsCompleted,
                 commitContractExists  = commitContractExists,
                 commitExecuted        = commitExecuted,
-                commitAborted         = commitAborted
+                commitAborted         = commitAborted,
+                executionStatus       = executionStatus,
+                showCommitPanel       = showCommitPanel
             ),
             auditView = AuditView(
                 intent = IntentStructuralState(
