@@ -122,16 +122,27 @@ fun ProjectScreen(projectId: String) {
                     Text("Governance: ${gv.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
                 }
                 
-                // SECTION B: Execution state mapping from executionView
-                val ev = replayState?.executionView
+                // SECTION B: Event-driven execution state (CONTRACT AGOII-UI-EXECUTION-STATE-001)
+                // Derive execution state from events ONLY, not from derived maps
+                val lastTaskStarted = events.lastOrNull { it.type == EventTypes.TASK_STARTED }
+                val lastTaskExecuted = events.lastOrNull { it.type == EventTypes.TASK_EXECUTED }
+                
                 val executionStatus = when {
-                    ev == null || ev.taskStatus.isEmpty() -> "not_started"
+                    lastTaskStarted == null -> "not_started"
+                    lastTaskExecuted == null -> "running"
                     else -> {
-                        val statuses = ev.taskStatus.values
-                        when {
-                            statuses.any { it == "EXECUTED_FAILURE" } -> "failed"
-                            statuses.all { it == "COMPLETED" || it == "VALIDATED" } -> "success"
-                            else -> "running"
+                        // Both exist: compare positions using sequenceNumber
+                        val startedAfterExecuted = lastTaskStarted.sequenceNumber > lastTaskExecuted.sequenceNumber
+                        if (startedAfterExecuted) {
+                            "running"
+                        } else {
+                            // Last execution determines final state
+                            val executionResult = lastTaskExecuted.payload["result"]?.toString()
+                            when (executionResult) {
+                                "SUCCESS" -> "success"
+                                "FAILURE" -> "failed"
+                                else -> "running" // fallback for unknown result
+                            }
                         }
                     }
                 }
