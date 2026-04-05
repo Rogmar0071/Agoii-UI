@@ -2,7 +2,6 @@ package agoii.ui.screens
 
 import agoii.ui.bridge.BridgeContract
 import agoii.ui.bridge.UIEvent
-import agoii.ui.bridge.UIInteractionResult
 import agoii.ui.bridge.UIReplayState
 import agoii.ui.components.ActionBarComponent
 import agoii.ui.components.EventListComponent
@@ -36,9 +35,8 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun ProjectScreen(projectId: String, bridge: BridgeContract) {
 
-    var events            by remember { mutableStateOf(emptyList<UIEvent>()) }
-    var replayState       by remember { mutableStateOf<UIReplayState?>(null) }
-    var interactionResult by remember { mutableStateOf<UIInteractionResult?>(null) }
+    var events      by remember { mutableStateOf(emptyList<UIEvent>()) }
+    var replayState by remember { mutableStateOf<UIReplayState?>(null) }
 
     var inputText       by remember { mutableStateOf("") }
     var responseMessage by remember { mutableStateOf<String?>(null) }
@@ -80,7 +78,6 @@ fun ProjectScreen(projectId: String, bridge: BridgeContract) {
     }
 
     val replay = replayState
-    val interaction = interactionResult
     val response = responseMessage
     val error = sendError
 
@@ -107,7 +104,7 @@ fun ProjectScreen(projectId: String, bridge: BridgeContract) {
             StatePanelComponent(
                 eventsCount = events.size,
                 lastEventType = it.governanceView.lastEventType,
-                interactionContent = interaction?.content
+                interactionContent = null
             )
         }
 
