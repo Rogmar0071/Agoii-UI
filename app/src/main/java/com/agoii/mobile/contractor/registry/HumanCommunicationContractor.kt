@@ -62,12 +62,17 @@ Rules:
      * Uses the LLM exclusively as a language interpreter — NOT as an executor.
      * The returned map is the ONLY sanctioned input format for ExecutionEntryPoint.
      *
+     * SAFETY CONTRACT: this function MUST NEVER throw.  All LLM failures, network
+     * errors, and JSON parse errors are fully contained and always produce a valid
+     * fallback map.
+     *
      * @param rawInput  Unstructured user text from the UI.
      * @return          Structured intent: `{"objective": "...", "intentId": "..."}`.
      *                  Falls back to treating raw input as objective if LLM is
-     *                  unavailable or returns an unparseable response.
+     *                  unavailable, times out, or returns an unparseable response.
      */
     fun parse(rawInput: String): Map<String, Any> {
+        if (rawInput.isBlank()) return structuredFallback("unspecified")
         return try {
             val config = ConfigProvider.openAI()
 
@@ -90,16 +95,21 @@ Rules:
             val content = extractContent(raw)
 
             @Suppress("UNCHECKED_CAST")
-            val parsed = gson.fromJson(content, Map::class.java) as Map<String, Any>
+            val parsed = gson.fromJson(content, Map::class.java) as? Map<String, Any>
+                ?: return structuredFallback(rawInput)
 
-            val objective = parsed["objective"] as? String
+            val objective = (parsed["objective"] as? String)?.trim()
             if (objective.isNullOrBlank()) return structuredFallback(rawInput)
+
+            val intentId = (parsed["intentId"] as? String)?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: UUID.randomUUID().toString()
 
             mapOf(
                 "objective" to objective,
-                "intentId"  to (parsed["intentId"] as? String ?: UUID.randomUUID().toString())
+                "intentId"  to intentId
             )
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             structuredFallback(rawInput)
         }
     }
@@ -113,12 +123,12 @@ Rules:
     @Suppress("UNCHECKED_CAST")
     private fun extractContent(raw: String): String {
         return try {
-            val json    = gson.fromJson(raw, Map::class.java) as Map<String, Any>
+            val json    = gson.fromJson(raw, Map::class.java) as? Map<String, Any> ?: return raw
             val choices = json["choices"] as? List<*> ?: return raw
             val first   = choices.firstOrNull() as? Map<*, *> ?: return raw
             val message = first["message"] as? Map<*, *> ?: return raw
             message["content"] as? String ?: raw
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             raw
         }
     }

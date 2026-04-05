@@ -3,7 +3,7 @@ package com.agoii.mobile.interaction
 import com.agoii.mobile.core.ReplayStructuralState
 
 /**
- * Extracts all structural fields from [ReplayStructuralState] into a [StateSlice].
+ * Extracts structural fields from [ReplayStructuralState] into a [StateSlice].
  *
  * Responsibility: pure derivation only — no formatting, no business logic,
  * no filtering, no scope-based branching.
@@ -14,19 +14,18 @@ class InteractionMapper {
     /**
      * Derive a [StateSlice] from [state].
      *
-     * All 5 structural fields are always mapped — no conditions, no defaults,
-     * no substitution.
+     * All structural fields are always mapped — no conditions, no defaults,
+     * no substitution, no scope filtering.
      */
     fun extract(state: ReplayStructuralState): StateSlice {
         val av = state.auditView
-        // AGOII-REPLAY-AUTHORITY-PURGE-001: Compute fullyExecuted locally
-        val executionCompleted = av.execution.totalTasks > 0 && av.execution.validatedTasks == av.execution.totalTasks
+        val executionCompleted =
+            av.execution.totalTasks > 0 && av.execution.validatedTasks == av.execution.totalTasks
         return StateSlice(
             executionStarted   = av.execution.assignedTasks > 0,
             executionCompleted = executionCompleted,
             assemblyStarted    = av.assembly.assemblyStarted,
-            assemblyValidated  = av.assembly.assemblyValidated,
-            assemblyCompleted  = av.assembly.assemblyCompleted
+            assemblyValidated  = av.assembly.assemblyValidated
         )
     }
 }
@@ -42,5 +41,5 @@ data class StateSlice(
     val executionCompleted: Boolean,
     val assemblyStarted: Boolean,
     val assemblyValidated: Boolean,
-    val assemblyCompleted: Boolean
+    val references: List<String> = emptyList()
 )
