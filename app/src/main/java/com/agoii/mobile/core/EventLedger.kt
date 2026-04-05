@@ -26,6 +26,9 @@ class EventLedger(private val store: EventStore) : EventRepository {
                 timestamp = System.currentTimeMillis()
             )
 
+            // LOG-01 — TEMP: Event Write traceability (MQP-LIVE-TESTING-v1)
+            println("[LOG-01] EventLedger.append | project=$projectId | type=$type | payload=$payload")
+
             store.appendEvent(projectId, newEvent, currentEvents)
 
             val persisted = store.loadEvents(projectId)

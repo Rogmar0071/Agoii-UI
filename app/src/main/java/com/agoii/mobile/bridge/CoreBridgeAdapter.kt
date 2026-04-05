@@ -34,8 +34,13 @@ class CoreBridgeAdapter(context: Context) : UiCoreBridge {
         boundProjectId = projectId
     }
 
-    override fun replayState(): UiReplayStructuralState =
-        bridge.replayState(boundProjectId).toUiReplayState()
+    override fun replayState(): UiReplayStructuralState {
+        val coreState = bridge.replayState(boundProjectId)
+        val uiState = coreState.toUiReplayState()
+        // LOG-03 — TEMP: UI Bind traceability (MQP-LIVE-TESTING-v1)
+        println("[LOG-03] CoreBridgeAdapter.replayState | governance=[hasLastEvent=${uiState.governanceView.hasLastEvent}, lastEventType=${uiState.governanceView.lastEventType}] | execution=[status=${uiState.executionView.executionStatus}, showCommit=${uiState.executionView.showCommitPanel}] | audit=[totalEvents=${uiState.auditView.totalEvents}, hasContracts=${uiState.auditView.hasContracts}]")
+        return uiState
+    }
 
     override fun processInteraction(input: String) {
         bridge.processInteraction(boundProjectId, input)

@@ -407,6 +407,9 @@ class Replay(private val eventStore: EventRepository) {
         val contractIds = deltaContractRecoveryIds.toList()
         val hasContracts = totalContracts > 0
 
+        // LOG-02 — TEMP: Replay Output traceability (MQP-LIVE-TESTING-v1)
+        println("[LOG-02] Replay.derive | events=${events.size} | hasLastEvent=$hasLastEvent | executionStatus=$executionStatus | showCommitPanel=$showCommitPanel | totalEvents=$totalEvents | hasContracts=$hasContracts | contractIds=$contractIds")
+
         // ── Assemble views ────────────────────────────────────────────────────
 
         return ReplayStructuralState(
