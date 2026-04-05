@@ -2,36 +2,52 @@ package agoii.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// ── Palette ─────────────────────────────────────────────────────────────────
+/**
+ * Agoii Design System — Color Palette.
+ *
+ * Layer-aligned colors enforce visual layer separation (UI-05).
+ * Each architectural layer has a distinct color group.
+ */
+object AgoiiColors {
 
-/** Near-black background. */
-val Background     = Color(0xFF0D0D0D)
+    // ── Governance Layer ──────────────────────────────────────────────
+    val GovernancePrimary   = Color(0xFF1A73E8) // Blue 600
+    val GovernanceSecondary = Color(0xFFE8F0FE) // Blue 50
+    val GovernanceAccent    = Color(0xFF174EA6) // Blue 800
+    val GovernanceText      = Color(0xFF202124) // Grey 900
 
-/** Slightly lighter surface. */
-val Surface        = Color(0xFF1A1A1A)
+    // ── Execution Layer ───────────────────────────────────────────────
+    val ExecutionPrimary    = Color(0xFF34A853) // Green 600
+    val ExecutionSecondary  = Color(0xFFE6F4EA) // Green 50
+    val ExecutionAccent     = Color(0xFF0D652D) // Green 800
+    val ExecutionText       = Color(0xFF202124) // Grey 900
 
-/** Elevated / card surface variant. */
-val SurfaceVariant = Color(0xFF242424)
+    // ── Audit Layer ───────────────────────────────────────────────────
+    val AuditPrimary        = Color(0xFFF9AB00) // Amber 600
+    val AuditSecondary      = Color(0xFFFEF7E0) // Amber 50
+    val AuditAccent         = Color(0xFFE37400) // Amber 800
+    val AuditText           = Color(0xFF202124) // Grey 900
 
-/** Light grey text on background. */
-val OnBackground   = Color(0xFFE0E0E0)
+    // ── Status Colors ─────────────────────────────────────────────────
+    val StatusClosed        = Color(0xFF34A853) // Green — healthy
+    val StatusOpen          = Color(0xFFEA4335) // Red — circuit open
+    val StatusHalfOpen      = Color(0xFFF9AB00) // Amber — probing
+    val StatusNone          = Color(0xFF9AA0A6) // Grey — inactive
 
-/** Medium grey text on surface. */
-val OnSurface      = Color(0xFFBDBDBD)
+    // ── Surface / Background ──────────────────────────────────────────
+    val Background          = Color(0xFFF8F9FA) // Grey 50
+    val Surface             = Color(0xFFFFFFFF) // White
+    val SurfaceVariant      = Color(0xFFF1F3F4) // Grey 100
+    val Divider             = Color(0xFFDADCE0) // Grey 300
 
-/** Accent blue. */
-val Primary        = Color(0xFF4FC3F7)
+    // ── Text ──────────────────────────────────────────────────────────
+    val TextPrimary         = Color(0xFF202124) // Grey 900
+    val TextSecondary       = Color(0xFF5F6368) // Grey 600
+    val TextDisabled        = Color(0xFF9AA0A6) // Grey 400
 
-// ── Event-bubble colours (spec-defined) ─────────────────────────────────────
-
-/** Grey — system events. */
-val EventSystem    = Color(0xFF424242)
-
-/** Blue — execution events. */
-val EventExecution = Color(0xFF1565C0)
-
-/** Orange — approval events. */
-val EventApproval  = Color(0xFFE65100)
-
-/** Green — completion events. */
-val EventComplete  = Color(0xFF2E7D32)
+    // ── Interactive ───────────────────────────────────────────────────
+    val ButtonPrimary       = Color(0xFF1A73E8) // Blue 600
+    val ButtonDisabled      = Color(0xFFDADCE0) // Grey 300
+    val InputBorder         = Color(0xFFDADCE0) // Grey 300
+    val InputFocusBorder    = Color(0xFF1A73E8) // Blue 600
+}
