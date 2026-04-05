@@ -1,5 +1,6 @@
 package com.agoii.mobile.interaction
 
+import com.agoii.mobile.contractor.registry.HumanCommunicationContractor
 import com.agoii.mobile.core.ReplayStructuralState
 
 /**
@@ -30,6 +31,21 @@ class InteractionEngine(
     private val mapper:    InteractionMapper    = InteractionMapper(),
     private val formatter: InteractionFormatter = InteractionFormatter()
 ) {
+
+    /**
+     * Interpret raw human-language [input] into a structured intent payload.
+     *
+     * Delegates to [HumanCommunicationContractor] which uses the LLM exclusively
+     * as a language interpreter — NOT as an executor.
+     *
+     * This is the ONLY sanctioned entry point for LLM-based interpretation.
+     * CoreBridge MUST NOT call any LLM contractor directly.
+     *
+     * @param input  Raw user text captured by the UI.
+     * @return       Structured map: `{"objective": "...", "intentId": "..."}`.
+     */
+    fun processInput(input: String): Map<String, Any> =
+        HumanCommunicationContractor.parse(input)
 
     /**
      * Execute [contract] against [input] and return a fully-formed result.

@@ -32,8 +32,10 @@ class CoreBridge(context: Context) {
     private val executionAuthority = ExecutionAuthority(contractorRegistry, driverRegistry)
     private val executionEntryPoint = ExecutionEntryPoint(ledger, executionAuthority)
     private val observability = ExecutionObservability(ledger)
+    private val interactionEngine = InteractionEngine()
 
     fun processInteraction(projectId: String, input: String): String {
+        if (input.isBlank()) return "No input provided"
         return try {
             processInteractionInternal(projectId, input)
         } catch (_: Exception) {
@@ -43,19 +45,19 @@ class CoreBridge(context: Context) {
 
     private fun processInteractionInternal(projectId: String, input: String): String {
 
-        val events = ledger.loadEvents(projectId)
+        val structuredIntent = interactionEngine.processInput(input)
 
-        if (events.isEmpty()) {
+        if (ledger.loadEvents(projectId).isEmpty()) {
             ledger.appendEvent(
                 projectId,
                 EventTypes.INTENT_SUBMITTED,
-                mapOf("objective" to input)
+                mapOf("objective" to (structuredIntent["objective"] as? String ?: input))
             )
         }
 
         val authResult = executionEntryPoint.executeIntent(
             projectId,
-            mapOf("objective" to input)
+            structuredIntent
         )
 
         if (!authResult.authorized) {
