@@ -1,0 +1,106 @@
+name: Agoii Continuous Governance
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  push:
+    branches: [main]
+
+jobs:
+  governance-enforcement:
+    name: Governance Enforcement
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      # ── Phase 2-4: Structural Governance ─────────────────────────────────
+      - name: Validate ui-module structure (20 files, 6 dirs)
+        run: |
+          echo "=== PHASE 1: MODULE MATERIALIZATION ==="
+          FILE_COUNT=$(find ui-module -name "*.kt" | wc -l)
+          DIR_COUNT=$(find ui-module -mindepth 1 -maxdepth 1 -type d | wc -l)
+          echo "Kotlin files: $FILE_COUNT (expected: 20)"
+          echo "Directories: $DIR_COUNT (expected: 6)"
+          if [ "$FILE_COUNT" -ne 20 ]; then echo "FAIL: Expected 20 Kotlin files"; exit 1; fi
+          if [ "$DIR_COUNT" -ne 6 ]; then echo "FAIL: Expected 6 directories"; exit 1; fi
+          echo "PASS"
+
+      - name: Validate ui-module namespace isolation
+        run: |
+          echo "=== PHASE 2: GOVERNANCE VALIDATION ==="
+          VIOLATIONS=$(grep -r "import com.agoii.mobile" ui-module/ --include="*.kt" || true)
+          if [ -n "$VIOLATIONS" ]; then
+            echo "FAIL: ui-module contains forbidden imports:"
+            echo "$VIOLATIONS"
+            exit 1
+          fi
+          echo "PASS: Zero com.agoii.mobile imports in ui-module"
+
+      - name: Validate ui-module package namespace
+        run: |
+          echo "=== PHASE 2: PACKAGE NAMESPACE ==="
+          BAD_PACKAGES=$(grep -r "^package " ui-module/ --include="*.kt" | grep -v "agoii.ui" || true)
+          if [ -n "$BAD_PACKAGES" ]; then
+            echo "FAIL: Non-agoii.ui packages found:"
+            echo "$BAD_PACKAGES"
+            exit 1
+          fi
+          echo "PASS: All packages are agoii.ui.*"
+
+      # ── Phase 3: Integration Validation ──────────────────────────────────
+      - name: Validate CoreBridgeAdapter exists
+        run: |
+          echo "=== PHASE 3: INTEGRATION VALIDATION ==="
+          if [ ! -f app/src/main/java/com/agoii/mobile/bridge/CoreBridgeAdapter.kt ]; then
+            echo "FAIL: CoreBridgeAdapter.kt not found"
+            exit 1
+          fi
+          echo "PASS: CoreBridgeAdapter.kt exists"
+
+      - name: Validate build.gradle sourceSets
+        run: |
+          echo "=== PHASE 5A: SOURCESET INCLUSION ==="
+          if ! grep -q "ui-module" app/build.gradle; then
+            echo "FAIL: ui-module not included in build.gradle sourceSets"
+            exit 1
+          fi
+          echo "PASS: ui-module included in sourceSets"
+
+      # ── Phase 9: Adversarial + Governance Tests ──────────────────────────
+      - name: Run unit tests (Governance + Adversarial)
+        run: |
+          echo "=== PHASE 9: TEST EXECUTION ==="
+          ./gradlew testDebugUnitTest \
+            --tests "com.agoii.mobile.AdversarialValidationTest" \
+            --tests "com.agoii.mobile.GovernanceEnforcementTest" \
+            --stacktrace --no-daemon 2>&1 | tee test.log
+          echo "PASS: All governance and adversarial tests passed"
+
+      # ── Failure extraction ───────────────────────────────────────────────
+      - name: Extract test failures
+        if: failure()
+        run: |
+          echo "====== TEST FAILURES ======"
+          grep -A 5 "FAILED" test.log || echo "See full log"
+          tail -n 50 test.log
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-test-log
+          path: test.log
