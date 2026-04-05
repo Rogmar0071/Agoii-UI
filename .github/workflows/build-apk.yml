@@ -24,21 +24,50 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      # 🔴 Clean (no cache reuse)
       - name: Clean build
         run: ./gradlew clean
 
-      - name: Force full rebuild
-        run: ./gradlew assembleDebug --no-build-cache --rerun-tasks --stacktrace
+      # 🔴 FULL verbose build (critical)
+      - name: Build with full logs
+        run: |
+          ./gradlew assembleDebug \
+            --no-build-cache \
+            --rerun-tasks \
+            --stacktrace \
+            --info \
+            --warning-mode all | tee build.log
 
+      # 🔴 Always print full log (even on failure)
+      - name: Print build log
+        if: always()
+        run: |
+          echo "================ BUILD LOG START ================"
+          cat build.log
+          echo "================ BUILD LOG END =================="
+
+      # 🔴 Extract Kotlin errors (signal isolation)
+      - name: Extract Kotlin errors
+        if: always()
+        run: |
+          echo "================ KOTLIN ERRORS =================="
+          grep -i "e: " build.log || true
+          echo "================================================"
+
+      # 🔴 Verify APK structure (only if build succeeds)
       - name: Verify MainActivity presence
+        if: success()
         run: |
           unzip -l app/build/outputs/apk/debug/app-debug.apk | grep MainActivity
 
       - name: Verify classes.dex exists
+        if: success()
         run: |
           unzip -l app/build/outputs/apk/debug/app-debug.apk | grep classes.dex
 
+      # 🔴 Upload artifact (only if valid build)
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: agoii-debug-apk
