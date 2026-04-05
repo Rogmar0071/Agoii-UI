@@ -168,7 +168,19 @@ data class AuditView(
     val execution: ExecutionStructuralState,
 
     /** Assembly phase structural state. */
-    val assembly: AssemblyStructuralState
+    val assembly: AssemblyStructuralState,
+
+    /**
+     * Ordered list of contract_ids from CONTRACT_STARTED events.
+     * Derived during replay construction. UI MUST NOT derive this independently.
+     */
+    val contractIds: List<String> = emptyList(),
+
+    /**
+     * True when at least one CONTRACT_STARTED event exists in the ledger.
+     * Derived during replay construction. UI MUST NOT apply logic to determine this.
+     */
+    val hasContracts: Boolean = false
 )
 
 // ── Nested structural sub-states (unchanged) ─────────────────────────────────
@@ -236,6 +248,7 @@ class Replay(private val eventStore: EventRepository) {
         var validatedTasks = 0
         // TASK_EXECUTED(SUCCESS) count for executionValid (FS-2)
         var successfulTaskExecutions = 0
+        val contractIdsMutable = mutableListOf<String>()
 
         for (event in events) {
             when (event.type) {
@@ -258,7 +271,10 @@ class Replay(private val eventStore: EventRepository) {
 
                 EventTypes.CONTRACT_STARTED -> {
                     val cId = event.payload["contract_id"]?.toString() ?: ""
-                    if (cId.isNotEmpty()) lastContractStartedId = cId
+                    if (cId.isNotEmpty()) {
+                        lastContractStartedId = cId
+                        contractIdsMutable.add(cId)
+                    }
                     val pos = resolveInt(event.payload["position"])
                     if (pos != null) lastContractStartedPosition = pos
                 }
@@ -345,6 +361,10 @@ class Replay(private val eventStore: EventRepository) {
         // ── Compute showCommitPanel (MQP-EXECUTIONVIEW-COMPLETION-001) ───────
         val showCommitPanel = commitContractExists && !commitExecuted && !commitAborted
 
+        // ── Compute contractIds / hasContracts (MQP-FINAL-STABILIZATION-AND-MERGE-v1) ──
+        val contractIds = contractIdsMutable.toList()
+        val hasContracts = contractIds.isNotEmpty()
+
         // ── Assemble views ────────────────────────────────────────────────────
 
         return ReplayStructuralState(
@@ -388,7 +408,9 @@ class Replay(private val eventStore: EventRepository) {
                     assemblyStarted   = assemblyStarted,
                     assemblyValidated = assemblyValidated,
                     assemblyCompleted = assemblyCompleted
-                )
+                ),
+                contractIds  = contractIds,
+                hasContracts = hasContracts
             )
         )
     }

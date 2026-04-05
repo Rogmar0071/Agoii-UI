@@ -62,8 +62,8 @@ class CoreBridgeAdapter(
             ),
             auditView = UiAuditView(
                 totalEvents = eventCount,
-                contractIds = emptyList(),
-                hasContracts = core.auditView.contracts.totalContracts > 0
+                contractIds = core.auditView.contractIds,
+                hasContracts = core.auditView.hasContracts
             )
         )
     }
