@@ -143,7 +143,7 @@ class GovernanceEnforcementTest {
     // ═══════════════════════════════════════════════════════════════════════════
 
     @Test
-    fun `P3-INT-01 ui-module BridgeContract is the sole interface`() {
+    fun `P3-INT-01 ui-module CoreBridge is the sole interface`() {
         val uiModuleDir = findUiModuleDir()
         if (uiModuleDir == null) return
 
@@ -153,16 +153,17 @@ class GovernanceEnforcementTest {
         val bridgeFiles = bridgeDir.listFiles()?.filter { it.extension == "kt" } ?: emptyList()
         assertTrue("bridge/ must contain Kotlin files", bridgeFiles.isNotEmpty())
 
-        // BridgeContract.kt must exist
+        // UiBridgeAdapter.kt must exist — contains CoreBridge interface + UiBridgeAdapter class
         assertTrue(
-            "BridgeContract.kt must exist",
-            bridgeFiles.any { it.name == "BridgeContract.kt" }
+            "UiBridgeAdapter.kt must exist",
+            bridgeFiles.any { it.name == "UiBridgeAdapter.kt" }
         )
 
-        // CoreBridge.kt must exist
+        // Verify CoreBridge interface is defined in the bridge package
+        val adapterContent = File(bridgeDir, "UiBridgeAdapter.kt").readText()
         assertTrue(
-            "CoreBridge.kt must exist",
-            bridgeFiles.any { it.name == "CoreBridge.kt" }
+            "CoreBridge interface must be defined",
+            adapterContent.contains("interface CoreBridge")
         )
     }
 
@@ -214,27 +215,26 @@ class GovernanceEnforcementTest {
 
         val content = adapterFile.readText()
 
-        // Must implement BridgeContract
+        // Must implement CoreBridge (UI bridge interface)
         assertTrue(
-            "CoreBridgeAdapter must implement BridgeContract",
-            content.contains("BridgeContract")
+            "CoreBridgeAdapter must implement UiCoreBridge",
+            content.contains("UiCoreBridge")
         )
 
         // Must map governanceView fields
         assertTrue("Must map lastEventType", content.contains("lastEventType"))
-        assertTrue("Must map totalContracts", content.contains("totalContracts"))
         assertTrue("Must map reportReference", content.contains("reportReference"))
+        assertTrue("Must map hasLastEvent", content.contains("hasLastEvent"))
 
         // Must map executionView fields
-        assertTrue("Must map taskStatus", content.contains("taskStatus"))
-        assertTrue("Must map icsStarted", content.contains("icsStarted"))
         assertTrue("Must map executionStatus", content.contains("executionStatus"))
         assertTrue("Must map showCommitPanel", content.contains("showCommitPanel"))
+        assertTrue("Must map lastContractStartedId", content.contains("lastContractStartedId"))
 
         // Must map auditView fields
-        assertTrue("Must map structurallyComplete", content.contains("structurallyComplete"))
-        assertTrue("Must map assemblyStarted", content.contains("assemblyStarted"))
-        assertTrue("Must map assemblyCompleted", content.contains("assemblyCompleted"))
+        assertTrue("Must map totalEvents", content.contains("totalEvents"))
+        assertTrue("Must map contractIds", content.contains("contractIds"))
+        assertTrue("Must map hasContracts", content.contains("hasContracts"))
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

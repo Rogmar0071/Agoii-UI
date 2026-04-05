@@ -1,100 +1,68 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
-import agoii.ui.bridge.BridgeContract
-import agoii.ui.bridge.UIAuditView
-import agoii.ui.bridge.UIAssemblyState
-import agoii.ui.bridge.UIContractState
-import agoii.ui.bridge.UIEvent
-import agoii.ui.bridge.UIExecutionState
-import agoii.ui.bridge.UIExecutionView
-import agoii.ui.bridge.UIGovernanceView
-import agoii.ui.bridge.UIIntentState
-import agoii.ui.bridge.UIReplayState
-import com.agoii.mobile.core.Event
+import agoii.ui.bridge.CoreBridge as UiCoreBridge
+import agoii.ui.core.AuditView as UiAuditView
+import agoii.ui.core.ExecutionView as UiExecutionView
+import agoii.ui.core.GovernanceView as UiGovernanceView
+import agoii.ui.core.ReplayStructuralState as UiReplayStructuralState
 import com.agoii.mobile.core.ReplayStructuralState
 
 /**
- * Adapter that implements the UI module's [BridgeContract] by wrapping
+ * Adapter that implements the UI module's [CoreBridge] interface by wrapping
  * the system [CoreBridge].
  *
  * This is the ONLY mapping boundary between core and UI types.
- * All core types are mapped to UI bridge types here — zero core types
- * leak into the UI module.
+ * All core types are mapped to UI types here — zero core types leak
+ * into the UI module.
  *
- * CONTRACT: MQP-UI-FINAL-CONSOLIDATED Phase 5B
- * - Implements agoii.ui.bridge.BridgeContract
- * - Maps core ReplayStructuralState → UIReplayState
- * - Maps core Event → UIEvent
- * - Contains ZERO business logic
+ * CONTRACT: MQP-UI-REPLACEMENT-AUTHORITATIVE-SWAP-v1 Phase 5
+ * - Implements agoii.ui.bridge.CoreBridge
+ * - Maps core ReplayStructuralState → UI ReplayStructuralState
+ * - Contains ZERO business logic — PURE PROJECTION
  */
-class CoreBridgeAdapter(context: Context) : BridgeContract {
+class CoreBridgeAdapter(context: Context) : UiCoreBridge {
 
     private val bridge = CoreBridge(context)
 
-    override fun loadEvents(projectId: String): List<UIEvent> =
-        bridge.loadEvents(projectId).map { it.toUIEvent() }
+    /** Default project ID for session scope. */
+    private var boundProjectId: String = "default"
 
-    override fun replayState(projectId: String): UIReplayState =
-        bridge.replayState(projectId).toUIReplayState()
+    /** Bind a project ID for subsequent calls. */
+    fun bindProject(projectId: String) {
+        boundProjectId = projectId
+    }
 
-    override fun processInteraction(projectId: String, input: String): String =
-        bridge.processInteraction(projectId, input)
+    override fun replayState(): UiReplayStructuralState =
+        bridge.replayState(boundProjectId).toUiReplayState()
 
-    // ── Mapping: core Event → UI UIEvent ─────────────────────────────────────
+    override fun processInteraction(input: String) {
+        bridge.processInteraction(boundProjectId, input)
+    }
 
-    private fun Event.toUIEvent() = UIEvent(
-        type           = type,
-        payload        = payload,
-        id             = id,
-        sequenceNumber = sequenceNumber,
-        timestamp      = timestamp
-    )
+    override fun approveContracts(contractId: String) {
+        // Routed through the governed pipeline — no direct execution
+        bridge.processInteraction(boundProjectId, "approve:$contractId")
+    }
 
-    // ── Mapping: core ReplayStructuralState → UI UIReplayState ───────────────
+    // ── Mapping: core ReplayStructuralState → UI ReplayStructuralState ───────
 
-    private fun ReplayStructuralState.toUIReplayState() = UIReplayState(
-        governanceView = UIGovernanceView(
-            lastEventType            = governanceView.lastEventType,
-            lastEventPayload         = governanceView.lastEventPayload,
-            totalContracts           = governanceView.totalContracts,
-            reportReference          = governanceView.reportReference,
-            deltaContractRecoveryIds = governanceView.deltaContractRecoveryIds,
-            taskAssignedTaskIds      = governanceView.taskAssignedTaskIds,
-            lastContractStartedId    = governanceView.lastContractStartedId,
-            lastContractStartedPosition = governanceView.lastContractStartedPosition
+    private fun ReplayStructuralState.toUiReplayState() = UiReplayStructuralState(
+        governanceView = UiGovernanceView(
+            lastEventType    = governanceView.lastEventType ?: "",
+            lastEventPayload = governanceView.lastEventPayload.toString(),
+            reportReference  = governanceView.reportReference,
+            hasLastEvent     = governanceView.lastEventType != null
         ),
-        executionView = UIExecutionView(
-            taskStatus           = executionView.taskStatus,
-            icsStarted           = executionView.icsStarted,
-            icsCompleted         = executionView.icsCompleted,
-            commitContractExists = executionView.commitContractExists,
-            commitExecuted       = executionView.commitExecuted,
-            commitAborted        = executionView.commitAborted,
+        executionView = UiExecutionView(
             executionStatus      = executionView.executionStatus,
-            showCommitPanel      = executionView.showCommitPanel
+            showCommitPanel      = executionView.showCommitPanel,
+            lastContractStartedId = governanceView.lastContractStartedId
         ),
-        auditView = UIAuditView(
-            intent = UIIntentState(
-                structurallyComplete = auditView.intent.structurallyComplete
-            ),
-            contracts = UIContractState(
-                generated      = auditView.contracts.generated,
-                valid          = auditView.contracts.valid,
-                totalContracts = auditView.contracts.totalContracts
-            ),
-            execution = UIExecutionState(
-                totalTasks      = auditView.execution.totalTasks,
-                assignedTasks   = auditView.execution.assignedTasks,
-                completedTasks  = auditView.execution.completedTasks,
-                validatedTasks  = auditView.execution.validatedTasks,
-                successfulTasks = auditView.execution.successfulTasks
-            ),
-            assembly = UIAssemblyState(
-                assemblyStarted   = auditView.assembly.assemblyStarted,
-                assemblyValidated = auditView.assembly.assemblyValidated,
-                assemblyCompleted = auditView.assembly.assemblyCompleted
-            )
+        auditView = UiAuditView(
+            totalEvents  = executionView.taskStatus.size,
+            contractIds  = governanceView.taskAssignedTaskIds.toList(),
+            hasContracts = governanceView.totalContracts > 0
         )
     )
 }
