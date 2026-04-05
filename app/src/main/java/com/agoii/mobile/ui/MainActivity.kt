@@ -3,13 +3,22 @@ package com.agoii.mobile.ui
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.material3.*
-import androidx.compose.foundation.layout.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.Alignment
+import com.agoii.mobile.bridge.CoreBridgeAdapter
 import com.agoii.mobile.core.CrashHandler
-import com.agoii.mobile.ui.theme.AgoiiTheme
+import agoii.ui.bridge.CoreBridge
+import agoii.ui.screens.ProjectScreen
 
+/**
+ * Main activity — the sole UI entry point.
+ *
+ * CONTRACT: MQP-UI-FINAL-CONSOLIDATED Phase 5C
+ *
+ * Flow: CoreBridge(CoreBridgeAdapter) → ProjectScreen
+ *
+ * - Injects [CoreBridgeAdapter] as the [BridgeContract] implementation
+ * - Renders the ui-module's [ProjectScreen] composable
+ * - Contains ZERO business logic beyond wiring
+ */
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -17,18 +26,14 @@ class MainActivity : ComponentActivity() {
 
         CrashHandler.install(applicationContext)
 
+        val adapter = CoreBridgeAdapter(applicationContext)
+        val bridge = CoreBridge(adapter)
+
         setContent {
-            AgoiiTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Box(
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("AGOII LAYER 2 OK")
-                    }
-                }
-            }
+            ProjectScreen(
+                projectId = "default",
+                bridge = bridge
+            )
         }
     }
 }
