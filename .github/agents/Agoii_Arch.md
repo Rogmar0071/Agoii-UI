@@ -42,6 +42,16 @@ You MUST NOT:
 
 ---
 
+ARCH-STOP-04 (NEW — CRITICAL)
+You MUST NOT:
+- Place interpretation, transformation, or decision logic inside CoreBridge
+- Call contractors (LLM or otherwise) from CoreBridge
+- Introduce non-deterministic behavior into the bridge layer
+
+CoreBridge = transport boundary ONLY
+
+---
+
 # SYSTEM ARCHITECTURE CONTRACT
 
 ## ARCH-01 — SYSTEM FLOW (MANDATORY)
@@ -96,29 +106,10 @@ Contains:
 ### UI Layer (Projection Only — MODULE ENFORCED)
 
 Paths:
-- /ui-module/**   ✅ PRIMARY (NEW)
+- /ui-module/**   ✅ PRIMARY
 - /ui/**          (legacy — must not be expanded)
 - /compose/**     (legacy)
 - /screens/**     (legacy)
-
----
-
-### UI MODULE STRUCTURE (MANDATORY)
-
-All UI MUST exist inside:
-
-/ui-module/
-
-Sub-structure:
-
-- /ui-module/bridge/
-- /ui-module/core/
-- /ui-module/screens/
-- /ui-module/components/
-- /ui-module/layout/
-- /ui-module/theme/
-
-NO UI logic allowed outside this module.
 
 ---
 
@@ -146,22 +137,29 @@ ALL UI state must flow:
 
 CoreBridge → UiBridgeAdapter → UiStateBinder → UiModel → UI
 
-NO direct Replay access inside UI components.
-
 ---
 
-### Knowledge Layer (Reference Only)
+### INTERACTION LAYER (CLARIFIED — CRITICAL)
+
 Paths:
-- /knowledge/**
-- /patterns/**
-- /contracts/**
+- /interaction/**
+- contractor/registry/HumanCommunicationContractor.kt
 
 Responsibilities:
-- Provide patterns/templates
+- Interpret human language
+- Convert raw input → structured intent
+- Perform validation / fallback
 
 FORBIDDEN:
-- Executing logic
-- Driving UI directly
+- Writing to ledger
+- Executing contracts
+- Calling ExecutionAuthority
+
+LLM USAGE RULE:
+
+LLM = INTERPRETER ONLY  
+NOT execution  
+NOT contract runner  
 
 ---
 
@@ -182,13 +180,15 @@ Allowed functions:
 FORBIDDEN:
 - Business logic
 - State transformation
+- Interpretation logic
+- Contractor invocation
 
 ---
 
 ## ARCH-03 — DEPENDENCY DIRECTION
 
 Allowed:
-- UI (/ui-module/) → CoreBridge → Nemoclaw
+- UI → Interaction → CoreBridge → Nemoclaw
 - Nemoclaw → Knowledge
 - Replay ← Ledger ← Nemoclaw
 
@@ -197,6 +197,7 @@ Forbidden:
 - UI → Knowledge
 - Nemoclaw → UI
 - Replay → UI
+- CoreBridge → Interaction (NEW ENFORCED)
 
 ---
 
@@ -206,26 +207,13 @@ ReplayStructuralState = SINGLE SOURCE OF TRUTH
 
 ---
 
-ARCH-04-A  
-If UI needs to compute a value → it MUST be added to Replay
+ARCH-04-C (STRICT ENFORCEMENT)
 
----
+NO fallback logic ANYWHERE outside Replay for:
 
-ARCH-04-B  
-UI must ONLY read:
-
-- replay.governanceView
-- replay.executionView
-- replay.auditView
-
----
-
-ARCH-04-C  
-NO fallback logic:
-
-- no ?: default values
-- no derived booleans
-- no collection inspection
+- execution status
+- contract existence
+- event presence
 
 ---
 
@@ -233,13 +221,9 @@ NO fallback logic:
 
 Events are append-only.
 
-UI may:
-- Display events
-
 UI must NOT:
 - Inspect events for logic
 - Use payload for decisions
-- Use lastOrNull / sequenceNumber
 
 ---
 
@@ -247,273 +231,116 @@ UI must NOT:
 
 If UI derives logic → model is incomplete.
 
-Required:
+---
 
-- executionView.executionStatus
-- executionView.showCommitPanel
-- auditView.hasContracts
-- governanceView.hasLastEvent
+## ARCH-07 — UI MODULE ISOLATION
 
-ALL UI-needed values MUST exist in Replay.
+UNCHANGED (ENFORCED)
 
 ---
 
-## ARCH-07 — UI MODULE ISOLATION (NEW — CRITICAL)
+## ARCH-08 — UI STATE PIPELINE
 
-UI module MUST be:
-
-- Fully self-contained
-- Drop-in portable
-- Independent from core package structure
-
-RULES:
-
-ARCH-07-A  
-UI must NOT require ANY core modification
-
-ARCH-07-B  
-UI must NOT leak into:
-
-- /system/**
-- /execution/**
-- /replay/**
-- /governor/**
-
-ARCH-07-C  
-UI must ONLY depend on:
-
-- CoreBridge
-- Replay models
+UNCHANGED (MANDATORY)
 
 ---
 
-## ARCH-08 — UI STATE PIPELINE (NEW)
+## ARCH-09 — INTERACTION BOUNDARY (NEW — CRITICAL)
 
-MANDATORY pipeline:
+Interpretation MUST occur BEFORE CoreBridge.
 
-```kotlin
-val state = coreBridge.replayState()
-val model = UiStateBinder(state).toUiModel()
+MANDATORY FLOW:
 
-UI consumes ONLY UiModel.
+UI → InteractionEngine → CoreBridge → Execution
 
+FORBIDDEN:
 
----
-
-ALLOWED OPERATIONS
-
-OPS-01
-Modify ONLY:
-
-/ui-module/**   ✅ PRIMARY
-
-/replay/**
-
-/nemoclaw/**
-
-/bridge/**
-
-/knowledge/**
-
-
+UI → CoreBridge → Interpretation  
+CoreBridge → HumanCommunicationContractor  
 
 ---
 
-OPS-02
-Add files ONLY within existing layers.
+## ARCH-10 — EXECUTION AUTHORITY (NEW LOCK)
 
+There MUST be exactly ONE execution path:
 
----
+ExecutionAuthority → NemoClawAdapter
 
-OPS-03
-Allowed refactors:
+FORBIDDEN:
 
-Move logic FROM UI → Replay
-
-Move logic FROM UI → Nemoclaw
-
-Add fields to ReplayStructuralState
-
-
+- LLM execution
+- HTTP execution paths
+- secondary drivers
 
 ---
 
-FORBIDDEN OPERATIONS
+## ALLOWED OPERATIONS
 
-OPS-FORB-01
+UPDATE:
+
+Add:
+- interaction/** modifications (explicitly allowed)
+
+---
+
+## FORBIDDEN OPERATIONS
+
+ADD:
+
+OPS-FORB-04
 DO NOT:
 
-Modify CI/CD
-
-Change Gradle/build config
-
-Add dependencies
-
-Change package structure
-
-
+- Introduce LLM into execution layer
+- Reintroduce LLMContractor / LLMDriver
+- Call OpenAI from execution/**
 
 ---
 
-OPS-FORB-02
-DO NOT:
+## REQUIRED WORKFLOW
 
-Introduce new state models outside Replay
+ADD VALIDATION STEP:
 
-Duplicate logic across layers
+STEP 2.5 — BOUNDARY VALIDATION
 
+- Is interpretation inside interaction/** ONLY?
+- Is CoreBridge pure transport?
+- Is execution path singular?
 
-
----
-
-OPS-FORB-03
-DO NOT:
-
-Expose internal execution maps (e.g. taskStatus) to UI
-
-
+If NO → STOP
 
 ---
 
-REQUIRED WORKFLOW
+## DEFINITION OF DONE
 
-STEP 1 — PLAN
+ADD:
 
-Reference ARCH-* rules
+DONE-06  
+CoreBridge contains ZERO interpretation logic
 
-Identify affected layers
+DONE-07  
+Interaction layer handles ALL human-language processing
 
-
-STEP 2 — VALIDATE
-
-Ensure no boundary violations
-
-Ensure no UI-derived logic
-
-
-STEP 3 — IMPLEMENT
-
-Minimal changes
-
-Prefer Replay completion
-
-
-STEP 4 — VERIFY
-
-UI reads ONLY Replay
-
-No EventTypes usage
-
-No derived state
-
-
-STEP 5 — OUTPUT
-
-Summary
-
-Files modified
-
-Rules satisfied
-
-
+DONE-08  
+Execution path is singular and deterministic
 
 ---
 
-DEFINITION OF DONE
+## FAILURE RESPONSE FORMAT
 
-DONE-01
-UI renders ONLY from ReplayStructuralState
-
-DONE-02
-NO:
-
-derived execution state
-
-event-based logic
-
-fallback logic
-
-
-DONE-03
-All system state originates from Replay
-
-DONE-04
-All boundaries respected
-
-DONE-05
-UI fully contained in /ui-module/
-
+UNCHANGED
 
 ---
 
-FAILURE RESPONSE FORMAT
+## REPLAY PURITY LAW (RL-01)
 
-"Blocked: violates architecture rule ARCH-XX"
-
-offending action
-
-minimal compliant alternative
-
-
+UNCHANGED (ENFORCED)
 
 ---
 
-REPLAY PURITY LAW (RL-01 — NON-NEGOTIABLE)
+## FINAL PRINCIPLE
 
-UI MUST NEVER derive, compute, infer, or interpret system state.
+Interpret BEFORE the bridge  
+Execute AFTER the bridge  
+Derive ONLY in Replay  
 
-
----
-
-SOURCE OF TRUTH
-
-governanceView
-
-executionView
-
-auditView
-
-
-
----
-
-FORBIDDEN PATTERNS
-
-.all { }
-
-.none { }
-
-.firstOrNull { }
-
-.any { }
-
-collection inspection
-
-boolean composition
-
-event inspection
-
-
-
----
-
-IF detected:
-
-"Blocked: violates RL-01 Replay Purity Law"
-
-
----
-
-REQUIRED PATTERN
-
-Text(execView.executionStatus)
-if (execView.showCommitPanel) { ... }
-
-
----
-
-FINAL PRINCIPLE
-
-IF UI computes → architecture is broken
-IF Replay provides → system is correct
-IF UI is not isolated → system will drift
+If violated → system will drift
