@@ -1,7 +1,6 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
-import com.agoii.mobile.contractor.registry.HumanCommunicationContractor
 import com.agoii.mobile.infrastructure.OpenAIClient
 import com.agoii.mobile.contractor.*
 import com.agoii.mobile.contracts.*
@@ -44,21 +43,17 @@ class CoreBridge(context: Context) {
 
     private fun processInteractionInternal(projectId: String, input: String): String {
 
-        val structuredIntent = HumanCommunicationContractor.parse(input)
-
-        val events = ledger.loadEvents(projectId)
-
-        if (events.isEmpty()) {
+        if (ledger.loadEvents(projectId).isEmpty()) {
             ledger.appendEvent(
                 projectId,
                 EventTypes.INTENT_SUBMITTED,
-                mapOf("objective" to (structuredIntent["objective"] ?: input))
+                mapOf("objective" to input)
             )
         }
 
         val authResult = executionEntryPoint.executeIntent(
             projectId,
-            structuredIntent
+            mapOf("objective" to input)
         )
 
         if (!authResult.authorized) {
