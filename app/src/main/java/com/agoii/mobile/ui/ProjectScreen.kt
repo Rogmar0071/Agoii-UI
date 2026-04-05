@@ -9,6 +9,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -39,18 +40,22 @@ fun ProjectScreen(projectId: String) {
     val listState = rememberLazyListState()
 
     fun reload() {
-        events      = bridge.loadEvents(projectId)
-        replayState = bridge.replayState(projectId)
+        try {
+            events = bridge.loadEvents(projectId)
+            replayState = bridge.replayState(projectId)
 
-        interactionResult = replayState?.let {
-            interactionEngine.execute(
-                InteractionContract(
-                    contractId = projectId,
-                    query = "system state",
-                    outputType = OutputType.DETAILED
-                ),
-                InteractionInput(it)
-            )
+            interactionResult = replayState?.let {
+                interactionEngine.execute(
+                    InteractionContract(
+                        contractId = projectId,
+                        query = "system state",
+                        outputType = OutputType.DETAILED
+                    ),
+                    InteractionInput(it)
+                )
+            }
+        } catch (e: Exception) {
+            sendMessage = e.message
         }
     }
 
@@ -73,8 +78,15 @@ fun ProjectScreen(projectId: String) {
     LaunchedEffect(projectId) { reload() }
 
     LaunchedEffect(events.size) {
-        if (events.isNotEmpty()) listState.animateScrollToItem(events.size - 1)
+        if (events.isNotEmpty()) {
+            listState.animateScrollToItem(events.size - 1)
+        }
     }
+
+    val replay = replayState
+    val interaction = interactionResult
+    val response = responseMessage
+    val sendError = sendMessage
 
     Column(
         modifier = Modifier
@@ -84,152 +96,95 @@ fun ProjectScreen(projectId: String) {
             .imePadding()
     ) {
 
-        // Local val snapshots — required for K1 smart cast on delegated vars
-        val replay = replayState
-        val interaction = interactionResult
-        val response = responseMessage
-        val sendError = sendMessage
-
-        // Header (ALWAYS present)
         Text(
             text = "Project: $projectId",
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             style = MaterialTheme.typography.headlineSmall
         )
 
-        // LoadingContainer (ALWAYS present)
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center
-        ) {
-            if (replay == null) {
+        // LOADING
+        if (replay == null) {
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
                 CircularProgressIndicator(modifier = Modifier.padding(16.dp))
             }
         }
 
-        // StatePanelContainer (ALWAYS present)
-        Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-            if (replay != null) {
-                Text("Governance: ${replay.governanceView.totalContracts} contracts", style = MaterialTheme.typography.bodySmall)
+        // STATE PANEL (SAFE ACCESS ONLY)
+        replay?.let {
+            Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
 
                 Text(
-                    "Execution: ${replay.executionView.executionStatus}",
+                    "Events: ${events.size}",
                     style = MaterialTheme.typography.bodySmall
                 )
 
-                Text("Audit: ${replay.auditView.contracts.valid}", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Last Event: ${it.governanceView.lastEventType ?: "none"}",
+                    style = MaterialTheme.typography.bodySmall
+                )
 
-                if (interaction != null) {
-                    Text("Interaction: ${interaction.content}", style = MaterialTheme.typography.bodySmall)
+                Text(
+                    "Total Events: ${it.auditView.totalEvents}",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                interaction?.let { result ->
+                    Text(
+                        "Interaction: ${result.content}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
             }
         }
 
-        // EventListContainer (ALWAYS present)
+        // EVENT LIST
         LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth().padding(8.dp)
         ) {
-            if (replay != null) {
-                if (events.isEmpty()) {
-                    item {
-                        Text(
-                            "No events yet",
-                            color = OnSurface.copy(alpha = 0.5f),
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                } else {
-                    items(events) { event ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-                            colors = CardDefaults.cardColors(containerColor = Surface)
-                        ) {
-                            Column(modifier = Modifier.padding(8.dp)) {
-                                Text("type=${event.type}", style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    "payload=${event.payload}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = OnSurface.copy(alpha = 0.6f)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                    }
-                }
-            }
-        }
 
-        // CommitPanelContainer (ALWAYS present)
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
-            colors = CardDefaults.cardColors(containerColor = Surface)
-        ) {
-            if (replay != null && replay.executionView.showCommitPanel) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Commit Pending", style = MaterialTheme.typography.titleMedium)
-                    replay.governanceView.lastEventPayload["report_reference"]?.let {
-                        Text("Report: $it", style = MaterialTheme.typography.bodySmall)
-                    }
-                    replay.governanceView.lastEventPayload["finalArtifactReference"]?.let {
-                        Text("Artifact: $it", style = MaterialTheme.typography.bodySmall)
-                    }
-                    @Suppress("UNCHECKED_CAST")
-                    (replay.governanceView.lastEventPayload["proposedActions"] as? List<String>)?.let { actions ->
-                        if (actions.isNotEmpty()) {
-                            Text("Actions: ${actions.joinToString(", ")}", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                    Row(modifier = Modifier.padding(top = 8.dp)) {
-                        Button(
-                            onClick = {
-                                bridge.approveContracts(projectId)
-                                reload()
-                            },
-                            modifier = Modifier.padding(end = 8.dp)
-                        ) {
-                            Text("Approve")
-                        }
-                        Button(
-                            onClick = { reload() }
-                        ) {
-                            Text("Reject")
+            if (events.isEmpty()) {
+                item {
+                    Text(
+                        "No events yet",
+                        color = OnSurface.copy(alpha = 0.5f),
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        textAlign = TextAlign.Center
+                    )
+                }
+            } else {
+                items(events) { event ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        colors = CardDefaults.cardColors(containerColor = Surface)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            Text("type=${event.type}")
+                            Text(
+                                "payload=${event.payload}",
+                                color = OnSurface.copy(alpha = 0.6f)
+                            )
                         }
                     }
                 }
             }
         }
 
-        // ActionBarContainer (ALWAYS present)
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(8.dp),
-            horizontalArrangement = Arrangement.End
-        ) {
-            if (replay != null && replay.governanceView.totalContracts > 0) {
-                Button(
-                    onClick = {
-                        bridge.approveContracts(projectId)
-                        reload()
-                    }
-                ) {
-                    Text("Approve Contracts")
-                }
-            }
-        }
-
-        // FeedbackContainer (ALWAYS present)
+        // FEEDBACK
         Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-            if (response != null) {
-                Text(response, modifier = Modifier.padding(8.dp))
+            response?.let {
+                Text(it, modifier = Modifier.padding(8.dp))
             }
 
-            if (sendError != null) {
-                Text(sendError, color = Color.Red, modifier = Modifier.padding(8.dp))
+            sendError?.let {
+                Text(it, color = Color.Red, modifier = Modifier.padding(8.dp))
             }
         }
 
-        // InputBarContainer (ALWAYS present)
+        // INPUT BAR
         Row(
             modifier = Modifier.fillMaxWidth().padding(8.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -243,9 +198,7 @@ fun ProjectScreen(projectId: String) {
                 keyboardActions = KeyboardActions(onSend = { handleUserInput(inputText) }),
                 singleLine = true
             )
-            Button(
-                onClick = { handleUserInput(inputText) }
-            ) {
+            Button(onClick = { handleUserInput(inputText) }) {
                 Text("Send")
             }
         }
