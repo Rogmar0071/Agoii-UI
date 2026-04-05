@@ -39,8 +39,9 @@ class CoreBridgeAdapter(
         if (input.isBlank()) return
         try {
             systemBridge.processInteraction(projectId, input)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             // Crash protection: exceptions are contained — no event is written on failure
+            println("[LOG] CoreBridgeAdapter.processInteraction failed: ${e.message}")
         }
     }
 
