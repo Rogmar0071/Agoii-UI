@@ -28,7 +28,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             AgoiiTheme {
                 var currentProjectId by remember { mutableStateOf("default") }
-                var refreshTrigger by remember { mutableIntStateOf(0) }
                 val scope = rememberCoroutineScope()
 
                 val adapter = remember(currentProjectId) {
@@ -37,8 +36,10 @@ class MainActivity : ComponentActivity() {
                 val binder = remember(adapter) { UiStateBinder(adapter) }
                 val dispatcher = remember(adapter) { UiActionDispatcher(adapter) }
 
-                val model = remember(refreshTrigger, currentProjectId) {
-                    binder.getUiModel()
+                var model by remember { mutableStateOf(binder.getUiModel()) }
+
+                LaunchedEffect(binder) {
+                    model = binder.getUiModel()
                 }
 
                 val projects = remember {
@@ -51,13 +52,12 @@ class MainActivity : ComponentActivity() {
                     selectedProjectId = currentProjectId,
                     onSelectProject = { project ->
                         currentProjectId = project.id
-                        refreshTrigger++
                     },
                     onInteraction = { input ->
                         scope.launch(Dispatchers.IO) {
                             dispatcher.sendInteraction(input)
                             withContext(Dispatchers.Main) {
-                                refreshTrigger++
+                                model = binder.getUiModel()
                             }
                         }
                     },
@@ -65,7 +65,7 @@ class MainActivity : ComponentActivity() {
                         scope.launch(Dispatchers.IO) {
                             dispatcher.approve(contractId)
                             withContext(Dispatchers.Main) {
-                                refreshTrigger++
+                                model = binder.getUiModel()
                             }
                         }
                     }
