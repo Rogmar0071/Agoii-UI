@@ -7,8 +7,7 @@ package com.agoii.mobile.interaction
  * Responsibility: formatting only — no business logic, no data extraction.
  * Every method is a pure function of its input.
  *
- * Source of truth: [StateSlice] structural boolean fields and optional
- * [StateSlice.simulationSummary] only.
+ * Source of truth: [StateSlice] structural boolean fields only.
  */
 class InteractionFormatter {
 
@@ -38,10 +37,7 @@ class InteractionFormatter {
             slice.assemblyStarted   -> "started"
             else                    -> "idle"
         }
-        val base = "execution: $executionStatus | assembly: $assemblyStatus"
-        return slice.simulationSummary
-            ?.let { "$base | simulation: $it" }
-            ?: base
+        return "execution: $executionStatus | assembly: $assemblyStatus"
     }
 
     private fun buildDetailed(slice: StateSlice): String =
@@ -55,7 +51,7 @@ class InteractionFormatter {
         slice.executionCompleted -> "All execution tasks complete."
         slice.executionStarted   -> "Execution is in progress."
         slice.assemblyStarted    -> "Assembly in progress. Awaiting execution completion."
-        else                     -> "System awaiting input."
+        else                     -> "System idle."
     }
 
     private fun buildStatus(slice: StateSlice): String = when {

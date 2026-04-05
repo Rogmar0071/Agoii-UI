@@ -13,9 +13,7 @@ import com.agoii.mobile.interaction.InteractionEngine
 import com.agoii.mobile.interaction.InteractionFormatter
 import com.agoii.mobile.interaction.InteractionInput
 import com.agoii.mobile.interaction.InteractionMapper
-import com.agoii.mobile.interaction.InteractionScope
 import com.agoii.mobile.interaction.OutputType
-import com.agoii.mobile.interaction.SourceType
 import com.agoii.mobile.interaction.StateSlice
 import org.junit.Assert.*
 import org.junit.Test
@@ -27,7 +25,7 @@ import org.junit.Test
  *
  * Verified invariants:
  *  1. No state mutation — ReplayStructuralState is never modified.
- *  2. Correct scope extraction — each [InteractionScope] exposes only structural fields.
+ *  2. Correct extraction — [InteractionMapper] maps all structural fields directly.
  *  3. Deterministic output — identical input always produces identical output.
  *  4. No dependency on external systems — engine uses only the supplied state.
  *  5. Correct formatting per [OutputType].
@@ -92,8 +90,8 @@ class InteractionContractTest {
         val original = state(assignedTasks = 1)
         val snapshot = original.copy()
         engine.execute(
-            InteractionContract("id-1", "query", InteractionScope.FULL_SYSTEM, OutputType.SUMMARY, SourceType.LEDGER),
-            InteractionInput.LedgerInput(original)
+            InteractionContract("id-1", "query", OutputType.SUMMARY),
+            InteractionInput(original)
         )
         assertEquals("ReplayStructuralState must not be mutated by execute()", snapshot, original)
     }
@@ -101,73 +99,35 @@ class InteractionContractTest {
     @Test
     fun `execute multiple times does not change the state`() {
         val s = state(contractsValid = true)
-        val contract = InteractionContract("id-x", "q", InteractionScope.CONTRACT, OutputType.STATUS, SourceType.LEDGER)
-        repeat(5) { engine.execute(contract, InteractionInput.LedgerInput(s)) }
+        val contract = InteractionContract("id-x", "q", OutputType.STATUS)
+        repeat(5) { engine.execute(contract, InteractionInput(s)) }
         assertTrue(s.auditView.contracts.valid)
     }
 
-    // ── 2. Correct scope extraction ───────────────────────────────────────────
+    // ── 2. Correct extraction ─────────────────────────────────────────────────
 
     @Test
-    fun `FULL_SYSTEM scope exposes execution and assembly fields`() {
-        val s = state(
-            assignedTasks     = 1,
-            fullyExecuted     = false,
-            assemblyStarted   = false,
-            assemblyValidated = false
-        )
-        val slice = mapper.extract(InteractionScope.FULL_SYSTEM, s)
+    fun `extract maps execution and assembly fields directly from state`() {
+        val s = state(assignedTasks = 1, assemblyStarted = true, assemblyValidated = true)
+        val slice = mapper.extract(s)
 
-        assertTrue(slice.executionStarted)
-        assertFalse(slice.executionCompleted)
-        assertFalse(slice.assemblyStarted)
-        assertFalse(slice.assemblyValidated)
+        assertTrue("executionStarted must reflect assignedTasks > 0", slice.executionStarted)
+        assertFalse("executionCompleted must be false when not fully executed", slice.executionCompleted)
+        assertTrue("assemblyStarted must reflect state", slice.assemblyStarted)
+        assertTrue("assemblyValidated must reflect state", slice.assemblyValidated)
     }
 
     @Test
-    fun `CONTRACT scope omits execution and assembly flags`() {
-        val s = state(
-            assignedTasks     = 1,
-            fullyExecuted     = true,
-            assemblyStarted   = true,
-            assemblyValidated = true
-        )
-        val slice = mapper.extract(InteractionScope.CONTRACT, s)
+    fun `extract marks execution completed when all tasks validated`() {
+        val s = state(fullyExecuted = true)
+        val slice = mapper.extract(s)
 
-        assertFalse("CONTRACT scope must not expose executionStarted",   slice.executionStarted)
-        assertFalse("CONTRACT scope must not expose executionCompleted", slice.executionCompleted)
-        assertFalse("CONTRACT scope must not expose assemblyStarted",    slice.assemblyStarted)
-        assertFalse("CONTRACT scope must not expose assemblyValidated",  slice.assemblyValidated)
+        assertTrue("executionCompleted must be true when all tasks validated", slice.executionCompleted)
     }
 
     @Test
-    fun `TASK scope omits assembly fields`() {
-        val s = state(assemblyStarted = true, assemblyValidated = true, fullyExecuted = true)
-        val slice = mapper.extract(InteractionScope.TASK, s)
-
-        assertFalse("TASK scope must not expose assemblyStarted",    slice.assemblyStarted)
-        assertFalse("TASK scope must not expose assemblyValidated",  slice.assemblyValidated)
-        assertFalse("TASK scope must not expose executionCompleted", slice.executionCompleted)
-    }
-
-    @Test
-    fun `EXECUTION scope omits assembly fields`() {
-        val s = state(assemblyStarted = true, assemblyValidated = true)
-        val slice = mapper.extract(InteractionScope.EXECUTION, s)
-
-        assertFalse("EXECUTION scope must not expose assemblyStarted",   slice.assemblyStarted)
-        assertFalse("EXECUTION scope must not expose assemblyValidated", slice.assemblyValidated)
-    }
-
-    @Test
-    fun `SIMULATION scope returns empty structural slice`() {
-        val s = state(
-            assignedTasks     = 1,
-            fullyExecuted     = true,
-            assemblyStarted   = true,
-            assemblyValidated = true
-        )
-        val slice = mapper.extract(InteractionScope.SIMULATION, s)
+    fun `extract returns all-false slice for empty state`() {
+        val slice = mapper.extract(state())
 
         assertFalse(slice.executionStarted)
         assertFalse(slice.executionCompleted)
@@ -175,32 +135,22 @@ class InteractionContractTest {
         assertFalse(slice.assemblyValidated)
     }
 
-    @Test
-    fun `references list is non-empty for every scope`() {
-        val s = state()
-        for (scope in InteractionScope.values()) {
-            val slice = mapper.extract(scope, s)
-            assertTrue("References must be non-empty for scope $scope", slice.references.isNotEmpty())
-        }
-    }
-
     // ── 3. Deterministic output ───────────────────────────────────────────────
 
     @Test
     fun `same contract and state always produce the same result`() {
         val s = state(assignedTasks = 1)
-        val contract = InteractionContract("proj-1", "status?", InteractionScope.FULL_SYSTEM,
-                                          OutputType.SUMMARY, SourceType.LEDGER)
-        val r1 = engine.execute(contract, InteractionInput.LedgerInput(s))
-        val r2 = engine.execute(contract, InteractionInput.LedgerInput(s))
+        val contract = InteractionContract("proj-1", "status?", OutputType.SUMMARY)
+        val r1 = engine.execute(contract, InteractionInput(s))
+        val r2 = engine.execute(contract, InteractionInput(s))
         assertEquals("Output must be deterministic", r1, r2)
     }
 
     @Test
     fun `different states produce different SUMMARY outputs`() {
-        val contract = InteractionContract("c", "q", InteractionScope.FULL_SYSTEM, OutputType.SUMMARY, SourceType.LEDGER)
-        val r1 = engine.execute(contract, InteractionInput.LedgerInput(state()))
-        val r2 = engine.execute(contract, InteractionInput.LedgerInput(state(assignedTasks = 1)))
+        val contract = InteractionContract("c", "q", OutputType.SUMMARY)
+        val r1 = engine.execute(contract, InteractionInput(state()))
+        val r2 = engine.execute(contract, InteractionInput(state(assignedTasks = 1)))
         assertNotEquals(r1.content, r2.content)
     }
 
@@ -210,8 +160,8 @@ class InteractionContractTest {
     fun `InteractionEngine works with no external dependencies`() {
         val localEngine = InteractionEngine(InteractionMapper(), InteractionFormatter())
         val result = localEngine.execute(
-            InteractionContract("self-contained", "test", InteractionScope.FULL_SYSTEM, OutputType.STATUS, SourceType.LEDGER),
-            InteractionInput.LedgerInput(state())
+            InteractionContract("self-contained", "test", OutputType.STATUS),
+            InteractionInput(state())
         )
         assertNotNull(result)
         assertEquals("self-contained", result.contractId)
@@ -221,8 +171,8 @@ class InteractionContractTest {
     fun `contractId is echoed verbatim in InteractionResult`() {
         val id = "unique-contract-99"
         val result = engine.execute(
-            InteractionContract(id, "q", InteractionScope.FULL_SYSTEM, OutputType.STATUS, SourceType.LEDGER),
-            InteractionInput.LedgerInput(state())
+            InteractionContract(id, "q", OutputType.STATUS),
+            InteractionInput(state())
         )
         assertEquals(id, result.contractId)
     }
@@ -269,7 +219,7 @@ class InteractionContractTest {
     fun `EXPLANATION describes idle state correctly`() {
         val slice = sliceWith()
         val output = formatter.format(OutputType.EXPLANATION, slice)
-        assertTrue("EXPLANATION must mention awaiting", output.contains("awaiting"))
+        assertTrue("EXPLANATION must mention idle", output.contains("idle"))
     }
 
     @Test
@@ -300,7 +250,6 @@ class InteractionContractTest {
         executionStarted   = executionStarted,
         executionCompleted = executionCompleted,
         assemblyStarted    = assemblyStarted,
-        assemblyValidated  = assemblyValidated,
-        references         = listOf("executionStarted")
+        assemblyValidated  = assemblyValidated
     )
 }

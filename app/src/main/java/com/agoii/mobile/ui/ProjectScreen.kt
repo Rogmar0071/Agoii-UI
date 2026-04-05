@@ -19,7 +19,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.agoii.mobile.bridge.CoreBridge
 import com.agoii.mobile.core.*
-import com.agoii.mobile.interaction.*
+import com.agoii.mobile.interaction.InteractionContract
+import com.agoii.mobile.interaction.InteractionEngine
+import com.agoii.mobile.interaction.InteractionInput
+import com.agoii.mobile.interaction.InteractionResult
+import com.agoii.mobile.interaction.OutputType
 import com.agoii.mobile.ui.theme.*
 
 @Composable
@@ -49,10 +53,9 @@ fun ProjectScreen(projectId: String) {
                     InteractionContract(
                         contractId = projectId,
                         query = "system state",
-                        scope = InteractionScope.FULL_SYSTEM,
                         outputType = OutputType.DETAILED
                     ),
-                    InteractionInput.LedgerInput(it)
+                    InteractionInput(it)
                 )
             }
         } catch (e: Exception) {

@@ -8,16 +8,12 @@ package com.agoii.mobile.interaction
  *
  * @param contractId  Identifies this interaction (typically the project id).
  * @param query       Human-readable description of what is being asked.
- * @param scope       Structural boundary of the state slice exposed to this contract.
  * @param outputType  How the response should be formatted.
- * @param sourceType  Whether the backing data is from the ledger or a simulation view.
  */
 data class InteractionContract(
     val contractId: String,
     val query: String,
-    val scope: InteractionScope = InteractionScope.FULL_SYSTEM,
-    val outputType: OutputType,
-    val sourceType: SourceType = SourceType.LEDGER
+    val outputType: OutputType
 )
 
 /** Controls the formatting strategy applied by [InteractionEngine]. */
