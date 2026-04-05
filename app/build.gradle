@@ -13,10 +13,13 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
         vectorDrawables {
             useSupportLibrary true
         }
+
         buildConfigField "String", "OPENAI_API_KEY", "\"\""
     }
 
@@ -34,6 +37,10 @@ android {
 
     kotlinOptions {
         jvmTarget = '17'
+        freeCompilerArgs += [
+                "-Xjvm-default=all",
+                "-opt-in=kotlin.RequiresOptIn"
+        ]
     }
 
     buildFeatures {
@@ -42,7 +49,7 @@ android {
     }
 
     composeOptions {
-        kotlinCompilerExtensionVersion '1.5.11'
+        kotlinCompilerExtensionVersion '1.5.14'
     }
 
     packaging {
@@ -53,31 +60,30 @@ android {
 }
 
 dependencies {
-    // Android core
+
+    // Core
     implementation 'androidx.core:core-ktx:1.13.1'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.8.4'
     implementation 'androidx.activity:activity-compose:1.9.1'
 
-    // Compose BOM (manages all compose version alignment)
+    // Compose BOM (aligned)
     implementation platform('androidx.compose:compose-bom:2024.06.00')
     implementation 'androidx.compose.ui:ui'
     implementation 'androidx.compose.ui:ui-graphics'
     implementation 'androidx.compose.ui:ui-tooling-preview'
     implementation 'androidx.compose.material3:material3'
 
-    // JSON serialisation (used by EventStore)
+    // JSON
     implementation 'com.google.code.gson:gson:2.11.0'
 
-    // Unit tests (JVM only — no Android emulator needed)
+    // Tests
     testImplementation 'junit:junit:4.13.2'
-
-    // Android instrumented tests
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'androidx.test.espresso:espresso-core:3.6.1'
     androidTestImplementation platform('androidx.compose:compose-bom:2024.06.00')
     androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
 
-    // Debug helpers
+    // Debug
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 }
