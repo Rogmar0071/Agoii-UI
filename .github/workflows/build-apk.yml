@@ -24,47 +24,36 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Clean build
+      - name: Clean
         run: ./gradlew clean
 
-      # 🔴 Capture FULL log to file
-      - name: Build (capture log)
+      # 🔴 CRITICAL: FULL LOGGING ENABLED
+      - name: Build with full diagnostics
         run: |
           ./gradlew assembleDebug \
-            --no-build-cache \
-            --rerun-tasks \
-            --stacktrace \
-            --info \
-            --warning-mode all > build.log 2>&1
+          --stacktrace \
+          --info \
+          --debug \
+          --no-daemon \
+          2>&1 | tee build.log
 
-      # 🔴 Extract ONLY Kotlin compiler errors (guaranteed signal)
-      - name: Extract Kotlin compiler errors
-        if: always()
+      # 🔴 FORCE PRINT ERRORS
+      - name: Extract Kotlin errors
         run: |
           echo "====== KOTLIN ERRORS ======"
-          grep -E "e: .*\.kt:" build.log || true
-          echo "==========================="
+          grep -i "e:" build.log || true
+          echo "====== END ======"
 
-      # 🔴 Extract general failures
-      - name: Extract failure reason
-        if: always()
-        run: |
-          echo "====== FAILURE TRACE ======"
-          grep -i "error\|exception\|failed" build.log | tail -n 50 || true
-          echo "==========================="
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: agoii-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
 
-      # 🔴 Upload full log for inspection
-      - name: Upload full build log
+      # 🔴 ALWAYS upload logs (even on failure)
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
           path: build.log
-
-      # 🔴 Only runs if build actually succeeds
-      - name: Upload APK
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: agoii-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
