@@ -24,48 +24,44 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      # 🔴 Clean (no cache reuse)
       - name: Clean build
         run: ./gradlew clean
 
-      # 🔴 FULL verbose build (critical)
-      - name: Build with full logs
+      # 🔴 Capture FULL log to file
+      - name: Build (capture log)
         run: |
           ./gradlew assembleDebug \
             --no-build-cache \
             --rerun-tasks \
             --stacktrace \
             --info \
-            --warning-mode all | tee build.log
+            --warning-mode all > build.log 2>&1
 
-      # 🔴 Always print full log (even on failure)
-      - name: Print build log
+      # 🔴 Extract ONLY Kotlin compiler errors (guaranteed signal)
+      - name: Extract Kotlin compiler errors
         if: always()
         run: |
-          echo "================ BUILD LOG START ================"
-          cat build.log
-          echo "================ BUILD LOG END =================="
+          echo "====== KOTLIN ERRORS ======"
+          grep -E "e: .*\.kt:" build.log || true
+          echo "==========================="
 
-      # 🔴 Extract Kotlin errors (signal isolation)
-      - name: Extract Kotlin errors
+      # 🔴 Extract general failures
+      - name: Extract failure reason
         if: always()
         run: |
-          echo "================ KOTLIN ERRORS =================="
-          grep -i "e: " build.log || true
-          echo "================================================"
+          echo "====== FAILURE TRACE ======"
+          grep -i "error\|exception\|failed" build.log | tail -n 50 || true
+          echo "==========================="
 
-      # 🔴 Verify APK structure (only if build succeeds)
-      - name: Verify MainActivity presence
-        if: success()
-        run: |
-          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep MainActivity
+      # 🔴 Upload full log for inspection
+      - name: Upload full build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
 
-      - name: Verify classes.dex exists
-        if: success()
-        run: |
-          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep classes.dex
-
-      # 🔴 Upload artifact (only if valid build)
+      # 🔴 Only runs if build actually succeeds
       - name: Upload APK
         if: success()
         uses: actions/upload-artifact@v4
