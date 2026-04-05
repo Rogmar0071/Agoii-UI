@@ -15,7 +15,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import agoii.ui.core.ChatUiModel
 
@@ -46,14 +50,20 @@ fun InteractionPanel(
             modifier = Modifier.weight(1f)
         ) {
             items(model.messages) { message ->
+                val source = if (message.isUser) "You" else "System"
                 Text(
                     text = message.text,
-                    modifier = Modifier.padding(8.dp)
+                    textAlign = if (message.isUser) TextAlign.End else TextAlign.Start,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp)
+                        .semantics { contentDescription = "$source: ${message.text}" }
                 )
             }
         }
 
         Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(8.dp)
@@ -61,6 +71,7 @@ fun InteractionPanel(
             TextField(
                 value = input,
                 onValueChange = { input = it },
+                placeholder = { Text("Enter message…") },
                 modifier = Modifier.weight(1f)
             )
 
