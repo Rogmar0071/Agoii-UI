@@ -60,8 +60,8 @@ class CoreBridgeAdapter(context: Context) : UiCoreBridge {
             lastContractStartedId = governanceView.lastContractStartedId
         ),
         auditView = UiAuditView(
-            totalEvents  = executionView.taskStatus.size,
-            contractIds  = governanceView.taskAssignedTaskIds.toList(),
+            totalEvents  = auditView.execution.totalTasks,
+            contractIds  = governanceView.deltaContractRecoveryIds.toList(),
             hasContracts = governanceView.totalContracts > 0
         )
     )
