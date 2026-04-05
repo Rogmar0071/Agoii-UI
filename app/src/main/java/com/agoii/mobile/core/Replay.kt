@@ -83,7 +83,34 @@ data class GovernanceView(
      * position from the most recent CONTRACT_STARTED event.
      * Used by Governor as a fallback when TASK_ASSIGNED.position is absent.
      */
-    val lastContractStartedPosition: Int?
+    val lastContractStartedPosition: Int?,
+
+    /**
+     * Whether a last event exists in the ledger.
+     * Pre-resolved from lastEventType != null.
+     * Adapter and UI MUST NOT derive this — read directly.
+     *
+     * CONTRACT: MQP-UI-STATE-AUTHORITY-REPAIR-v1
+     */
+    val hasLastEvent: Boolean = false,
+
+    /**
+     * Non-nullable event type for UI display.
+     * Pre-resolved from lastEventType ?: "" in Replay.
+     * Adapter and UI MUST NOT derive this — read directly.
+     *
+     * CONTRACT: MQP-UI-STATE-AUTHORITY-REPAIR-v1
+     */
+    val lastEventTypeDisplay: String = "",
+
+    /**
+     * String-serialised last event payload for UI display.
+     * Pre-resolved from lastEventPayload.toString() in Replay.
+     * Adapter and UI MUST NOT derive this — read directly.
+     *
+     * CONTRACT: MQP-UI-STATE-AUTHORITY-REPAIR-v1
+     */
+    val lastEventPayloadDisplay: String = ""
 )
 
 // ── ExecutionView ─────────────────────────────────────────────────────────────
@@ -168,7 +195,34 @@ data class AuditView(
     val execution: ExecutionStructuralState,
 
     /** Assembly phase structural state. */
-    val assembly: AssemblyStructuralState
+    val assembly: AssemblyStructuralState,
+
+    /**
+     * Total number of events in the ledger.
+     * Pre-resolved from events.size in Replay.
+     * Adapter and UI MUST NOT derive this — read directly.
+     *
+     * CONTRACT: MQP-UI-STATE-AUTHORITY-REPAIR-v1
+     */
+    val totalEvents: Int = 0,
+
+    /**
+     * List of contract recovery IDs from DELTA_CONTRACT_CREATED events.
+     * Pre-resolved from governanceView.deltaContractRecoveryIds.toList() in Replay.
+     * Adapter and UI MUST NOT derive this — read directly.
+     *
+     * CONTRACT: MQP-UI-STATE-AUTHORITY-REPAIR-v1
+     */
+    val contractIds: List<String> = emptyList(),
+
+    /**
+     * Whether any contracts have been generated.
+     * Pre-resolved from totalContracts > 0 in Replay.
+     * Adapter and UI MUST NOT derive this — read directly.
+     *
+     * CONTRACT: MQP-UI-STATE-AUTHORITY-REPAIR-v1
+     */
+    val hasContracts: Boolean = false
 )
 
 // ── Nested structural sub-states (unchanged) ─────────────────────────────────
@@ -345,6 +399,14 @@ class Replay(private val eventStore: EventRepository) {
         // ── Compute showCommitPanel (MQP-EXECUTIONVIEW-COMPLETION-001) ───────
         val showCommitPanel = commitContractExists && !commitExecuted && !commitAborted
 
+        // ── Compute UI-authority fields (MQP-UI-STATE-AUTHORITY-REPAIR-v1) ───
+        val hasLastEvent = lastEventType != null
+        val lastEventTypeDisplay = lastEventType ?: ""
+        val lastEventPayloadDisplay = lastEventPayload.toString()
+        val totalEvents = events.size
+        val contractIds = deltaContractRecoveryIds.toList()
+        val hasContracts = totalContracts > 0
+
         // ── Assemble views ────────────────────────────────────────────────────
 
         return ReplayStructuralState(
@@ -356,7 +418,10 @@ class Replay(private val eventStore: EventRepository) {
                 deltaContractRecoveryIds = deltaContractRecoveryIds,
                 taskAssignedTaskIds      = taskAssignedTaskIds,
                 lastContractStartedId    = lastContractStartedId,
-                lastContractStartedPosition = lastContractStartedPosition
+                lastContractStartedPosition = lastContractStartedPosition,
+                hasLastEvent             = hasLastEvent,
+                lastEventTypeDisplay     = lastEventTypeDisplay,
+                lastEventPayloadDisplay  = lastEventPayloadDisplay
             ),
             executionView = ExecutionView(
                 taskStatus            = taskStatusMutable,
@@ -388,7 +453,10 @@ class Replay(private val eventStore: EventRepository) {
                     assemblyStarted   = assemblyStarted,
                     assemblyValidated = assemblyValidated,
                     assemblyCompleted = assemblyCompleted
-                )
+                ),
+                totalEvents  = totalEvents,
+                contractIds  = contractIds,
+                hasContracts = hasContracts
             )
         )
     }

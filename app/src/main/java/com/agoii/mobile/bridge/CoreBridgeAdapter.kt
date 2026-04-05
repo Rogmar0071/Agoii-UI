@@ -16,10 +16,11 @@ import com.agoii.mobile.core.ReplayStructuralState
  * All core types are mapped to UI types here — zero core types leak
  * into the UI module.
  *
- * CONTRACT: MQP-UI-REPLACEMENT-AUTHORITATIVE-SWAP-v1 Phase 5
+ * CONTRACT: MQP-UI-STATE-AUTHORITY-REPAIR-v1 Phase 5
  * - Implements agoii.ui.bridge.CoreBridge
  * - Maps core ReplayStructuralState → UI ReplayStructuralState
  * - Contains ZERO business logic — PURE PROJECTION
+ * - All derived/resolved fields come from Replay (ARCH-04 / RL-01)
  */
 class CoreBridgeAdapter(context: Context) : UiCoreBridge {
 
@@ -41,28 +42,29 @@ class CoreBridgeAdapter(context: Context) : UiCoreBridge {
     }
 
     override fun approveContracts(contractId: String) {
-        // Routed through the governed pipeline — no direct execution
         bridge.processInteraction(boundProjectId, "approve:$contractId")
     }
 
     // ── Mapping: core ReplayStructuralState → UI ReplayStructuralState ───────
+    // PURE PROJECTION — every field is a direct read from Replay state.
+    // ZERO logic, ZERO derivation, ZERO null handling, ZERO collection ops.
 
     private fun ReplayStructuralState.toUiReplayState() = UiReplayStructuralState(
         governanceView = UiGovernanceView(
-            lastEventType    = governanceView.lastEventType ?: "",
-            lastEventPayload = governanceView.lastEventPayload.toString(),
+            lastEventType    = governanceView.lastEventTypeDisplay,
+            lastEventPayload = governanceView.lastEventPayloadDisplay,
             reportReference  = governanceView.reportReference,
-            hasLastEvent     = governanceView.lastEventType != null
+            hasLastEvent     = governanceView.hasLastEvent
         ),
         executionView = UiExecutionView(
-            executionStatus      = executionView.executionStatus,
-            showCommitPanel      = executionView.showCommitPanel,
+            executionStatus       = executionView.executionStatus,
+            showCommitPanel       = executionView.showCommitPanel,
             lastContractStartedId = governanceView.lastContractStartedId
         ),
         auditView = UiAuditView(
-            totalEvents  = auditView.execution.totalTasks,
-            contractIds  = governanceView.deltaContractRecoveryIds.toList(),
-            hasContracts = governanceView.totalContracts > 0
+            totalEvents  = auditView.totalEvents,
+            contractIds  = auditView.contractIds,
+            hasContracts = auditView.hasContracts
         )
     )
 }
