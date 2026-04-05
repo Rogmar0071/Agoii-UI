@@ -6,6 +6,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   governance-enforcement:
     name: Governance Enforcement
@@ -83,6 +86,7 @@ jobs:
       # ── Phase 9: Adversarial + Governance Tests ──────────────────────────
       - name: Run unit tests (Governance + Adversarial)
         run: |
+          set -euo pipefail
           echo "=== PHASE 9: TEST EXECUTION ==="
           ./gradlew testDebugUnitTest \
             --tests "com.agoii.mobile.AdversarialValidationTest" \
