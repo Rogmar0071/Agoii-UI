@@ -1,7 +1,6 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
-import com.agoii.mobile.infrastructure.OpenAIClient
 import com.agoii.mobile.contractor.*
 import com.agoii.mobile.contracts.*
 import com.agoii.mobile.core.*
@@ -21,13 +20,6 @@ class CoreBridge(context: Context) {
 
     private val driverRegistry      = DriverRegistry()
     private val contractorRegistry  = ContractorRegistry()
-
-    init {
-        driverRegistry.register(
-            "llm",
-            LLMContractor(OpenAIClient())
-        )
-    }
 
     private val executionAuthority = ExecutionAuthority(contractorRegistry, driverRegistry)
     private val executionEntryPoint = ExecutionEntryPoint(ledger, executionAuthority)

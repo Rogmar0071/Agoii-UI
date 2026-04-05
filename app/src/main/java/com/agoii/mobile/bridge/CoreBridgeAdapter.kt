@@ -36,7 +36,12 @@ class CoreBridgeAdapter(
     }
 
     override fun processInteraction(input: String) {
-        systemBridge.processInteraction(projectId, input)
+        if (input.isBlank()) return
+        try {
+            systemBridge.processInteraction(projectId, input)
+        } catch (_: Exception) {
+            // Crash protection: exceptions are contained — no event is written on failure
+        }
     }
 
     override fun approveContracts(contractId: String) {

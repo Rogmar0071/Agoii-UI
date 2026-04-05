@@ -1,7 +1,5 @@
 package com.agoii.mobile.execution
 
-import com.agoii.mobile.infrastructure.OpenAIClient
-
 // ─── DriverRegistry ───────────────────────────────────────────────────────────
 
 /**
@@ -38,21 +36,6 @@ class DriverRegistry {
      * @return The registered [ExecutionDriver], or null when none is registered.
      */
     fun resolve(source: String): ExecutionDriver? = store[source]
-
-    /**
-     * Create an [LLMContractor] backed by a new [OpenAIClient] and register it
-     * under the `"llm"` source key.
-     *
-     * RULES:
-     *  - No automatic registration occurs; this must be called explicitly.
-     *  - Config resolution is deferred to [LLMContractor.execute]; registering here
-     *    does NOT guarantee execution will succeed — missing config will BLOCK.
-     *
-     * CONTRACT: AGOII-RCF-LLM-DRIVER-IMPLEMENTATION-01
-     */
-    fun registerLLMContractor() {
-        register("llm", LLMContractor(OpenAIClient()))
-    }
 
     /**
      * Register a NemoClaw [ExecutionDriver] under the `"nemoclaw"` source key.
