@@ -96,6 +96,7 @@ fun ProjectScreen(projectId: String) {
             .imePadding()
     ) {
 
+        // HEADER
         Text(
             text = "Project: $projectId",
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -112,22 +113,17 @@ fun ProjectScreen(projectId: String) {
             }
         }
 
-        // STATE PANEL (SAFE ACCESS ONLY)
+        // STATE PANEL (STRICT SAFE)
         replay?.let {
             Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
 
                 Text(
-                    "Events: ${events.size}",
+                    "Events Loaded: ${events.size}",
                     style = MaterialTheme.typography.bodySmall
                 )
 
                 Text(
                     "Last Event: ${it.governanceView.lastEventType ?: "none"}",
-                    style = MaterialTheme.typography.bodySmall
-                )
-
-                Text(
-                    "Total Events: ${it.auditView.totalEvents}",
                     style = MaterialTheme.typography.bodySmall
                 )
 
