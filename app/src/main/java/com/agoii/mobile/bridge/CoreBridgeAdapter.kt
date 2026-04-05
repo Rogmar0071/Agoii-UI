@@ -36,7 +36,15 @@ class CoreBridgeAdapter(
     }
 
     override fun processInteraction(input: String) {
-        systemBridge.processInteraction(projectId, input)
+        if (input.isBlank()) return
+
+        val normalizedInput = """
+            {
+                "objective": "${input.trim()}"
+            }
+        """.trimIndent()
+
+        systemBridge.processInteraction(projectId, normalizedInput)
     }
 
     override fun approveContracts(contractId: String) {
