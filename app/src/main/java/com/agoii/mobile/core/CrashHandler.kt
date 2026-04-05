@@ -17,16 +17,17 @@ object CrashHandler {
                 throwable.printStackTrace(PrintWriter(stackTrace))
 
                 val crashLog = """
-                    THREAD: ${thread.name}
-                    TIME: ${System.currentTimeMillis()}
+THREAD: ${thread.name}
+TIME: ${System.currentTimeMillis()}
 
-                    $stackTrace
+$stackTrace
                 """.trimIndent()
 
                 val file = File(context.filesDir, "crash_log.txt")
                 file.writeText(crashLog)
 
             } catch (_: Exception) {
+                // ignore safely
             }
 
             defaultHandler?.uncaughtException(thread, throwable)
