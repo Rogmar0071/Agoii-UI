@@ -12,11 +12,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup JDK 17
+      - name: Setup JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
           distribution: 'temurin'
+          java-version: '17'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -27,22 +27,16 @@ jobs:
       - name: Clean
         run: ./gradlew clean
 
-      # 🔴 CRITICAL: FULL LOGGING ENABLED
-      - name: Build with full diagnostics
-        run: |
-          ./gradlew assembleDebug \
-          --stacktrace \
-          --info \
-          --debug \
-          --no-daemon \
-          2>&1 | tee build.log
+      - name: Build APK (strict)
+        run: ./gradlew assembleDebug --stacktrace
 
-      # 🔴 FORCE PRINT ERRORS
-      - name: Extract Kotlin errors
+      # ✅ ONLY upload APK if it EXISTS
+      - name: Verify APK exists
         run: |
-          echo "====== KOTLIN ERRORS ======"
-          grep -i "e:" build.log || true
-          echo "====== END ======"
+          if [ ! -f app/build/outputs/apk/debug/app-debug.apk ]; then
+            echo "APK NOT FOUND → BUILD FAILED"
+            exit 1
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -50,10 +44,8 @@ jobs:
           name: agoii-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
-      # 🔴 ALWAYS upload logs (even on failure)
+      # 🔴 Always upload logs for diagnosis
       - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-log
-          path: build.log
+        if: failure()
+        run: |
+          echo "BUILD FAILED — check logs above"
