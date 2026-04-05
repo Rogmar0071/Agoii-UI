@@ -49,9 +49,10 @@ fun ProjectScreen(projectId: String) {
                     InteractionContract(
                         contractId = projectId,
                         query = "system state",
+                        scope = InteractionScope.FULL_SYSTEM,
                         outputType = OutputType.DETAILED
                     ),
-                    InteractionInput(it)
+                    InteractionInput.LedgerInput(it)
                 )
             }
         } catch (e: Exception) {

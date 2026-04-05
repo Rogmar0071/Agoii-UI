@@ -7,8 +7,8 @@ package com.agoii.mobile.interaction
  * Responsibility: formatting only — no business logic, no data extraction.
  * Every method is a pure function of its input.
  *
- * Source of truth: [StateSlice] structural boolean fields only.
- * No [com.agoii.mobile.core.ReplayState] or synthetic data is used.
+ * Source of truth: [StateSlice] structural boolean fields and optional
+ * [StateSlice.simulationSummary] only.
  */
 class InteractionFormatter {
 
@@ -28,46 +28,41 @@ class InteractionFormatter {
     // ── private formatting helpers ────────────────────────────────────────────
 
     private fun buildSummary(slice: StateSlice): String {
-        return when {
-            slice.assemblyCompleted  -> "assembly completed"
-            slice.assemblyValidated  -> "assembly validated"
-            slice.assemblyStarted    -> "assembly started"
-            slice.executionCompleted -> "execution completed"
-            slice.executionStarted   -> "execution started"
+        val executionStatus = when {
+            slice.executionCompleted -> "completed"
+            slice.executionStarted   -> "started"
             else                     -> "idle"
         }
+        val assemblyStatus = when {
+            slice.assemblyValidated -> "validated"
+            slice.assemblyStarted   -> "started"
+            else                    -> "idle"
+        }
+        val base = "execution: $executionStatus | assembly: $assemblyStatus"
+        return slice.simulationSummary
+            ?.let { "$base | simulation: $it" }
+            ?: base
     }
 
-    private fun buildDetailed(slice: StateSlice): String {
-        return when {
-            slice.assemblyCompleted  -> "Assembly has been completed."
-            slice.assemblyValidated  -> "Assembly has been validated."
-            slice.assemblyStarted    -> "Assembly has started."
-            slice.executionCompleted -> "Execution has completed."
-            slice.executionStarted   -> "Execution is in progress."
-            else                     -> "System idle."
-        }
+    private fun buildDetailed(slice: StateSlice): String =
+        "Execution started: ${slice.executionStarted} | " +
+        "Execution completed: ${slice.executionCompleted} | " +
+        "Assembly started: ${slice.assemblyStarted} | " +
+        "Assembly validated: ${slice.assemblyValidated}"
+
+    private fun buildExplanation(slice: StateSlice): String = when {
+        slice.assemblyValidated  -> "Execution complete. Assembly validated."
+        slice.executionCompleted -> "All execution tasks complete."
+        slice.executionStarted   -> "Execution is in progress."
+        slice.assemblyStarted    -> "Assembly in progress. Awaiting execution completion."
+        else                     -> "System awaiting input."
     }
 
-    private fun buildExplanation(slice: StateSlice): String {
-        return when {
-            slice.assemblyCompleted  -> "All assembly steps are complete."
-            slice.assemblyValidated  -> "Assembly has passed validation."
-            slice.assemblyStarted    -> "Assembly process has begun."
-            slice.executionCompleted -> "All execution tasks have completed."
-            slice.executionStarted   -> "Execution tasks are currently running."
-            else                     -> "No execution in progress."
-        }
-    }
-
-    private fun buildStatus(slice: StateSlice): String {
-        return when {
-            slice.assemblyCompleted  -> "status=assembly_completed"
-            slice.assemblyValidated  -> "status=assembly_validated"
-            slice.assemblyStarted    -> "status=assembly_started"
-            slice.executionCompleted -> "status=execution_completed"
-            slice.executionStarted   -> "status=execution_started"
-            else                     -> "status=idle"
-        }
+    private fun buildStatus(slice: StateSlice): String = when {
+        slice.assemblyValidated  -> "status=assembly_validated"
+        slice.executionCompleted -> "status=execution_completed"
+        slice.executionStarted   -> "status=execution_started"
+        slice.assemblyStarted    -> "status=assembly_started"
+        else                     -> "status=idle"
     }
 }

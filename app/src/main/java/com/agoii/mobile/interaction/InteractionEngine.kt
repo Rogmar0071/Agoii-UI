@@ -2,15 +2,23 @@ package com.agoii.mobile.interaction
 
 import com.agoii.mobile.contractor.registry.HumanCommunicationContractor
 import com.agoii.mobile.core.ReplayStructuralState
+import com.agoii.mobile.simulation.SimulationView
+import java.util.UUID
 
 /**
- * Single, non-polymorphic input supplied to [InteractionEngine.execute].
+ * Sealed input hierarchy for [InteractionEngine.execute].
  *
- * [ReplayStructuralState] is the ONLY authority — no alternative input paths exist.
+ * [ReplayStructuralState] is the ONLY ledger authority.
+ * [SimulationView] is the ONLY simulation authority.
+ * No other input paths exist.
  */
-data class InteractionInput(
-    val state: ReplayStructuralState
-)
+sealed class InteractionInput {
+    /** Input sourced from the ledger via [ReplayStructuralState]. */
+    data class LedgerInput(val state: ReplayStructuralState) : InteractionInput()
+
+    /** Input sourced from a completed simulation via [SimulationView]. */
+    data class SimulationInput(val simulationView: SimulationView) : InteractionInput()
+}
 
 /**
  * Executes an [InteractionContract] against an [InteractionInput] and returns a
@@ -22,10 +30,12 @@ data class InteractionInput(
  *  - Output is deterministic: the same contract and input always produce the
  *    same result.
  *  - No caching, no hidden state.
- *  - Single execution path — no branching on input type.
+ *  - Single execution path per input type.
  *
  * The engine delegates state extraction to [InteractionMapper] and text
  * formatting to [InteractionFormatter] so each responsibility is isolated.
+ *
+ * [processInput] is a TOTAL SAFETY BOUNDARY: it MUST NEVER throw.
  */
 class InteractionEngine(
     private val mapper:    InteractionMapper    = InteractionMapper(),
@@ -35,6 +45,10 @@ class InteractionEngine(
     /**
      * Interpret raw human-language [input] into a structured intent payload.
      *
+     * TOTAL SAFETY BOUNDARY — this function MUST NEVER throw or propagate an
+     * exception to the caller.  All LLM uncertainty, network failures, and
+     * JSON parse errors are fully contained here.
+     *
      * Delegates to [HumanCommunicationContractor] which uses the LLM exclusively
      * as a language interpreter — NOT as an executor.
      *
@@ -43,37 +57,55 @@ class InteractionEngine(
      *
      * @param input  Raw user text captured by the UI.
      * @return       Structured map: `{"objective": "...", "intentId": "..."}`.
+     *               Always returns a valid, well-formed map — never throws.
      */
-    fun processInput(input: String): Map<String, Any> =
-        HumanCommunicationContractor.parse(input)
+    fun processInput(input: String): Map<String, Any> {
+        if (input.isBlank()) return safetyFallback("unspecified")
+        return try {
+            HumanCommunicationContractor.parse(input)
+        } catch (_: Throwable) {
+            safetyFallback(input)
+        }
+    }
 
     /**
      * Execute [contract] against [input] and return a fully-formed result.
      *
-     * Flow:
-     *   [InteractionInput.state] → [InteractionMapper.extract] → [StateSlice]
-     *   contract.outputType → [InteractionFormatter.format] → content string
+     * Flow (LedgerInput):
+     *   [InteractionInput.LedgerInput.state] → [InteractionMapper.extract] →
+     *   [StateSlice] → [InteractionFormatter.format] → content string
      *
-     * @param contract Describes what to query and how to format it.
+     * Flow (SimulationInput):
+     *   [InteractionInput.SimulationInput.simulationView] →
+     *   [InteractionMapper.extractFromSimulationView] → [StateSlice] →
+     *   [InteractionFormatter.format] → content string
+     *
+     * @param contract Describes what to query, the scope, and how to format it.
      * @param input    Immutable structural source of truth.
      * @return         [InteractionResult] whose [InteractionResult.content] is
      *                 ready for direct UI rendering.
      */
     fun execute(contract: InteractionContract, input: InteractionInput): InteractionResult {
-        val slice = mapper.extract(input.state)
+        val slice = when (input) {
+            is InteractionInput.LedgerInput     ->
+                mapper.extract(contract.scope, input.state)
+            is InteractionInput.SimulationInput ->
+                mapper.extractFromSimulationView(input.simulationView)
+        }
 
         val content = formatter.format(contract.outputType, slice)
 
         return InteractionResult(
             contractId = contract.contractId,
             content    = content,
-            references = listOf(
-                "executionStarted",
-                "executionCompleted",
-                "assemblyStarted",
-                "assemblyValidated",
-                "assemblyCompleted"
-            )
+            references = slice.references
         )
     }
+
+    // ── private helpers ───────────────────────────────────────────────────────
+
+    private fun safetyFallback(rawInput: String): Map<String, Any> = mapOf(
+        "objective" to rawInput,
+        "intentId"  to UUID.randomUUID().toString()
+    )
 }
