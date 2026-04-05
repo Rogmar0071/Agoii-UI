@@ -34,21 +34,18 @@ jobs:
             --info \
             --no-daemon 2>&1 | tee build.log
 
-      - name: Extract Kotlin compiler errors
+      # 🔴 MINIMAL SIGNAL EXTRACTION (authoritative)
+      - name: Extract failure (minimal signal)
         if: always()
         run: |
-          echo "====== KOTLIN ERRORS ======"
-          grep -i "^e:" build.log || true
+          echo "====== FIRST ERROR ======"
+          grep -i -m 1 "^e:" build.log || echo "NO_KOTLIN_ERROR"
 
           echo ""
-          echo "====== FIRST FAILURE CONTEXT ======"
-          grep -in "^e:" build.log | head -n 1 | cut -d: -f1 | while read line; do
-            start=$((line > 5 ? line - 5 : 1))
-            end=$((line + 20))
-            sed -n "${start},${end}p" build.log
-          done || true
+          echo "====== LAST FAILURE ======"
+          tail -n 40 build.log
 
-      # ✅ ONLY upload APK if it EXISTS
+      # ✅ VERIFY APK
       - name: Verify APK exists
         run: |
           if [ ! -f app/build/outputs/apk/debug/app-debug.apk ]; then
@@ -62,8 +59,10 @@ jobs:
           name: agoii-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
 
-      # 🔴 Always upload logs for diagnosis
+      # 📦 ALWAYS preserve build log
       - name: Upload build log
-        if: failure()
-        run: |
-          echo "BUILD FAILED — check logs above"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
