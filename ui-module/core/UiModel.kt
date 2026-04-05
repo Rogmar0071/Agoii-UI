@@ -88,7 +88,8 @@ data class ReplayStructuralState(
 data class UiModel(
     val governance: GovernanceView,
     val execution: ExecutionView,
-    val audit: AuditView
+    val audit: AuditView,
+    val chat: ChatUiModel
 )
 
 /**

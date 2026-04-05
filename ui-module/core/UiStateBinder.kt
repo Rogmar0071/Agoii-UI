@@ -23,6 +23,7 @@ class UiStateBinder(private val coreBridge: CoreBridge) {
      *   state.governanceView → UiModel.governance
      *   state.executionView  → UiModel.execution
      *   state.auditView      → UiModel.audit
+     *   state.executionView  → UiModel.chat (via buildChatModel)
      *
      * ZERO computation. ZERO derivation. Pure read.
      */
@@ -32,7 +33,36 @@ class UiStateBinder(private val coreBridge: CoreBridge) {
         return UiModel(
             governance = state.governanceView,
             execution = state.executionView,
-            audit = state.auditView
+            audit = state.auditView,
+            chat = buildChatModel(state)
+        )
+    }
+
+    /**
+     * Build ChatUiModel from ReplayStructuralState.
+     *
+     * Reads ONLY state.executionView.executionStatus — no other derivation.
+     * Single system message reflects current execution state from Replay.
+     *
+     * CHAT-UI-02: NO stored history. NO invented messages. Replay is sole authority.
+     */
+    private fun buildChatModel(state: ReplayStructuralState): ChatUiModel {
+        val message = when (state.executionView.executionStatus) {
+            "success" -> "Execution completed"
+            "failed"  -> "Execution failed"
+            "running" -> "Execution in progress"
+            else      -> "Awaiting input"
+        }
+
+        return ChatUiModel(
+            messages = listOf(
+                ChatMessage(
+                    id = "system",
+                    text = message,
+                    isUser = false
+                )
+            ),
+            currentInput = ""
         )
     }
 }

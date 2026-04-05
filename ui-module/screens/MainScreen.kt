@@ -59,9 +59,8 @@ fun MainScreen(
 
         // ── Interaction Panel ─────────────────────────────────────────
         InteractionPanel(
-            execution = model.execution,
-            onInteraction = onInteraction,
-            onApproveContract = onApproveContract
+            model = model.chat,
+            onSend = onInteraction
         )
     }
 }

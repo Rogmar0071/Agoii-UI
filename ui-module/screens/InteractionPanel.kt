@@ -2,121 +2,77 @@ package agoii.ui.screens
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import agoii.ui.components.ActionButton
-import agoii.ui.core.ExecutionView
-import agoii.ui.theme.AgoiiColors
-import agoii.ui.theme.AgoiiSpacing
-import agoii.ui.theme.AgoiiTypography
+import androidx.compose.ui.unit.dp
+import agoii.ui.core.ChatUiModel
 
 /**
- * InteractionPanel — handles user input and contract approval.
+ * InteractionPanel — chat surface that renders Replay state as a conversation.
  *
- * Calls ONLY:
- *   coreBridge.processInteraction() — via onInteraction callback
- *   coreBridge.approveContracts()   — via onApproveContract callback
+ * CHAT-UI-03 ENFORCEMENT:
+ *   - Renders messages from ChatUiModel ONLY (sourced from Replay via UiStateBinder).
+ *   - Send dispatches raw input through onSend callback → CoreBridge.
+ *   - NO message storage. NO history. NO state derivation in UI.
+ *   - Local `input` text field state is transient UI presentation state (permitted).
  *
- * UI-03 ENFORCEMENT: ALL interactions routed through CoreBridge callbacks.
- * No direct execution calls. No state mutation.
+ * UI-03 ENFORCEMENT: ALL interactions routed through CoreBridge via onSend callback.
  *
- * Local text field state (interactionText) is UI-only presentation state (permitted).
- *
- * @param execution         ExecutionView — used ONLY to read showCommitPanel and lastContractStartedId
- * @param onInteraction     Callback routed to CoreBridge.processInteraction()
- * @param onApproveContract Callback routed to CoreBridge.approveContracts()
+ * @param model   ChatUiModel sourced from ReplayStructuralState.
+ * @param onSend  Callback routed to CoreBridge.processInteraction().
  */
 @Composable
 fun InteractionPanel(
-    execution: ExecutionView,
-    onInteraction: (String) -> Unit,
-    onApproveContract: (String) -> Unit
+    model: ChatUiModel,
+    onSend: (String) -> Unit
 ) {
-    var interactionText by remember { mutableStateOf("") }
+    var input by remember { mutableStateOf("") }
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(AgoiiSpacing.CardCornerRadius),
-        elevation = CardDefaults.cardElevation(defaultElevation = AgoiiSpacing.CardElevation),
-        colors = CardDefaults.cardColors(containerColor = AgoiiColors.Surface)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(AgoiiSpacing.CardPadding)
+    Column(modifier = Modifier.fillMaxSize()) {
+
+        LazyColumn(
+            modifier = Modifier.weight(1f)
         ) {
-            Text(
-                text = "Interaction",
-                style = AgoiiTypography.HeadlineSmall,
-                color = AgoiiColors.GovernancePrimary
-            )
-
-            Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
-
-            // ── User Input ────────────────────────────────────────────
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                OutlinedTextField(
-                    value = interactionText,
-                    onValueChange = { interactionText = it },
-                    placeholder = {
-                        Text(
-                            text = "Enter interaction…",
-                            style = AgoiiTypography.BodyMedium
-                        )
-                    },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-
-                Spacer(modifier = Modifier.width(AgoiiSpacing.Small))
-
-                ActionButton(
-                    label = "Send",
-                    enabled = interactionText.isNotEmpty(),
-                    onClick = {
-                        onInteraction(interactionText)
-                        interactionText = ""
-                    }
+            items(model.messages) { message ->
+                Text(
+                    text = message.text,
+                    modifier = Modifier.padding(8.dp)
                 )
             }
+        }
 
-            // ── Contract Approval ─────────────────────────────────────
-            // Shown ONLY when replay says showCommitPanel is true (UI-02: no derivation)
-            if (execution.showCommitPanel) {
-                Spacer(modifier = Modifier.height(AgoiiSpacing.Default))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp)
+        ) {
+            TextField(
+                value = input,
+                onValueChange = { input = it },
+                modifier = Modifier.weight(1f)
+            )
 
-                Text(
-                    text = "Contract: ${execution.lastContractStartedId}",
-                    style = AgoiiTypography.Mono,
-                    color = AgoiiColors.ExecutionAccent
-                )
-
-                Spacer(modifier = Modifier.height(AgoiiSpacing.Small))
-
-                ActionButton(
-                    label = "Approve Contract",
-                    onClick = {
-                        onApproveContract(execution.lastContractStartedId)
+            Button(
+                onClick = {
+                    if (input.isNotBlank()) {
+                        onSend(input)
+                        input = ""
                     }
-                )
+                }
+            ) {
+                Text("Send")
             }
         }
     }
