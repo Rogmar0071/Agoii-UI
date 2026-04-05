@@ -3,14 +3,12 @@ package com.agoii.mobile.ui
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
+import androidx.compose.material3.*
+import androidx.compose.foundation.layout.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.Alignment
 import com.agoii.mobile.core.CrashHandler
+import com.agoii.mobile.ui.theme.AgoiiTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -20,16 +18,16 @@ class MainActivity : ComponentActivity() {
         CrashHandler.install(applicationContext)
 
         setContent {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.White),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "AGOII BOOT OK",
-                    color = Color.Black
-                )
+            AgoiiTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Box(
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("AGOII LAYER 2 OK")
+                    }
+                }
             }
         }
     }
