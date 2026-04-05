@@ -3,24 +3,33 @@ package com.agoii.mobile.ui
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.core.view.WindowCompat
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import com.agoii.mobile.core.CrashHandler
-import com.agoii.mobile.ui.theme.AgoiiTheme
 
 class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 🔴 Install crash handler FIRST
         CrashHandler.install(applicationContext)
 
-        WindowCompat.setDecorFitsSystemWindows(window, false)
-
         setContent {
-            AgoiiTheme {
-                // Temporary minimal UI (remove ProjectScreen risk)
-                androidx.compose.material3.Text("Agoii Core Running")
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.White),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "AGOII BOOT OK",
+                    color = Color.Black
+                )
             }
         }
     }
