@@ -27,8 +27,26 @@ jobs:
       - name: Clean
         run: ./gradlew clean
 
-      - name: Build APK (strict)
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Build APK (deterministic diagnostics)
+        run: |
+          ./gradlew assembleDebug \
+            --stacktrace \
+            --info \
+            --no-daemon 2>&1 | tee build.log
+
+      - name: Extract Kotlin compiler errors
+        if: always()
+        run: |
+          echo "====== KOTLIN ERRORS ======"
+          grep -i "^e:" build.log || true
+
+          echo ""
+          echo "====== FIRST FAILURE CONTEXT ======"
+          grep -in "^e:" build.log | head -n 1 | cut -d: -f1 | while read line; do
+            start=$((line > 5 ? line - 5 : 1))
+            end=$((line + 20))
+            sed -n "${start},${end}p" build.log
+          done || true
 
       # ✅ ONLY upload APK if it EXISTS
       - name: Verify APK exists
