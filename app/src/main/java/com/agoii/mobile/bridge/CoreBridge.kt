@@ -75,6 +75,7 @@ class CoreBridge(context: Context) {
                 "timestamp" to System.currentTimeMillis()
             )
         )
+        Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.USER_MESSAGE_SUBMITTED}")
 
         // MQP-PHASE-3 FIX-02: INTENT_SUBMITTED follows USER_MESSAGE_SUBMITTED on every turn.
         // Intent is derived FROM user input — not the other way around.
@@ -84,6 +85,7 @@ class CoreBridge(context: Context) {
             EventTypes.INTENT_SUBMITTED,
             mapOf("objective" to (structuredIntent["objective"] as? String ?: rawInput))
         )
+        Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.INTENT_SUBMITTED}")
 
         val authResult = executionEntryPoint.executeIntent(
             projectId,
@@ -173,6 +175,7 @@ class CoreBridge(context: Context) {
                     "timestamp" to System.currentTimeMillis()
                 )
             )
+            Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.SYSTEM_MESSAGE_EMITTED}")
         }
 
         return output ?: throw LedgerValidationException(
@@ -210,6 +213,7 @@ class CoreBridge(context: Context) {
 
     fun approveContracts(projectId: String) {
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
+        Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.CONTRACTS_APPROVED}")
     }
 
     companion object {

@@ -1,5 +1,6 @@
 package agoii.ui.core
 
+import android.util.Log
 import agoii.ui.bridge.CoreBridge
 
 /**
@@ -29,14 +30,17 @@ class UiStateBinder(private val coreBridge: CoreBridge) {
      * ZERO computation. ZERO derivation. Pure read.
      */
     fun getUiModel(): UiModel {
+        Log.e("AGOII_TRACE", "REPLAY_LOAD_START")
         val state = coreBridge.replayState()
 
-        return UiModel(
+        val model = UiModel(
             governance = state.governanceView,
             execution = state.executionView,
             audit = state.auditView,
             chat = buildChatModel(state)
         )
+        Log.e("AGOII_TRACE", "REPLAY_LOAD_DONE")
+        return model
     }
 
     /**
