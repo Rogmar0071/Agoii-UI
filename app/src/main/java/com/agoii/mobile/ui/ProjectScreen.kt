@@ -68,7 +68,8 @@ fun ProjectScreen(projectId: String) {
         if (trimmed.isEmpty()) return
 
         try {
-            val response = bridge.processInteraction(projectId, trimmed)
+            val structuredIntent = interactionEngine.processInput(trimmed)
+            val response = bridge.processInteraction(projectId, trimmed, structuredIntent)
             inputText = ""
             responseMessage = response
             sendMessage = null

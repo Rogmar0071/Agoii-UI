@@ -215,10 +215,12 @@ class CoreTest {
     }
 
     @Test
-    fun `audit fails when first event is not intent_submitted`() {
+    fun `audit fails when first event is not intent_submitted or user_message_submitted`() {
         val result = LedgerAudit(store(listOf(Event("contracts_generated", emptyMap())))).auditLedger("proj")
         assertFalse(result.valid)
-        assertTrue(result.errors.any { it.contains("intent_submitted") })
+        assertTrue(
+            result.errors.any { it.contains("intent_submitted") || it.contains("user_message_submitted") }
+        )
     }
 
     @Test

@@ -156,9 +156,12 @@ class ValidationLayer {
     // ── 1. STRUCTURAL ─────────────────────────────────────────────────────────
 
     private fun checkStructural(projectId: String, state: ValidationState) {
-        if (state.simulatedSize == 1 && state.candidateType != EventTypes.INTENT_SUBMITTED) {
+        if (state.simulatedSize == 1 &&
+            state.candidateType != EventTypes.INTENT_SUBMITTED &&
+            state.candidateType != EventTypes.USER_MESSAGE_SUBMITTED) {
             throw LedgerValidationException(
-                "First event must be '${EventTypes.INTENT_SUBMITTED}' for '$projectId'"
+                "First event must be '${EventTypes.INTENT_SUBMITTED}' or " +
+                "'${EventTypes.USER_MESSAGE_SUBMITTED}' for '$projectId'"
             )
         }
         if (!state.isSequenceValid) {
