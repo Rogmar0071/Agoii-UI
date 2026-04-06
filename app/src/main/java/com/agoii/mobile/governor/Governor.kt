@@ -4,7 +4,6 @@ import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.ReplayStructuralState
-import java.util.UUID
 
 /**
  * Governor — deterministic ledger-driven state machine.
@@ -286,10 +285,9 @@ class Governor(
                 // be a terminal state. Routing through RECOVERY_CONTRACT keeps the ledger
                 // valid and allows the next Send to proceed normally.
                 //
-                // recoveryId is a UUID because this event is written once to the append-only
-                // ledger and subsequently read back — the Governor never re-generates it
-                // during replay. The downstream idempotency guard (deltaContractRecoveryIds)
-                // operates on already-persisted recoveryIds, so uniqueness is safe here.
+                // recoveryId is derived deterministically from contractId + attempt number so
+                // that replaying the same event sequence always produces the same recoveryId.
+                // The downstream idempotency guard (deltaContractRecoveryIds) relies on this.
                 //
                 // MQP-RECOVERY-CONVERGENCE-BOUND-v1: each RECOVERY_CONTRACT written to the
                 // ledger adds its recoveryId to gv.deltaContractRecoveryIds. The size of
@@ -309,7 +307,7 @@ class Governor(
                             payload = mapOf(
                                 "contractId"       to contractId,
                                 "taskId"           to taskId,
-                                "recoveryId"       to UUID.randomUUID().toString(),
+                                "recoveryId"       to "RECOVERY::$contractId::attempt_$recoveryCount",
                                 "report_reference" to gv.reportReference,
                                 "source"           to "EXECUTION_FAILURE"
                             )
