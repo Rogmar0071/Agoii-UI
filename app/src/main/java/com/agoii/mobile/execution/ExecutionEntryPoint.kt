@@ -1,5 +1,6 @@
 package com.agoii.mobile.execution
 
+import android.util.Log
 import com.agoii.mobile.contracts.AgentProfile
 import com.agoii.mobile.contracts.ContractIntent
 import com.agoii.mobile.contracts.ContractSystemOrchestrator
@@ -144,6 +145,7 @@ class ExecutionEntryPoint(
             )
         }
 
+        Log.e("AGOII_TRACE", "[EXECUTION_EVALUATE_START] projectId=$projectId")
         val authorityResult = executionAuthority.evaluate(ExecutionContractInput(executionContracts, reportId))
 
         if (authorityResult is ExecutionAuthorityResult.Blocked) {
@@ -182,6 +184,7 @@ class ExecutionEntryPoint(
             return AuthorizationResult.blocked("validation failed: ${e.message}", "VALIDATION")
         }
 
+        Log.e("AGOII_TRACE", "[CONTRACT_GENERATED] projectId=$projectId")
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_GENERATED, payload)
         return AuthorizationResult.authorized(
             Event(type = EventTypes.CONTRACTS_GENERATED, payload = payload)

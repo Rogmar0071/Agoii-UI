@@ -1,5 +1,6 @@
 package com.agoii.mobile.core
 
+import android.util.Log
 import java.util.UUID
 
 class EventLedger(private val store: EventStore) : EventRepository {
@@ -49,6 +50,7 @@ class EventLedger(private val store: EventStore) : EventRepository {
 
             val persisted = store.loadEvents(projectId)
             integrity.verify(projectId, persisted)
+            Log.e("AGOII_TRACE", "[LEDGER_APPEND] projectId=$projectId type=${newEvent.type} observerPresent=${observer != null} thread=${Thread.currentThread().name}")
         }
 
         // Notify observer OUTSIDE the lock — allows safe re-entrant appendEvent calls

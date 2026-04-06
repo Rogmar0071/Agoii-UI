@@ -53,6 +53,7 @@ class CoreBridge(context: Context) {
         // on a background coroutine.  The ledger append thread is NEVER blocked by
         // spine execution.
         ledger.registerObserver { projectId ->
+            Log.e("AGOII_TRACE", "[OBSERVER_TRIGGER] projectId=$projectId thread=${Thread.currentThread().name}")
             val lastType = ledger.loadEvents(projectId).lastOrNull()?.type ?: return@registerObserver
             if (lastType == EventTypes.INTENT_SUBMITTED) {
                 Log.e("AGOII_TRACE", "ACTIVATOR_TRIGGERED")
@@ -225,10 +226,12 @@ class CoreBridge(context: Context) {
      * if the observer is notified multiple times before the coroutine starts.
      */
     private fun scheduleSpine(projectId: String) {
+        Log.e("AGOII_TRACE", "[SPINE_SCHEDULE_REQUEST] projectId=$projectId")
         if (!spineRunning.compareAndSet(false, true)) {
             Log.e("AGOII_TRACE", "SPINE_SKIPPED_ALREADY_RUNNING")
             return
         }
+        Log.e("AGOII_TRACE", "[SPINE_GUARD] projectId=$projectId acquired=${spineRunning.get()}")
         spineScope.launch {
             try {
                 activateSpine(projectId)
@@ -251,6 +254,7 @@ class CoreBridge(context: Context) {
      * spine failure does not propagate to [scheduleSpine]'s outer catch (which also logs).
      */
     private fun activateSpine(projectId: String) {
+        Log.e("AGOII_TRACE", "[SPINE_ACTIVATE] projectId=$projectId thread=${Thread.currentThread().name}")
         Log.e("AGOII_TRACE", "SPINE_ACTIVATE: $projectId")
         try {
             val events = ledger.loadEvents(projectId)
