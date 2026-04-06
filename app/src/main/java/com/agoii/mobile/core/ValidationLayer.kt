@@ -400,7 +400,7 @@ class ValidationLayer {
         payload: Map<String, Any>,
         state: ValidationState
     ) {
-        requireKeys(projectId, EventTypes.TASK_STARTED, payload, TASK_WITH_POSITION_KEYS)
+        requireKeys(projectId, EventTypes.TASK_STARTED, payload, TASK_STARTED_KEYS)
         val taskId = payload["taskId"]?.toString()
             ?: throw LedgerValidationException(
                 "TASK_STARTED missing 'taskId' in '$projectId'"
@@ -993,6 +993,9 @@ class ValidationLayer {
             "recoveryId", "contractId", "taskId", "report_reference", "source"
         )
         private val TASK_ID_ONLY            = setOf("taskId")
+        // TASK_STARTED_KEYS extends TASK_WITH_POSITION_KEYS with contractId so that
+        // Governor can carry contractId forward to ExecutionAuthority (MQP-CRASH-RECOVERY-v1).
+        private val TASK_STARTED_KEYS       = setOf("taskId", "contractId", "position", "total")
         private val TASK_WITH_POSITION_KEYS = setOf("taskId", "position", "total")
         private val CONTRACT_COMPLETED_KEYS = setOf("position", "total", "contractId", "report_reference")
         private val EXECUTION_COMPLETED_KEYS = setOf("total")

@@ -244,7 +244,14 @@ class Governor(
             }
 
             EventTypes.TASK_ASSIGNED -> {
-                val taskId   = lastPayload["taskId"] as? String ?: return null
+                val taskId     = lastPayload["taskId"] as? String ?: return null
+                // contractId is read from the TASK_ASSIGNED payload (set by Governor when emitting
+                // TASK_ASSIGNED from CONTRACT_STARTED / DELTA_CONTRACT_CREATED).
+                // Falls back to GovernanceView.lastContractStartedId (sourced from the originating
+                // CONTRACT_STARTED event via Replay) so the field is always deterministically present.
+                val contractId = lastPayload["contractId"] as? String
+                    ?: gv.lastContractStartedId.takeIf { it.isNotEmpty() }
+                    ?: return null
                 val position = resolveInt(lastPayload["position"])
                     ?: gv.lastContractStartedPosition
                     ?: return null
@@ -253,7 +260,12 @@ class Governor(
                     ?: return null
                 Event(
                     type    = EventTypes.TASK_STARTED,
-                    payload = mapOf("taskId" to taskId, "position" to position, "total" to total)
+                    payload = mapOf(
+                        "taskId"     to taskId,
+                        "contractId" to contractId,
+                        "position"   to position,
+                        "total"      to total
+                    )
                 )
             }
 

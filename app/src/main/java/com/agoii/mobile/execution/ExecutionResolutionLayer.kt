@@ -58,7 +58,7 @@ class ExecutionResolutionLayer {
                 resolveExecuted(result, projectId, ledger, events)
             }
             is ExecutionAuthorityExecutionResult.Blocked -> {
-                resolveBlocked(result, projectId, ledger)
+                resolveBlocked(result, projectId, ledger, events)
             }
             ExecutionAuthorityExecutionResult.IcsCompleted -> {
                 // ICS_COMPLETED event already handled by ExecutionAuthority
@@ -85,57 +85,76 @@ class ExecutionResolutionLayer {
         events:    List<Event>
     ): ResolutionOutcome {
         val status = result.executionStatus
-        
-        // Emit TASK_EXECUTED event
-        val eventPayload = mutableMapOf<String, Any>(
-            "taskId" to result.taskId,
-            "contractId" to result.taskId, // Use taskId as contractId for now
-            "executionStatus" to status.name
+
+        // Extract task context from the last TASK_STARTED event so the TASK_EXECUTED
+        // payload satisfies the ValidationLayer schema (MQP-CRASH-RECOVERY-v1).
+        val taskStartedEvent = events.lastOrNull { it.type == EventTypes.TASK_STARTED }
+        val contractId = taskStartedEvent?.payload?.get("contractId")?.toString()
+            ?: result.taskId  // backward-compat fallback for pre-fix ledgers
+        val position = resolveInt(taskStartedEvent?.payload?.get("position")) ?: 1
+        val total    = resolveInt(taskStartedEvent?.payload?.get("total"))    ?: 1
+        val reportReference = extractReportReference(events, contractId)
+
+        val validationStatus = if (status == ExecutionStatus.SUCCESS) "VALIDATED" else "FAILED"
+
+        val eventPayload = mapOf(
+            "taskId"           to result.taskId,
+            "contractId"       to contractId,
+            "contractorId"     to "openai-inference",
+            "executionStatus"  to status.name,
+            "validationStatus" to validationStatus,
+            "report_reference" to reportReference,
+            "position"         to position,
+            "total"            to total
         )
-        
-        // Add artifact and validated sections for SUCCESS
-        if (status == ExecutionStatus.SUCCESS && result.report != null) {
-            // TODO: Extract artifact from report when available
-            // For now, just record SUCCESS without artifact payload
-        }
-        
-        ledger.appendEvent(
-            projectId,
-            EventTypes.TASK_EXECUTED,
-            eventPayload
-        )
-        
+
+        ledger.appendEvent(projectId, EventTypes.TASK_EXECUTED, eventPayload)
+
         // RULE 5: Recovery hook for FAILURE
         if (status == ExecutionStatus.FAILURE) {
             return resolveFailureRecovery(result.taskId, projectId, ledger, events)
         }
-        
+
         return ResolutionOutcome.Success
     }
 
     /**
-     * Resolve Blocked result → TASK_BLOCKED event.
+     * Resolve Blocked result → TASK_EXECUTED(FAILURE) event.
      *
-     * RULE 2: Strict mapping
+     * RULE 2: Strict mapping — payload must conform to TASK_EXECUTED_KEYS schema.
      * RULE 3: No logic leakage - direct translation
      */
     private fun resolveBlocked(
         result:    ExecutionAuthorityExecutionResult.Blocked,
         projectId: String,
-        ledger:    EventLedger
+        ledger:    EventLedger,
+        events:    List<Event>
     ): ResolutionOutcome {
-        // Note: TASK_BLOCKED is not in EventTypes yet
-        // For now, emit TASK_EXECUTED(FAILURE) with reason
+        // Extract task context from the last TASK_STARTED event so the TASK_EXECUTED
+        // payload satisfies the ValidationLayer schema (MQP-CRASH-RECOVERY-v1).
+        val taskStartedEvent = events.lastOrNull { it.type == EventTypes.TASK_STARTED }
+        val taskId     = taskStartedEvent?.payload?.get("taskId")?.toString()    ?: "unknown-task"
+        val contractId = taskStartedEvent?.payload?.get("contractId")?.toString() ?: taskId
+        val position   = resolveInt(taskStartedEvent?.payload?.get("position")) ?: 1
+        val total      = resolveInt(taskStartedEvent?.payload?.get("total"))    ?: 1
+        val reportReference = extractReportReference(events, contractId)
+
         ledger.appendEvent(
             projectId,
             EventTypes.TASK_EXECUTED,
             mapOf(
-                "executionStatus" to ExecutionStatus.FAILURE.name,
-                "reason" to result.reason,
-                "blocked" to true
+                "taskId"             to taskId,
+                "contractId"         to contractId,
+                "contractorId"       to "NO_CONTRACTOR_MATCH",
+                "executionStatus"    to ExecutionStatus.FAILURE.name,
+                "validationStatus"   to "FAILED",
+                "validationReasons"  to listOf(result.reason),
+                "report_reference"   to reportReference,
+                "position"           to position,
+                "total"              to total
             )
         )
-        
+
         return ResolutionOutcome.Blocked(result.reason)
     }
 
@@ -196,6 +215,18 @@ class ExecutionResolutionLayer {
     // ══════════════════════════════════════════════════════════════════════════
     // HELPER FUNCTIONS (Pure utility - no side effects)
     // ══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Normalise a numeric payload value to Int regardless of JSON deserialisation type.
+     * Gson deserialises all JSON numbers as Double; this helper handles all runtime types.
+     */
+    private fun resolveInt(value: Any?): Int? = when (value) {
+        is Int    -> value
+        is Double -> value.toInt()
+        is Long   -> value.toInt()
+        is String -> value.toIntOrNull()
+        else      -> null
+    }
 
     /**
      * Count RECOVERY_CONTRACT events for given contractId.
