@@ -8,6 +8,25 @@ class EventLedger(private val store: EventStore) : EventRepository {
     private val validation = ValidationLayer()
     private val integrity = LedgerIntegrity()
 
+    /**
+     * CONTRACT MQP-LEDGER-ACTIVATION-v1 — observer notified AFTER each successful append.
+     * Notification is delivered outside the per-project lock so observers may safely
+     * call [appendEvent] without risk of deadlock.
+     */
+    @Volatile private var observer: LedgerObserver? = null
+
+    /**
+     * Register the single [LedgerObserver] for this ledger instance.
+     * Replaces any previously registered observer.
+     *
+     * CONTRACT MQP-LEDGER-ACTIVATION-v1: called once by CoreBridge during initialisation,
+     * before any events are appended.  Must be called from a single thread.
+     * The [observer] field is @Volatile so all subsequent reads see the write immediately.
+     */
+    fun registerObserver(observer: LedgerObserver) {
+        this.observer = observer
+    }
+
     override fun appendEvent(projectId: String, type: String, payload: Map<String, Any>) {
         lock.withLock(projectId) {
 
@@ -31,6 +50,10 @@ class EventLedger(private val store: EventStore) : EventRepository {
             val persisted = store.loadEvents(projectId)
             integrity.verify(projectId, persisted)
         }
+
+        // Notify observer OUTSIDE the lock — allows safe re-entrant appendEvent calls
+        // from within the observer (e.g. Governor advancing the ledger).
+        observer?.onLedgerUpdated(projectId)
     }
 
     override fun loadEvents(projectId: String): List<Event> =

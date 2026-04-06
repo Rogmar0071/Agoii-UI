@@ -23,13 +23,24 @@ import agoii.ui.core.ReplayStructuralState
  *
  * This is the ONLY interface UI is permitted to depend on.
  * Implementation lives outside the UI module (system layer).
+ *
+ * CONTRACT MQP-UI-INGRESS-ONLY-v1:
+ *   UI MUST NOT trigger execution.  The only permitted ingress point is
+ *   [appendUserMessage].  Execution is driven exclusively by the EventLedger
+ *   observer (CONTRACT MQP-LEDGER-ACTIVATION-v1).
  */
 interface CoreBridge {
     /** Returns the current ReplayStructuralState — the SOLE source of UI truth. */
     fun replayState(): ReplayStructuralState
 
-    /** Routes user interaction through the governed pipeline. */
-    fun processInteraction(input: String)
+    /**
+     * CONTRACT MQP-UI-INGRESS-ONLY-v1 — pure ledger ingress.
+     *
+     * Appends USER_MESSAGE_SUBMITTED + INTENT_SUBMITTED and returns immediately.
+     * MUST NOT trigger execution, the Governor, or any processing loop.
+     * System progression is driven exclusively by the EventLedger observer.
+     */
+    fun appendUserMessage(input: String)
 
     /** Routes contract approval through the governed pipeline. */
     fun approveContracts(contractId: String)
@@ -51,16 +62,16 @@ class UiBridgeAdapter(private val coreBridge: CoreBridge) {
     }
 
     /**
-     * Forward user interaction to the system core via CoreBridge.
-     * UI-03: ALL interactions routed through CoreBridge.
+     * CONTRACT MQP-UI-INGRESS-ONLY-v1: UI is a pure event emitter.
+     * Appends USER_MESSAGE_SUBMITTED + INTENT_SUBMITTED via CoreBridge.
+     * NO execution is triggered from this call.
      */
-    fun interact(input: String) {
-        coreBridge.processInteraction(input)
+    fun appendUserMessage(input: String) {
+        coreBridge.appendUserMessage(input)
     }
 
     /**
      * Forward contract approval to the system core via CoreBridge.
-     * UI-03: ALL interactions routed through CoreBridge.
      */
     fun approve(contractId: String) {
         coreBridge.approveContracts(contractId)

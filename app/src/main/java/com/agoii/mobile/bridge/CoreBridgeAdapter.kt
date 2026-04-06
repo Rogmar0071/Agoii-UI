@@ -44,13 +44,11 @@ class CoreBridgeAdapter(
         return mapToUiState(coreState, eventCount)
     }
 
-    override fun processInteraction(input: String) {
-        Log.e("AGOII_TRACE", "COREBRIDGE_ENTER")
-        // ARCH-09: Interpret raw human-language input into structured intent BEFORE
-        // crossing into the system CoreBridge boundary.
+    override fun appendUserMessage(input: String) {
+        Log.e("AGOII_TRACE", "COREBRIDGE_APPEND_USER_MESSAGE")
         val structuredIntent = interactionEngine.processInput(input)
-        systemBridge.processInteraction(projectId, input, structuredIntent)
-        Log.e("AGOII_TRACE", "COREBRIDGE_EXIT")
+        systemBridge.appendUserMessage(projectId, input, structuredIntent)
+        Log.e("AGOII_TRACE", "COREBRIDGE_APPEND_USER_MESSAGE_EXIT")
     }
 
     override fun approveContracts(contractId: String) {
