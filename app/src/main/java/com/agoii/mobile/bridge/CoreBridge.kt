@@ -103,42 +103,15 @@ class CoreBridge(context: Context) {
     }
 
     /**
-     * Ledger ingress only — appends USER_MESSAGE_SUBMITTED and INTENT_SUBMITTED then returns
-     * "INGRESS_ACCEPTED".  Execution is driven by the [LedgerObserver] registered in [init].
-     * Caller MUST NOT hold [spineRunning]; the observer acquires it independently.
+     * Ledger ingress only — delegates to [appendUserMessage] then returns "INGRESS_ACCEPTED".
+     * Execution is driven by the [LedgerObserver] registered in [init].
      */
     private fun processInteractionCore(
         projectId: String,
         rawInput: String,
         structuredIntent: Map<String, Any>
     ): String {
-
-        // MQP-PHASE-3 FIX-02: USER_MESSAGE_SUBMITTED is ALWAYS the true ledger origin event.
-        // It is written first on every turn:
-        //   turn-1:  USER_MESSAGE_SUBMITTED (first event — origin truth)
-        //   turn-2+: SYSTEM_MESSAGE_EMITTED → USER_MESSAGE_SUBMITTED (legal transition)
-        ledger.appendEvent(
-            projectId,
-            EventTypes.USER_MESSAGE_SUBMITTED,
-            mapOf(
-                "messageId" to UUID.randomUUID().toString(),
-                "text"      to rawInput,
-                "timestamp" to System.currentTimeMillis()
-            )
-        )
-        Log.e("AGOII_TRACE", "LEDGER_APPEND_USER")
-
-        // MQP-PHASE-3 FIX-02: INTENT_SUBMITTED follows USER_MESSAGE_SUBMITTED on every turn.
-        // Intent is derived FROM user input — not the other way around.
-        // Transition: USER_MESSAGE_SUBMITTED → INTENT_SUBMITTED (legal — FIX-02).
-        ledger.appendEvent(
-            projectId,
-            EventTypes.INTENT_SUBMITTED,
-            mapOf("objective" to resolveObjective(structuredIntent, rawInput))
-        )
-        Log.e("AGOII_TRACE", "LEDGER_APPEND_INTENT")
-
-        // INGRESS COMPLETE — LedgerObserver drives the spine via INTENT_SUBMITTED trigger.
+        appendUserMessage(projectId, rawInput, structuredIntent)
         return "INGRESS_ACCEPTED"
     }
 
