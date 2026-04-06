@@ -5,13 +5,15 @@ import agoii.ui.bridge.CoreBridge
 /**
  * UiActionDispatcher — routes ALL user actions through CoreBridge.
  *
- * UI-03 INTERACTION FLOW: No direct execution calls permitted.
- * ALL interactions go through coreBridge.processInteraction() or coreBridge.approveContracts().
+ * CONTRACT MQP-UI-INGRESS-ONLY-v1: UI interaction is exclusively routed via
+ * CoreBridge.appendUserMessage().  NO execution calls are permitted from the UI layer.
+ * Contract approval (approve) is the only non-ingress action, and it writes a
+ * ledger event (CONTRACTS_APPROVED) — not an execution trigger.
  *
  * Invariants:
- *   UI-STOP-03                 — ONLY allowed path: UI → CoreBridge → Nemoclaw
+ *   UI-STOP-03                 — ONLY allowed path: UI → CoreBridge → Ledger
  *   ARCH-02 (LAYER_PURITY)    — No cross-layer calls
- *   DONE-UI-03                 — ALL interactions routed through CoreBridge
+ *   MQP-UI-INGRESS-ONLY-v1    — sendInteraction is NO-OP; appendUserMessage is the path
  */
 class UiActionDispatcher(private val coreBridge: CoreBridge) {
 

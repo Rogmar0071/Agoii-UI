@@ -21,8 +21,8 @@ class EventLedger(private val store: EventStore) : EventRepository {
      *
      * CONTRACT MQP-LEDGER-ACTIVATION-v1: called once by CoreBridge during initialisation,
      * before any events are appended.  Must be called from a single thread.
+     * The [observer] field is @Volatile so all subsequent reads see the write immediately.
      */
-    @Synchronized
     fun registerObserver(observer: LedgerObserver) {
         this.observer = observer
     }

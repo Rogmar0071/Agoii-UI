@@ -26,7 +26,7 @@ import androidx.compose.ui.unit.dp
  *   - NO message storage. NO history. NO state derivation in UI.
  *
  * @param modifier  Compose modifier supplied by parent layout.
- * @param onSend    Callback routed to CoreBridge.processInteraction().
+ * @param onSend    Callback routed to CoreBridge.appendUserMessage() (pure ledger ingress).
  */
 @Composable
 fun InteractionPanel(

@@ -131,12 +131,10 @@ class CoreBridge(context: Context) {
         // MQP-PHASE-3 FIX-02: INTENT_SUBMITTED follows USER_MESSAGE_SUBMITTED on every turn.
         // Intent is derived FROM user input — not the other way around.
         // Transition: USER_MESSAGE_SUBMITTED → INTENT_SUBMITTED (legal — FIX-02).
-        val objective = structuredIntent["objective"] as? String
-            ?: rawInput.also { Log.e("AGOII_TRACE", "INTENT_OBJECTIVE_MISSING: using rawInput as fallback") }
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
-            mapOf("objective" to objective)
+            mapOf("objective" to resolveObjective(structuredIntent, rawInput))
         )
         Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.INTENT_SUBMITTED}")
 
@@ -308,8 +306,7 @@ class CoreBridge(context: Context) {
         )
         Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.USER_MESSAGE_SUBMITTED}")
 
-        val intentObjective = structuredIntent["objective"] as? String
-            ?: rawInput.also { Log.e("AGOII_TRACE", "INTENT_OBJECTIVE_MISSING: using rawInput as fallback") }
+        val intentObjective = resolveObjective(structuredIntent, rawInput)
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
@@ -350,6 +347,16 @@ class CoreBridge(context: Context) {
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
         Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.CONTRACTS_APPROVED}")
     }
+
+    /**
+     * Extract the objective string from [structuredIntent], falling back to [rawInput]
+     * if the key is absent or not a String.  Logs a warning when the fallback is used.
+     */
+    private fun resolveObjective(structuredIntent: Map<String, Any>, rawInput: String): String =
+        structuredIntent["objective"] as? String
+            ?: rawInput.also {
+                Log.e("AGOII_TRACE", "INTENT_OBJECTIVE_MISSING: using rawInput as fallback")
+            }
 
     companion object {
         private const val MAX_GOVERNOR_CYCLES = 30

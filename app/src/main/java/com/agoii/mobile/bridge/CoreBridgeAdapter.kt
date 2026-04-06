@@ -44,28 +44,15 @@ class CoreBridgeAdapter(
         return mapToUiState(coreState, eventCount)
     }
 
-    override fun processInteraction(input: String) {
-        Log.e("AGOII_TRACE", "COREBRIDGE_ENTER")
-        // ARCH-09: Interpret raw human-language input into structured intent BEFORE
-        // crossing into the system CoreBridge boundary.
-        val structuredIntent = interactionEngine.processInput(input)
-        systemBridge.processInteraction(projectId, input, structuredIntent)
-        Log.e("AGOII_TRACE", "COREBRIDGE_EXIT")
-    }
-
-    override fun approveContracts(contractId: String) {
-        systemBridge.approveContracts(projectId)
-    }
-
-    /**
-     * ARCH-09: Interpretation occurs at the adapter boundary, BEFORE system CoreBridge.
-     * MQP-UI-DECOUPLE-EXECUTION-v1: Append USER_MESSAGE_SUBMITTED and trigger execution.
-     */
     override fun appendUserMessage(input: String) {
         Log.e("AGOII_TRACE", "COREBRIDGE_APPEND_USER_MESSAGE")
         val structuredIntent = interactionEngine.processInput(input)
         systemBridge.appendUserMessage(projectId, input, structuredIntent)
         Log.e("AGOII_TRACE", "COREBRIDGE_APPEND_USER_MESSAGE_EXIT")
+    }
+
+    override fun approveContracts(contractId: String) {
+        systemBridge.approveContracts(projectId)
     }
 
     private fun mapToUiState(
