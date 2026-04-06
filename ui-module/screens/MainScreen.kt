@@ -1,5 +1,6 @@
 package agoii.ui.screens
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -46,6 +47,8 @@ fun MainScreen(
     onInteraction: (String) -> Unit,
     onApproveContract: (String) -> Unit
 ) {
+    Log.e("AGOII_TRACE", "MAIN_SCREEN_RENDERED")
+
     Column(
         modifier = Modifier
             .fillMaxSize()

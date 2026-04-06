@@ -27,6 +27,7 @@ class MainActivity : ComponentActivity() {
         val systemBridge = CoreBridge(applicationContext)
 
         setContent {
+            Log.e("AGOII_TRACE", "SET_CONTENT_ROOT")
             AgoiiTheme {
                 var currentProjectId by remember { mutableStateOf("default") }
                 val scope = rememberCoroutineScope()
@@ -55,6 +56,7 @@ class MainActivity : ComponentActivity() {
                         currentProjectId = project.id
                     },
                     onInteraction = { input ->
+                        Log.e("AGOII_TRACE", "ROOT_SEND_TRIGGERED: $input")
                         scope.launch(Dispatchers.IO) {
                             try {
                                 dispatcher.sendInteraction(input)

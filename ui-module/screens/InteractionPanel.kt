@@ -35,6 +35,8 @@ fun InteractionPanel(
 ) {
     var input by remember { mutableStateOf("") }
 
+    Log.e("AGOII_TRACE", "INTERACTION_PANEL_RENDERED")
+
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
