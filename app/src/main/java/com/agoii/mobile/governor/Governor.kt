@@ -290,17 +290,31 @@ class Governor(
                 // ledger and subsequently read back — the Governor never re-generates it
                 // during replay. The downstream idempotency guard (deltaContractRecoveryIds)
                 // operates on already-persisted recoveryIds, so uniqueness is safe here.
+                //
+                // MQP-RECOVERY-CONVERGENCE-BOUND-v1: each RECOVERY_CONTRACT written to the
+                // ledger adds its recoveryId to gv.deltaContractRecoveryIds. The size of
+                // that set therefore equals the number of recovery attempts already made for
+                // this project. When the bound is reached (≥ 3), emit EXECUTION_COMPLETED
+                // instead so the system terminates cleanly rather than looping forever.
                 if (execStatus == "FAILURE") {
-                    Event(
-                        type    = EventTypes.RECOVERY_CONTRACT,
-                        payload = mapOf(
-                            "contractId"       to contractId,
-                            "taskId"           to taskId,
-                            "recoveryId"       to UUID.randomUUID().toString(),
-                            "report_reference" to gv.reportReference,
-                            "source"           to "EXECUTION_FAILURE"
+                    val recoveryCount = gv.deltaContractRecoveryIds.size
+                    if (recoveryCount >= 3) {
+                        Event(
+                            type    = EventTypes.EXECUTION_COMPLETED,
+                            payload = mapOf("total" to gv.totalContracts)
                         )
-                    )
+                    } else {
+                        Event(
+                            type    = EventTypes.RECOVERY_CONTRACT,
+                            payload = mapOf(
+                                "contractId"       to contractId,
+                                "taskId"           to taskId,
+                                "recoveryId"       to UUID.randomUUID().toString(),
+                                "report_reference" to gv.reportReference,
+                                "source"           to "EXECUTION_FAILURE"
+                            )
+                        )
+                    }
                 } else if (execStatus == "SUCCESS" && validStatus == "VALIDATED") {
                     Event(
                         type    = EventTypes.TASK_COMPLETED,

@@ -115,6 +115,9 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.TASK_STARTED && to == EventTypes.TASK_FAILED) return true
             // ExecutionAuthority: recovery contract written immediately after TASK_EXECUTED (FAILURE)
             if (from == EventTypes.TASK_EXECUTED && to == EventTypes.RECOVERY_CONTRACT) return true
+            // Governor (MQP-RECOVERY-CONVERGENCE-BOUND-v1): convergence ceiling — after 3 recovery
+            // attempts TASK_EXECUTED(FAILURE) terminates cleanly with EXECUTION_COMPLETED.
+            if (from == EventTypes.TASK_EXECUTED && to == EventTypes.EXECUTION_COMPLETED) return true
             // CLC-1 delta loop: Governor responds to recovery by creating a delta contract
             if (from == EventTypes.RECOVERY_CONTRACT && to == EventTypes.DELTA_CONTRACT_CREATED) return true
             // CLC-1 delta loop: Governor emits TASK_ASSIGNED from DELTA_CONTRACT_CREATED
