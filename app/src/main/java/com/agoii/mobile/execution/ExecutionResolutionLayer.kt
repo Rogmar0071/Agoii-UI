@@ -31,9 +31,30 @@ class ExecutionResolutionLayer {
     companion object {
         /** Recovery source identifier for ExecutionAuthority-triggered recoveries. */
         private const val RECOVERY_SOURCE = "EXECUTION_AUTHORITY"
-        
+
         /** Maximum delta recovery attempts before convergence ceiling. */
         private const val MAX_DELTA = 3
+
+        /**
+         * Contractor ID used when execution is routed through the OpenAI inference pathway.
+         * Set by resolveExecuted for all successfully dispatched tasks.
+         */
+        private const val CONTRACTOR_ID_OPENAI = "openai-inference"
+
+        /**
+         * Contractor ID written to TASK_EXECUTED when the task was blocked before a
+         * contractor could be selected.  Distinguishable from a normal resolution failure
+         * so that downstream tooling can identify pre-dispatch blocks without ambiguity.
+         */
+        private const val CONTRACTOR_ID_NO_MATCH = "NO_CONTRACTOR_MATCH"
+
+        /**
+         * Placeholder taskId used only when resolveBlocked is called and no TASK_STARTED
+         * event exists in the event list.  This is a critical invariant violation that
+         * MUST NOT occur in a well-formed ledger; the value is deliberately distinctive
+         * so that it is immediately visible in any audit trace.
+         */
+        private const val MISSING_TASK_ID = "ERROR_MISSING_TASK_STARTED_EVENT"
     }
 
     /**
@@ -103,7 +124,7 @@ class ExecutionResolutionLayer {
         val eventPayload = mapOf(
             "taskId"           to result.taskId,
             "contractId"       to contractId,
-            "contractorId"     to "openai-inference",
+            "contractorId"     to CONTRACTOR_ID_OPENAI,
             "executionStatus"  to status.name,
             "validationStatus" to validationStatus,
             "report_reference" to reportReference,
@@ -137,9 +158,10 @@ class ExecutionResolutionLayer {
         // payload satisfies the ValidationLayer schema (MQP-CRASH-RECOVERY-v1).
         val taskStartedEvent = events.lastOrNull { it.type == EventTypes.TASK_STARTED }
         val taskId     = taskStartedEvent?.payload?.get("taskId")?.toString()
-            // Fallback indicates a missing TASK_STARTED event — should not occur in a
-            // well-formed ledger but prevents a crash if the ledger is in an unexpected state.
-            ?: "missing-task-id"
+            // MISSING_TASK_ID indicates a critical invariant violation (no TASK_STARTED found).
+            // This must never occur in a well-formed ledger; the distinctive value makes it
+            // immediately visible in audit traces.
+            ?: MISSING_TASK_ID
         val contractId = taskStartedEvent?.payload?.get("contractId")?.toString() ?: taskId
         val position   = resolveInt(taskStartedEvent?.payload?.get("position")) ?: 1
         val total      = resolveInt(taskStartedEvent?.payload?.get("total"))    ?: 1
@@ -151,7 +173,7 @@ class ExecutionResolutionLayer {
             mapOf(
                 "taskId"             to taskId,
                 "contractId"         to contractId,
-                "contractorId"       to "NO_CONTRACTOR_MATCH",
+                "contractorId"       to CONTRACTOR_ID_NO_MATCH,
                 "executionStatus"    to ExecutionStatus.FAILURE.name,
                 "validationStatus"   to "FAILED",
                 "validationReasons"  to listOf(result.reason),

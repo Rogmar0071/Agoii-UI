@@ -163,7 +163,7 @@ class CoreBridge(context: Context) {
                 EventTypes.SYSTEM_MESSAGE_EMITTED,
                 mapOf(
                     "messageId" to UUID.randomUUID().toString(),
-                    "text"      to (output ?: "execution_complete"),
+                    "text"      to (output ?: EXECUTION_COMPLETE_MESSAGE),
                     "source"    to "execution",
                     "timestamp" to System.currentTimeMillis()
                 )
@@ -209,5 +209,13 @@ class CoreBridge(context: Context) {
 
     companion object {
         private const val MAX_GOVERNOR_CYCLES = 30
+
+        /**
+         * Default text written to SYSTEM_MESSAGE_EMITTED when the execution loop
+         * completes (EXECUTION_COMPLETED) but no specific output string was captured.
+         * In practice `output` is always set to "SYSTEM_READY" before the loop exits,
+         * so this constant serves only as a documented, distinctive fallback.
+         */
+        private const val EXECUTION_COMPLETE_MESSAGE = "execution_complete"
     }
 }
