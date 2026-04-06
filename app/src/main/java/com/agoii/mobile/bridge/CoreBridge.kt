@@ -92,90 +92,83 @@ class CoreBridge(context: Context) {
         var cycles = 0
         var output: String? = null
 
-        // MQP-PHASE-3 FIX-03: SYSTEM_MESSAGE_EMITTED MUST ALWAYS be written —
-        // regardless of success, failure, recovery, or partial execution.
-        try {
-            while (cycles < MAX_GOVERNOR_CYCLES) {
+        while (cycles < MAX_GOVERNOR_CYCLES) {
 
-                val lastEvent = ledger.loadEvents(projectId).lastOrNull()
-                val lastType  = lastEvent?.type
+            val lastEvent = ledger.loadEvents(projectId).lastOrNull()
+            val lastType  = lastEvent?.type
 
-                when {
+            when {
 
-                    lastType == EventTypes.TASK_STARTED -> {
+                lastType == EventTypes.TASK_STARTED -> {
 
-                        val execResult = executionAuthority.executeFromLedger(projectId, ledger)
+                    val execResult = executionAuthority.executeFromLedger(projectId, ledger)
 
-                        when (execResult) {
+                    when (execResult) {
 
-                            is ExecutionAuthorityExecutionResult.Executed -> {
-                                if (execResult.executionStatus != ExecutionStatus.SUCCESS) {
-                                    throw LedgerValidationException(
-                                        "ICS BLOCKED: Execution failed — status=${execResult.executionStatus}"
-                                    )
-                                }
-
-                                // TEMP: Until report wiring is restored
-                                output = "SYSTEM_READY"
-                            }
-
-                            is ExecutionAuthorityExecutionResult.Blocked -> {
-                                throw LedgerValidationException("ICS BLOCKED: ${execResult.reason}")
-                            }
-
-                            else -> {
+                        is ExecutionAuthorityExecutionResult.Executed -> {
+                            if (execResult.executionStatus != ExecutionStatus.SUCCESS) {
                                 throw LedgerValidationException(
-                                    "ICS BLOCKED: Unexpected execution result: ${execResult::class.simpleName}"
+                                    "ICS BLOCKED: Execution failed — status=${execResult.executionStatus}"
                                 )
                             }
+
+                            // TEMP: Until report wiring is restored
+                            output = "SYSTEM_READY"
                         }
-                    }
 
-                    lastType == EventTypes.TASK_EXECUTED &&
-                    lastEvent?.payload?.get("executionStatus")?.toString() == "FAILURE" -> {
+                        is ExecutionAuthorityExecutionResult.Blocked -> {
+                            throw LedgerValidationException("ICS BLOCKED: ${execResult.reason}")
+                        }
 
-                        executionAuthority.executeFromLedger(projectId, ledger)
-                    }
-
-                    else -> {
-                        val govResult = governor.runGovernor(projectId)
-
-                        when (govResult) {
-                            Governor.GovernorResult.COMPLETED -> break
-                            Governor.GovernorResult.DRIFT ->
-                                throw LedgerValidationException(
-                                    "ICS BLOCKED: Governor drift at state '$lastType' (cycle $cycles)"
-                                )
-                            else -> { }
+                        else -> {
+                            throw LedgerValidationException(
+                                "ICS BLOCKED: Unexpected execution result: ${execResult::class.simpleName}"
+                            )
                         }
                     }
                 }
 
-                cycles++
+                lastType == EventTypes.TASK_EXECUTED &&
+                lastEvent?.payload?.get("executionStatus")?.toString() == "FAILURE" -> {
+
+                    executionAuthority.executeFromLedger(projectId, ledger)
+                }
+
+                else -> {
+                    val govResult = governor.runGovernor(projectId)
+
+                    when (govResult) {
+                        Governor.GovernorResult.COMPLETED -> break
+                        Governor.GovernorResult.DRIFT ->
+                            throw LedgerValidationException(
+                                "ICS BLOCKED: Governor drift at state '$lastType' (cycle $cycles)"
+                            )
+                        else -> { }
+                    }
+                }
             }
-        } finally {
-            // MQP-PHASE-3 FIX-01 + FIX-03: Guaranteed SYSTEM_MESSAGE_EMITTED emission.
-            // The Governor exits the loop at EXECUTION_COMPLETED (GovernorResult.COMPLETED),
-            // so EXECUTION_COMPLETED → SYSTEM_MESSAGE_EMITTED is the valid, deterministic anchor.
-            //
-            // FIX-04: CoreBridge must NOT compute results or call InteractionEngine here.
-            // SYSTEM_MESSAGE_EMITTED.text is the deterministic execution output — no interpretation.
-            //
-            // FIX-03: Emission is unconditional — no swallowing. Any ledger failure propagates.
-            val outputText = output ?: "execution_failed"
+
+            cycles++
+        }
+
+        // MQP-LIFECYCLE-TERMINATION-CORRECTION-v1: SYSTEM_MESSAGE_EMITTED is a terminal state
+        // confirmation — NOT a fallback. It is only emitted when the Governor completed
+        // successfully and EXECUTION_COMPLETED is the current last event on the ledger.
+        // On any failure path the exception propagates and no SYSTEM_MESSAGE_EMITTED is written,
+        // leaving the ledger in a valid (non-corrupted) state.
+        val finalState = ledger.loadEvents(projectId).lastOrNull()?.type
+        if (finalState == EventTypes.EXECUTION_COMPLETED) {
             ledger.appendEvent(
                 projectId,
                 EventTypes.SYSTEM_MESSAGE_EMITTED,
                 mapOf(
                     "messageId" to UUID.randomUUID().toString(),
-                    "text"      to outputText,
+                    "text"      to (output ?: "execution_complete"),
                     "source"    to "execution",
                     "timestamp" to System.currentTimeMillis()
                 )
             )
         }
-
-        val finalState = ledger.loadEvents(projectId).lastOrNull()?.type
 
         return output ?: throw LedgerValidationException(
             "ICS BLOCKED: No output produced — final state='$finalState' cycles=$cycles"
