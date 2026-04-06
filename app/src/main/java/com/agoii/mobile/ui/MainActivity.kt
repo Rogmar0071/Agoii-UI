@@ -74,7 +74,7 @@ class MainActivity : ComponentActivity() {
                         currentProjectId = project.id
                     },
                     onInteraction = { input ->
-                        Log.e("AGOII_TRACE", "UI_EVENT_EMIT: $input")
+                        Log.e("AGOII_TRACE", "UI_SEND: $input")
                         scope.launch {
                             try {
                                 val updated = withContext(Dispatchers.IO) {
@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity() {
                                 Log.e("AGOII_TRACE", "MODEL_APPLIED")
 
                             } catch (t: Throwable) {
-                                Log.e("AGOII_FATAL_UI", t.stackTraceToString())
+                                Log.e("AGOII_FATAL_CRASH", t.stackTraceToString())
                                 model = UiModel(
                                     governance = GovernanceView(
                                         lastEventType = "UI_ERROR",
@@ -104,7 +104,7 @@ class MainActivity : ComponentActivity() {
                                         messages = listOf(
                                             ChatMessage(
                                                 id = "ui_error",
-                                                text = t.stackTraceToString(),
+                                                text = "CRASH: " + t.message,
                                                 isUser = false
                                             )
                                         ),

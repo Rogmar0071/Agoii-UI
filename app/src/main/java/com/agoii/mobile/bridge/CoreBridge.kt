@@ -50,7 +50,12 @@ class CoreBridge(context: Context) {
                 val lastType = ledger.loadEvents(projectId).lastOrNull()?.type ?: return
                 if (lastType != EventTypes.INTENT_SUBMITTED) return
 
-                if (!spineRunning.compareAndSet(false, true)) return
+                Log.e("AGOII_TRACE", "ACTIVATOR_TRIGGERED")
+
+                if (!spineRunning.compareAndSet(false, true)) {
+                    Log.e("AGOII_TRACE", "SPINE_SKIPPED_ALREADY_RUNNING")
+                    return
+                }
                 try {
                     activateSpine(projectId)
                 } finally {
@@ -127,6 +132,7 @@ class CoreBridge(context: Context) {
             )
         )
         Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.USER_MESSAGE_SUBMITTED}")
+        Log.e("AGOII_TRACE", "LEDGER_APPEND_USER")
 
         // MQP-PHASE-3 FIX-02: INTENT_SUBMITTED follows USER_MESSAGE_SUBMITTED on every turn.
         // Intent is derived FROM user input — not the other way around.
@@ -137,8 +143,7 @@ class CoreBridge(context: Context) {
             mapOf("objective" to resolveObjective(structuredIntent, rawInput))
         )
         Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.INTENT_SUBMITTED}")
-
-        return runSpine(projectId, structuredIntent)
+        Log.e("AGOII_TRACE", "LEDGER_APPEND_INTENT")
     }
 
     /**
@@ -146,6 +151,7 @@ class CoreBridge(context: Context) {
      * Requires [spineRunning] to already be held by the caller.
      */
     private fun runSpine(projectId: String, structuredIntent: Map<String, Any>): String {
+        Log.e("AGOII_TRACE", "SPINE_START")
         val authResult = executionEntryPoint.executeIntent(
             projectId,
             structuredIntent
@@ -166,8 +172,9 @@ class CoreBridge(context: Context) {
             when {
 
                 lastType == EventTypes.TASK_STARTED -> {
-
+                    Log.e("AGOII_TRACE", "EXECUTION_START")
                     val execResult = executionAuthority.executeFromLedger(projectId, ledger)
+                    Log.e("AGOII_TRACE", "EXECUTION_DONE: ${execResult::class.simpleName}")
 
                     when (execResult) {
 
@@ -196,11 +203,13 @@ class CoreBridge(context: Context) {
 
                 lastType == EventTypes.TASK_EXECUTED &&
                 lastEvent?.payload?.get("executionStatus")?.toString() == "FAILURE" -> {
-
+                    Log.e("AGOII_TRACE", "EXECUTION_START")
                     executionAuthority.executeFromLedger(projectId, ledger)
+                    Log.e("AGOII_TRACE", "EXECUTION_DONE: retry")
                 }
 
                 else -> {
+                    Log.e("AGOII_TRACE", "GOVERNOR_STEP: state=$lastType cycle=$cycles")
                     val govResult = governor.runGovernor(projectId)
 
                     when (govResult) {
@@ -305,6 +314,7 @@ class CoreBridge(context: Context) {
             )
         )
         Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.USER_MESSAGE_SUBMITTED}")
+        Log.e("AGOII_TRACE", "LEDGER_APPEND_USER")
 
         val intentObjective = resolveObjective(structuredIntent, rawInput)
         ledger.appendEvent(
@@ -313,6 +323,7 @@ class CoreBridge(context: Context) {
             mapOf("objective" to intentObjective)
         )
         Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.INTENT_SUBMITTED}")
+        Log.e("AGOII_TRACE", "LEDGER_APPEND_INTENT")
 
         // HARD STOP — execution is driven by LedgerObserver (CONTRACT MQP-LEDGER-ACTIVATION-v1)
         Log.e("AGOII_TRACE", "CORE_APPEND_USER_MESSAGE_COMPLETE")

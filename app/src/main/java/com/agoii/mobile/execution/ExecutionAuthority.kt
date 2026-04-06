@@ -1,5 +1,6 @@
 package com.agoii.mobile.execution
 
+import android.util.Log
 import com.agoii.mobile.assembly.AssemblyExecutionResult
 import com.agoii.mobile.assembly.AssemblyModule
 import com.agoii.mobile.contractor.ContractorRegistry
@@ -58,6 +59,11 @@ class ExecutionAuthority(
         val events = ledger.loadEvents(projectId)
         val lastEvent = events.lastOrNull()
             ?: return ExecutionAuthorityExecutionResult.NotTriggered
+
+        if (events.none { it.type == EventTypes.CONTRACTS_GENERATED }) {
+            Log.e("AGOII_TRACE", "EXECUTION_BLOCKED_NO_CONTRACTS")
+            return ExecutionAuthorityExecutionResult.NotTriggered
+        }
 
         val result = when (lastEvent.type) {
             EventTypes.TASK_STARTED -> handleTaskStarted(projectId, lastEvent, events)
