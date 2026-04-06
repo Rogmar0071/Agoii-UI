@@ -155,6 +155,16 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.COMMIT_CONTRACT && to == EventTypes.COMMIT_ABORTED) return true
             // ICS loop: re-issued interaction contract (CLOSURE-04)
             if (from == EventTypes.CONTRACTS_GENERATED && to == EventTypes.CONTRACTS_GENERATED) return true
+            // Conversational layer (MQP-PHASE-3): user message follows intent submission
+            if (from == EventTypes.INTENT_SUBMITTED && to == EventTypes.USER_MESSAGE_SUBMITTED) return true
+            // Conversational layer (MQP-PHASE-3): execution can proceed from user message
+            if (from == EventTypes.USER_MESSAGE_SUBMITTED && to == EventTypes.CONTRACTS_GENERATED) return true
+            // Conversational layer (MQP-PHASE-3): system message emitted after ICS cycle
+            if (from == EventTypes.ICS_COMPLETED && to == EventTypes.SYSTEM_MESSAGE_EMITTED) return true
+            // Conversational layer (MQP-PHASE-3): commit layer may follow system message
+            if (from == EventTypes.SYSTEM_MESSAGE_EMITTED && to == EventTypes.COMMIT_CONTRACT) return true
+            // Conversational layer (MQP-PHASE-3): multi-turn — next user message follows system response
+            if (from == EventTypes.SYSTEM_MESSAGE_EMITTED && to == EventTypes.USER_MESSAGE_SUBMITTED) return true
             return false
         }
     }

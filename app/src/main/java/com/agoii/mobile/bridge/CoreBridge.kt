@@ -9,6 +9,7 @@ import com.agoii.mobile.execution.*
 import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.interaction.*
 import com.agoii.mobile.observability.*
+import java.util.UUID
 
 class CoreBridge(context: Context) {
 
@@ -54,6 +55,18 @@ class CoreBridge(context: Context) {
                 mapOf("objective" to (structuredIntent["objective"] as? String ?: input))
             )
         }
+
+        // MQP-PHASE-3: Record user message in ledger before execution.
+        // Every user input becomes a USER_MESSAGE_SUBMITTED event — one event = one message.
+        ledger.appendEvent(
+            projectId,
+            EventTypes.USER_MESSAGE_SUBMITTED,
+            mapOf(
+                "messageId" to UUID.randomUUID().toString(),
+                "text"      to input,
+                "timestamp" to System.currentTimeMillis()
+            )
+        )
 
         val authResult = executionEntryPoint.executeIntent(
             projectId,
@@ -129,6 +142,28 @@ class CoreBridge(context: Context) {
         }
 
         val finalState = ledger.loadEvents(projectId).lastOrNull()?.type
+
+        // MQP-PHASE-3: Record system response in ledger after the ICS execution cycle.
+        // InteractionEngine formats the execution state as human-readable text.
+        // CoreBridge forwards the result — NO text logic, NO interpretation.
+        val interactionResult = interactionEngine.execute(
+            InteractionContract(
+                contractId = projectId,
+                query      = "execution_summary",
+                outputType = OutputType.EXPLANATION
+            ),
+            InteractionInput(state = replay.replayStructuralState(projectId))
+        )
+        ledger.appendEvent(
+            projectId,
+            EventTypes.SYSTEM_MESSAGE_EMITTED,
+            mapOf(
+                "messageId" to UUID.randomUUID().toString(),
+                "text"      to interactionResult.content,
+                "source"    to "execution",
+                "timestamp" to System.currentTimeMillis()
+            )
+        )
 
         return output ?: throw LedgerValidationException(
             "ICS BLOCKED: No output produced — final state='$finalState' cycles=$cycles"

@@ -11,8 +11,9 @@ import agoii.ui.bridge.CoreBridge
  * Invariants:
  *   RL-01  (REPLAY_PURITY)     — State from replay only
  *   ARCH-04 (STATE_AUTHORITY)   — Single derivation path
- *   UI-STOP-01                  — Reads ONLY governanceView, executionView, auditView
+ *   UI-STOP-01                  — Reads ONLY governanceView, executionView, auditView, conversation
  *   UI-STOP-02                  — No derived state, no logic
+ *   MQP-PHASE-3                 — conversation = state.conversation (Replay sole authority)
  */
 class UiStateBinder(private val coreBridge: CoreBridge) {
 
@@ -23,7 +24,7 @@ class UiStateBinder(private val coreBridge: CoreBridge) {
      *   state.governanceView → UiModel.governance
      *   state.executionView  → UiModel.execution
      *   state.auditView      → UiModel.audit
-     *   state.executionView  → UiModel.chat (via buildChatModel)
+     *   state.conversation   → UiModel.chat (via buildChatModel)
      *
      * ZERO computation. ZERO derivation. Pure read.
      */
@@ -41,27 +42,22 @@ class UiStateBinder(private val coreBridge: CoreBridge) {
     /**
      * Build ChatUiModel from ReplayStructuralState.
      *
-     * Reads ONLY state.executionView.executionStatus — no other derivation.
-     * Single system message reflects current execution state from Replay.
+     * MQP-PHASE-3: messages = state.conversation projected to ChatMessage.
+     * NO hardcoded messages. NO derivation. NO invented history.
+     * Replay is the SOLE authority — UI is a pure projection.
      *
-     * CHAT-UI-02: NO stored history. NO invented messages. Replay is sole authority.
+     * If the conversation is empty (no messages yet in ledger),
+     * the messages list is empty and the UI renders an empty chat surface.
      */
     private fun buildChatModel(state: ReplayStructuralState): ChatUiModel {
-        val message = when (state.executionView.executionStatus) {
-            "success" -> "Execution completed"
-            "failed"  -> "Execution failed"
-            "running" -> "Execution in progress"
-            else      -> "Awaiting input"
-        }
-
         return ChatUiModel(
-            messages = listOf(
+            messages = state.conversation.map { msg ->
                 ChatMessage(
-                    id = "system",
-                    text = message,
-                    isUser = false
+                    id = msg.id,
+                    text = msg.text,
+                    isUser = msg.isUser
                 )
-            ),
+            },
             currentInput = ""
         )
     }
