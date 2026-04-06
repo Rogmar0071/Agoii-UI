@@ -12,6 +12,11 @@ import com.agoii.mobile.bridge.CoreBridge
 import com.agoii.mobile.bridge.CoreBridgeAdapter
 import com.agoii.mobile.core.CrashHandler
 import com.agoii.mobile.ui.theme.AgoiiTheme
+import agoii.ui.core.AuditView
+import agoii.ui.core.ChatUiModel
+import agoii.ui.core.ExecutionView
+import agoii.ui.core.GovernanceView
+import agoii.ui.core.UiModel
 import agoii.ui.core.UiStateBinder
 import agoii.ui.core.UiActionDispatcher
 import agoii.ui.core.ProjectDescriptor
@@ -27,6 +32,7 @@ class MainActivity : ComponentActivity() {
         val systemBridge = CoreBridge(applicationContext)
 
         setContent {
+            Log.e("AGOII_TRACE", "SET_CONTENT_ROOT")
             AgoiiTheme {
                 var currentProjectId by remember { mutableStateOf("default") }
                 val scope = rememberCoroutineScope()
@@ -37,10 +43,22 @@ class MainActivity : ComponentActivity() {
                 val binder = remember(adapter) { UiStateBinder(adapter) }
                 val dispatcher = remember(adapter) { UiActionDispatcher(adapter) }
 
-                var model by remember { mutableStateOf(binder.getUiModel()) }
+                // Safe empty defaults — no IO on the composition (Main) thread.
+                var model by remember {
+                    mutableStateOf(
+                        UiModel(
+                            governance = GovernanceView(),
+                            execution  = ExecutionView(),
+                            audit      = AuditView(),
+                            chat       = ChatUiModel(messages = emptyList(), currentInput = "")
+                        )
+                    )
+                }
 
+                // Load initial state from IO thread; update model on Main thread.
                 LaunchedEffect(binder) {
-                    model = binder.getUiModel()
+                    val loaded = withContext(Dispatchers.IO) { binder.getUiModel() }
+                    model = loaded
                 }
 
                 val projects = remember {
@@ -55,34 +73,29 @@ class MainActivity : ComponentActivity() {
                         currentProjectId = project.id
                     },
                     onInteraction = { input ->
-                        scope.launch(Dispatchers.IO) {
+                        Log.e("AGOII_TRACE", "ROOT_SEND_TRIGGERED: $input")
+                        scope.launch {
                             try {
-                                dispatcher.sendInteraction(input)
-                                withContext(Dispatchers.Main) {
-                                    model = binder.getUiModel()
+                                val updated = withContext(Dispatchers.IO) {
+                                    dispatcher.sendInteraction(input)
+                                    binder.getUiModel()
                                 }
-                            } catch (e: Exception) {
-                                Log.e(
-                                    "AGOII_COROUTINE_FAILURE",
-                                    "sendInteraction failed",
-                                    e
-                                )
+                                model = updated
+                            } catch (t: Throwable) {
+                                Log.e("AGOII_FATAL", t.stackTraceToString())
                             }
                         }
                     },
                     onApproveContract = { contractId ->
-                        scope.launch(Dispatchers.IO) {
+                        scope.launch {
                             try {
-                                dispatcher.approve(contractId)
-                                withContext(Dispatchers.Main) {
-                                    model = binder.getUiModel()
+                                val updated = withContext(Dispatchers.IO) {
+                                    dispatcher.approve(contractId)
+                                    binder.getUiModel()
                                 }
-                            } catch (e: Exception) {
-                                Log.e(
-                                    "AGOII_COROUTINE_FAILURE",
-                                    "approve failed",
-                                    e
-                                )
+                                model = updated
+                            } catch (t: Throwable) {
+                                Log.e("AGOII_FATAL", t.stackTraceToString())
                             }
                         }
                     }

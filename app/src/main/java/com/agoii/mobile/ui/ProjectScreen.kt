@@ -29,6 +29,8 @@ import com.agoii.mobile.ui.theme.*
 @Composable
 fun ProjectScreen(projectId: String) {
 
+    android.util.Log.e("AGOII_TRACE", "DEAD_UI_PATH_TRIGGERED")
+
     val context = LocalContext.current
     val bridge  = remember { CoreBridge(context) }
     val interactionEngine = remember { InteractionEngine() }
