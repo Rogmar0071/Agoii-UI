@@ -41,6 +41,8 @@ fun InteractionPanel(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        Text("🔥 ACTIVE PANEL")
+
         TextField(
             value = input,
             onValueChange = { input = it },
@@ -53,7 +55,7 @@ fun InteractionPanel(
         Button(
             enabled = true,
             onClick = {
-                Log.e("AGOII_TEST", "SEND_CLICK_CONFIRMED")
+                Log.e("AGOII_TRACE", "SEND_CLICK_CONFIRMED")
                 onSend(input)
                 input = ""
             }

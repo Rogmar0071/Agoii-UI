@@ -74,38 +74,28 @@ class MainActivity : ComponentActivity() {
                     },
                     onInteraction = { input ->
                         Log.e("AGOII_TRACE", "ROOT_SEND_TRIGGERED: $input")
-                        scope.launch(Dispatchers.IO) {
+                        scope.launch {
                             try {
-                                dispatcher.sendInteraction(input)
-                                // Fetch updated state on IO thread, then post to Main.
-                                val newModel = binder.getUiModel()
-                                withContext(Dispatchers.Main) {
-                                    model = newModel
+                                val updated = withContext(Dispatchers.IO) {
+                                    dispatcher.sendInteraction(input)
+                                    binder.getUiModel()
                                 }
-                            } catch (e: Throwable) {
-                                Log.e(
-                                    "AGOII_COROUTINE_FAILURE",
-                                    "sendInteraction failed",
-                                    e
-                                )
+                                model = updated
+                            } catch (t: Throwable) {
+                                Log.e("AGOII_FATAL", t.stackTraceToString())
                             }
                         }
                     },
                     onApproveContract = { contractId ->
-                        scope.launch(Dispatchers.IO) {
+                        scope.launch {
                             try {
-                                dispatcher.approve(contractId)
-                                // Fetch updated state on IO thread, then post to Main.
-                                val newModel = binder.getUiModel()
-                                withContext(Dispatchers.Main) {
-                                    model = newModel
+                                val updated = withContext(Dispatchers.IO) {
+                                    dispatcher.approve(contractId)
+                                    binder.getUiModel()
                                 }
-                            } catch (e: Throwable) {
-                                Log.e(
-                                    "AGOII_COROUTINE_FAILURE",
-                                    "approve failed",
-                                    e
-                                )
+                                model = updated
+                            } catch (t: Throwable) {
+                                Log.e("AGOII_FATAL", t.stackTraceToString())
                             }
                         }
                     }
