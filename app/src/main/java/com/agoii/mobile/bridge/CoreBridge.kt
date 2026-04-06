@@ -1,6 +1,7 @@
 package com.agoii.mobile.bridge
 
 import android.content.Context
+import android.util.Log
 import com.agoii.mobile.infrastructure.OpenAIClient
 import com.agoii.mobile.contractor.*
 import com.agoii.mobile.contracts.*
@@ -44,10 +45,14 @@ class CoreBridge(context: Context) {
      */
     fun processInteraction(projectId: String, rawInput: String, structuredIntent: Map<String, Any>): String {
         if (rawInput.isBlank()) return "No input provided"
+        Log.e("AGOII_TRACE", "CORE_START")
         return try {
-            processInteractionInternal(projectId, rawInput, structuredIntent)
-        } catch (_: Exception) {
-            "Execution failed"
+            val result = processInteractionInternal(projectId, rawInput, structuredIntent)
+            Log.e("AGOII_TRACE", "CORE_END")
+            result
+        } catch (t: Throwable) {
+            Log.e("AGOII_TRACE", "CORE_CRASH", t)
+            throw t
         }
     }
 
