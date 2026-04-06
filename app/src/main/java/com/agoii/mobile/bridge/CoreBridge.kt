@@ -10,6 +10,10 @@ import com.agoii.mobile.execution.*
 import com.agoii.mobile.governor.Governor
 import com.agoii.mobile.observability.*
 import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class CoreBridge(context: Context) {
 
@@ -24,14 +28,19 @@ class CoreBridge(context: Context) {
     private val contractorRegistry  = ContractorRegistry()
 
     /**
-     * Guard that prevents the LedgerActivator from running a second, concurrent execution
-     * spine while one is already in progress (either via the observer or the legacy
-     * [processInteractionInternal] path).
-     *
-     * CONTRACT MQP-LEDGER-ACTIVATION-v1: compareAndSet semantics ensure exactly-once
-     * activation per submitted intent.
+     * Guard that prevents concurrent spine executions.
+     * CONTRACT MQP-LEDGER-ACTIVATION-ASYNC-v1: owned by [scheduleSpine], which sets it
+     * before launching the coroutine and clears it in the finally block.
      */
     private val spineRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Background scope for async spine execution.
+     * CONTRACT MQP-LEDGER-ACTIVATION-ASYNC-v1: spine must never run inline with the
+     * ledger append.  [SupervisorJob] prevents unhandled spine failures from cancelling
+     * the scope.
+     */
+    private val spineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
         driverRegistry.register(
@@ -39,30 +48,17 @@ class CoreBridge(context: Context) {
             LLMContractor(OpenAIClient())
         )
 
-        // CONTRACT MQP-LEDGER-ACTIVATION-v1 — register the execution spine as a ledger
-        // observer so that every event append can trigger system progression.
-        // The guard (spineRunning) prevents re-entrant or concurrent spine execution.
-        ledger.registerObserver(object : LedgerObserver {
-            override fun onLedgerUpdated(projectId: String) {
-                // Only activate on INTENT_SUBMITTED — the sole UI-origin trigger.
-                // All other events (emitted by the spine itself) fire this observer but
-                // the guard ensures they are ignored while the spine is running.
-                val lastType = ledger.loadEvents(projectId).lastOrNull()?.type ?: return
-                if (lastType != EventTypes.INTENT_SUBMITTED) return
-
+        // CONTRACT MQP-LEDGER-ACTIVATION-ASYNC-v1 — observer is notification-only.
+        // It reads the last event type and, on INTENT_SUBMITTED, schedules the spine
+        // on a background coroutine.  The ledger append thread is NEVER blocked by
+        // spine execution.
+        ledger.registerObserver { projectId ->
+            val lastType = ledger.loadEvents(projectId).lastOrNull()?.type ?: return@registerObserver
+            if (lastType == EventTypes.INTENT_SUBMITTED) {
                 Log.e("AGOII_TRACE", "ACTIVATOR_TRIGGERED")
-
-                if (!spineRunning.compareAndSet(false, true)) {
-                    Log.e("AGOII_TRACE", "SPINE_SKIPPED_ALREADY_RUNNING")
-                    return
-                }
-                try {
-                    activateSpine(projectId)
-                } finally {
-                    spineRunning.set(false)
-                }
+                scheduleSpine(projectId)
             }
-        })
+        }
     }
 
     private val executionAuthority = ExecutionAuthority(contractorRegistry, driverRegistry)
@@ -221,14 +217,38 @@ class CoreBridge(context: Context) {
     }
 
     /**
+     * CONTRACT MQP-LEDGER-ACTIVATION-ASYNC-v1 — async spine scheduler.
+     *
+     * Acquires [spineRunning] then launches [activateSpine] on [spineScope] so that the
+     * ledger append thread (which calls the observer) returns immediately.  [spineRunning]
+     * is released in the coroutine's finally block, ensuring exactly-once execution even
+     * if the observer is notified multiple times before the coroutine starts.
+     */
+    private fun scheduleSpine(projectId: String) {
+        if (!spineRunning.compareAndSet(false, true)) {
+            Log.e("AGOII_TRACE", "SPINE_SKIPPED_ALREADY_RUNNING")
+            return
+        }
+        spineScope.launch {
+            try {
+                activateSpine(projectId)
+            } catch (t: Throwable) {
+                Log.e("AGOII_TRACE", "SPINE_ASYNC_ERROR: ${t.stackTraceToString()}")
+            } finally {
+                spineRunning.set(false)
+            }
+        }
+    }
+
+    /**
      * CONTRACT MQP-LEDGER-ACTIVATION-v1 — execution spine driven from ledger observer.
      *
-     * Invoked by the [LedgerObserver] registered in [init] when [EventTypes.INTENT_SUBMITTED]
-     * is the last event on the ledger for [projectId].  Caller holds [spineRunning].
+     * Invoked by [scheduleSpine] on a background coroutine.  [spineRunning] is held by the
+     * caller for the lifetime of this call.
      *
      * Reads the structured intent from the INTENT_SUBMITTED event payload, then runs the
      * full execution spine to completion.  Any error is logged and swallowed so that the
-     * calling observer callback never propagates an exception to [EventLedger.appendEvent].
+     * spine failure does not propagate to [scheduleSpine]'s outer catch (which also logs).
      */
     private fun activateSpine(projectId: String) {
         Log.e("AGOII_TRACE", "SPINE_ACTIVATE: $projectId")

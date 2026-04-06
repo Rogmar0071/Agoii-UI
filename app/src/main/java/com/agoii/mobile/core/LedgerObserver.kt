@@ -14,7 +14,7 @@ package com.agoii.mobile.core
  *  - Implementations MUST NOT assume the notification is delivered inside any lock.
  *  - Implementations MUST guard against concurrent or recursive activation.
  */
-interface LedgerObserver {
+fun interface LedgerObserver {
     /**
      * Called after an event has been successfully persisted and verified for
      * [projectId].  The observer MUST NOT assume any specific event type; it
