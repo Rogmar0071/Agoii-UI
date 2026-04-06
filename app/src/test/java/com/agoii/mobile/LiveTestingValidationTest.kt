@@ -59,11 +59,18 @@ class LiveTestingValidationTest {
      *  - [appendEvent] notifies [observer] OUTSIDE the append operation.
      *  - [observer] may safely call [appendEvent] without deadlock.
      *  - [registerObserver] replaces any previously registered observer.
+     *
+     * NOTE: This is a test-only implementation. Thread-safety is provided by
+     * a synchronized list; for single-threaded tests this is sufficient.
+     * It is NOT intended as a template for production code.
      */
     private class InMemoryStore : EventRepository {
         @Volatile private var observer: LedgerObserver? = null
-        private val events = mutableListOf<Event>()
+        private val events = java.util.Collections.synchronizedList(mutableListOf<Event>())
 
+        /**
+         * Registers the test observer. Test-only — not designed for concurrent callers.
+         */
         fun registerObserver(observer: LedgerObserver) {
             this.observer = observer
         }
@@ -74,7 +81,7 @@ class LiveTestingValidationTest {
             observer?.onLedgerUpdated(projectId)
         }
 
-        override fun loadEvents(projectId: String): List<Event> = events.toList()
+        override fun loadEvents(projectId: String): List<Event> = synchronized(events) { events.toList() }
     }
 
     private fun store(vararg initial: Event): InMemoryStore {
@@ -450,8 +457,9 @@ class LiveTestingValidationTest {
     fun `TEST-07 objective falls back to non-blank value when explicit objective absent`() {
         val rawInput = "fallback input"
         val s = InMemoryStore()
-        // Simulate resolveObjective fallback: objective == null → use rawInput
-        val objective = null as String? ?: rawInput
+        // Simulate resolveObjective fallback: explicit objective is absent → use rawInput
+        val explicitObjective: String? = null
+        val objective = explicitObjective ?: rawInput
         s.appendEvent(pid, EventTypes.INTENT_SUBMITTED, mapOf("objective" to objective))
 
         val event = s.loadEvents(pid).first { it.type == EventTypes.INTENT_SUBMITTED }
