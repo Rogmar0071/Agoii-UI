@@ -421,7 +421,7 @@ class Replay(private val eventStore: EventRepository) {
         val conversation = conversationMutable.toList()
 
         // ── Compute lastSystemMessage (MQP-REPLAY-VISUALIZATION-v1) ──────────
-        val lastSystemMessage = conversationMutable.lastOrNull { !it.isUser }?.text
+        val lastSystemMessage = conversation.lastOrNull { !it.isUser }?.text
 
         // ── Assemble views ────────────────────────────────────────────────────
 
