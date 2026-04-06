@@ -29,6 +29,7 @@ fun LayerStack(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    android.util.Log.e("AGOII_TRACE", "DEAD_UI_PATH_TRIGGERED")
     Column(
         modifier = modifier
             .fillMaxWidth()

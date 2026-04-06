@@ -1,5 +1,6 @@
 package com.agoii.mobile.ui.orchestration
 
+import android.util.Log
 import com.agoii.mobile.core.ReplayStructuralState
 import com.agoii.mobile.ui.core.StateProjection
 import com.agoii.mobile.ui.core.UIState
@@ -39,6 +40,7 @@ class UIViewOrchestrator(
      * Returns an immutable [CombinedViewState].
      */
     fun orchestrate(replayState: ReplayStructuralState): CombinedViewState {
+        Log.e("AGOII_TRACE", "DEAD_UI_PATH_TRIGGERED")
         val uiState = projection.project(replayState)
         val moduleOutputs = buildModuleOutputs(uiState)
         return CombinedViewState(core = uiState, modules = moduleOutputs)
