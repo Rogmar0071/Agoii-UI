@@ -131,7 +131,6 @@ class CoreBridge(context: Context) {
                 "timestamp" to System.currentTimeMillis()
             )
         )
-        Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.USER_MESSAGE_SUBMITTED}")
         Log.e("AGOII_TRACE", "LEDGER_APPEND_USER")
 
         // MQP-PHASE-3 FIX-02: INTENT_SUBMITTED follows USER_MESSAGE_SUBMITTED on every turn.
@@ -142,8 +141,9 @@ class CoreBridge(context: Context) {
             EventTypes.INTENT_SUBMITTED,
             mapOf("objective" to resolveObjective(structuredIntent, rawInput))
         )
-        Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.INTENT_SUBMITTED}")
         Log.e("AGOII_TRACE", "LEDGER_APPEND_INTENT")
+
+        return runSpine(projectId, structuredIntent)
     }
 
     /**
@@ -313,7 +313,6 @@ class CoreBridge(context: Context) {
                 "timestamp" to System.currentTimeMillis()
             )
         )
-        Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.USER_MESSAGE_SUBMITTED}")
         Log.e("AGOII_TRACE", "LEDGER_APPEND_USER")
 
         val intentObjective = resolveObjective(structuredIntent, rawInput)
@@ -322,7 +321,6 @@ class CoreBridge(context: Context) {
             EventTypes.INTENT_SUBMITTED,
             mapOf("objective" to intentObjective)
         )
-        Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.INTENT_SUBMITTED}")
         Log.e("AGOII_TRACE", "LEDGER_APPEND_INTENT")
 
         // HARD STOP — execution is driven by LedgerObserver (CONTRACT MQP-LEDGER-ACTIVATION-v1)
