@@ -68,6 +68,22 @@ data class AuditView(
 )
 
 /**
+ * ConversationMessage — a single message turn projected from Replay state.
+ *
+ * Maps 1:1 from core ConversationMessage (derived from USER_MESSAGE_SUBMITTED /
+ * SYSTEM_MESSAGE_EMITTED events). UI MUST NOT construct or alter these.
+ *
+ * Invariants:
+ *   RL-01 (REPLAY_PURITY)  — originate exclusively from Replay
+ *   MQP-PHASE-3            — 1 event = 1 message, no merging or inference
+ */
+data class ConversationMessage(
+    val id: String,
+    val text: String,
+    val isUser: Boolean
+)
+
+/**
  * ReplayStructuralState — the COMPLETE state surface for UI rendering.
  *
  * This is the ONLY object the UI reads.
@@ -76,7 +92,8 @@ data class AuditView(
 data class ReplayStructuralState(
     val governanceView: GovernanceView = GovernanceView(),
     val executionView: ExecutionView = ExecutionView(),
-    val auditView: AuditView = AuditView()
+    val auditView: AuditView = AuditView(),
+    val conversation: List<ConversationMessage> = emptyList()
 )
 
 /**
@@ -88,7 +105,8 @@ data class ReplayStructuralState(
 data class UiModel(
     val governance: GovernanceView,
     val execution: ExecutionView,
-    val audit: AuditView
+    val audit: AuditView,
+    val chat: ChatUiModel
 )
 
 /**

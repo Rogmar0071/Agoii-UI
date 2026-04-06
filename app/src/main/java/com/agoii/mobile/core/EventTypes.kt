@@ -26,6 +26,13 @@ object EventTypes {
     const val COMMIT_EXECUTED     = "commit_executed"
     const val COMMIT_ABORTED      = "commit_aborted"
 
+    // ── Conversational layer events (MQP-PHASE-3) ─────────────────────────────
+    // Emitted by CoreBridge to record the conversational surface in the ledger.
+    // USER_MESSAGE_SUBMITTED: user input captured before execution.
+    // SYSTEM_MESSAGE_EMITTED: formatted execution result after the ICS cycle.
+    const val USER_MESSAGE_SUBMITTED = "user_message_submitted"
+    const val SYSTEM_MESSAGE_EMITTED = "system_message_emitted"
+
     // ── Task execution lifecycle events ──────────────────────────────────────
     const val TASK_CREATED            = "task_created"
     const val TASK_ASSIGNED           = "task_assigned"
@@ -77,7 +84,9 @@ object EventTypes {
         CONTRACT_APPROVED,
         COMMIT_CONTRACT,
         COMMIT_EXECUTED,
-        COMMIT_ABORTED
+        COMMIT_ABORTED,
+        USER_MESSAGE_SUBMITTED,
+        SYSTEM_MESSAGE_EMITTED
     )
 
     /** Default number of contracts generated per intent. */

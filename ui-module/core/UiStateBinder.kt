@@ -11,8 +11,9 @@ import agoii.ui.bridge.CoreBridge
  * Invariants:
  *   RL-01  (REPLAY_PURITY)     — State from replay only
  *   ARCH-04 (STATE_AUTHORITY)   — Single derivation path
- *   UI-STOP-01                  — Reads ONLY governanceView, executionView, auditView
+ *   UI-STOP-01                  — Reads ONLY governanceView, executionView, auditView, conversation
  *   UI-STOP-02                  — No derived state, no logic
+ *   MQP-PHASE-3                 — conversation = state.conversation (Replay sole authority)
  */
 class UiStateBinder(private val coreBridge: CoreBridge) {
 
@@ -23,6 +24,7 @@ class UiStateBinder(private val coreBridge: CoreBridge) {
      *   state.governanceView → UiModel.governance
      *   state.executionView  → UiModel.execution
      *   state.auditView      → UiModel.audit
+     *   state.conversation   → UiModel.chat (via buildChatModel)
      *
      * ZERO computation. ZERO derivation. Pure read.
      */
@@ -32,7 +34,33 @@ class UiStateBinder(private val coreBridge: CoreBridge) {
         return UiModel(
             governance = state.governanceView,
             execution = state.executionView,
-            audit = state.auditView
+            audit = state.auditView,
+            chat = buildChatModel(state)
+        )
+    }
+
+    /**
+     * Build ChatUiModel from ReplayStructuralState.
+     *
+     * MQP-PHASE-3: messages = state.conversation projected to ChatMessage.
+     * NO hardcoded messages. NO derivation. NO invented history.
+     * Replay is the SOLE authority — UI is a pure projection.
+     *
+     * If the conversation is empty (no messages yet in ledger),
+     * the messages list is empty and the UI renders an empty chat surface.
+     */
+    private fun buildChatModel(state: ReplayStructuralState): ChatUiModel {
+        return ChatUiModel(
+            messages = state.conversation.map { msg ->
+                ChatMessage(
+                    id = msg.id,
+                    text = msg.text,
+                    isUser = msg.isUser
+                )
+            },
+            // currentInput is always empty when bound from Replay — transient typing state
+            // is owned by the InteractionPanel composable (local `var input by remember {}`).
+            currentInput = ""
         )
     }
 }

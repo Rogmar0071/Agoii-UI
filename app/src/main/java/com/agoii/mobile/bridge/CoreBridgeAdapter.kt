@@ -4,6 +4,7 @@ import agoii.ui.bridge.CoreBridge as UiCoreBridge
 import agoii.ui.core.GovernanceView as UiGovernanceView
 import agoii.ui.core.ExecutionView as UiExecutionView
 import agoii.ui.core.AuditView as UiAuditView
+import agoii.ui.core.ConversationMessage as UiConversationMessage
 import agoii.ui.core.ReplayStructuralState as UiReplayStructuralState
 
 /**
@@ -64,7 +65,10 @@ class CoreBridgeAdapter(
                 totalEvents = eventCount,
                 contractIds = core.auditView.contractIds,
                 hasContracts = core.auditView.hasContracts
-            )
+            ),
+            conversation = core.conversation.map { msg ->
+                UiConversationMessage(id = msg.id, text = msg.text, isUser = msg.isUser)
+            }
         )
     }
 }

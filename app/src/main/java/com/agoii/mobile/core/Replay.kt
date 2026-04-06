@@ -22,6 +22,18 @@ package com.agoii.mobile.core
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * ConversationMessage — a single message turn derived from the ledger.
+ *
+ * Every instance maps 1:1 to either a USER_MESSAGE_SUBMITTED or SYSTEM_MESSAGE_EMITTED event.
+ * No merging, no filtering, no inference — one event equals one message (MQP-PHASE-3).
+ */
+data class ConversationMessage(
+    val id: String,
+    val text: String,
+    val isUser: Boolean
+)
+
+/**
  * Authoritative state container produced by the Replay Engine.
  *
  * AGOII-REPLAY-AUTHORITY-PARTITION-001: access is partitioned by authority.
@@ -30,7 +42,8 @@ package com.agoii.mobile.core
 data class ReplayStructuralState(
     val governanceView: GovernanceView,
     val executionView:  ExecutionView,
-    val auditView:      AuditView
+    val auditView:      AuditView,
+    val conversation:   List<ConversationMessage> = emptyList()
 )
 
 // ── GovernanceView ────────────────────────────────────────────────────────────
@@ -250,6 +263,9 @@ class Replay(private val eventStore: EventRepository) {
         var successfulTaskExecutions = 0
         val contractIdsMutable = mutableListOf<String>()
 
+        // ── Conversation accumulators (MQP-PHASE-3) ───────────────────────────
+        val conversationMutable = mutableListOf<ConversationMessage>()
+
         for (event in events) {
             when (event.type) {
                 // ── Intent / contract ─────────────────────────────────────────
@@ -338,6 +354,19 @@ class Replay(private val eventStore: EventRepository) {
                 EventTypes.COMMIT_CONTRACT -> commitContractExists = true
                 EventTypes.COMMIT_EXECUTED -> commitExecuted       = true
                 EventTypes.COMMIT_ABORTED  -> commitAborted        = true
+
+                // ── Conversation (MQP-PHASE-3) ────────────────────────────────
+                // 1 event = 1 message — NO filtering, NO grouping, NO inference
+                EventTypes.USER_MESSAGE_SUBMITTED -> {
+                    val id   = event.payload["messageId"]?.toString() ?: event.id
+                    val text = event.payload["text"]?.toString() ?: ""
+                    conversationMutable.add(ConversationMessage(id = id, text = text, isUser = true))
+                }
+                EventTypes.SYSTEM_MESSAGE_EMITTED -> {
+                    val id   = event.payload["messageId"]?.toString() ?: event.id
+                    val text = event.payload["text"]?.toString() ?: ""
+                    conversationMutable.add(ConversationMessage(id = id, text = text, isUser = false))
+                }
             }
         }
 
@@ -364,6 +393,9 @@ class Replay(private val eventStore: EventRepository) {
         // ── Compute contractIds / hasContracts (MQP-FINAL-STABILIZATION-AND-MERGE-v1) ──
         val contractIds = contractIdsMutable.toList()
         val hasContracts = contractIds.isNotEmpty()
+
+        // ── Compute conversation (MQP-PHASE-3) ───────────────────────────────
+        val conversation = conversationMutable.toList()
 
         // ── Assemble views ────────────────────────────────────────────────────
 
@@ -411,7 +443,8 @@ class Replay(private val eventStore: EventRepository) {
                 ),
                 contractIds  = contractIds,
                 hasContracts = hasContracts
-            )
+            ),
+            conversation = conversation
         )
     }
 
