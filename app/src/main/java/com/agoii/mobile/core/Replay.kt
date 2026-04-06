@@ -210,7 +210,13 @@ data class AuditView(
     val commitExecuted: Boolean = false,
 
     /** True when COMMIT_ABORTED has been seen (commit rejected). */
-    val commitAborted: Boolean = false
+    val commitAborted: Boolean = false,
+
+    /**
+     * Text of the last SYSTEM_MESSAGE_EMITTED event in the ledger, or null if none.
+     * Derived during replay construction. UI MUST NOT derive this independently.
+     */
+    val lastSystemMessage: String? = null
 )
 
 // ── Nested structural sub-states (unchanged) ─────────────────────────────────
@@ -414,6 +420,9 @@ class Replay(private val eventStore: EventRepository) {
         // ── Compute conversation (MQP-PHASE-3) ───────────────────────────────
         val conversation = conversationMutable.toList()
 
+        // ── Compute lastSystemMessage (MQP-REPLAY-VISUALIZATION-v1) ──────────
+        val lastSystemMessage = conversationMutable.lastOrNull { !it.isUser }?.text
+
         // ── Assemble views ────────────────────────────────────────────────────
 
         return ReplayStructuralState(
@@ -464,7 +473,8 @@ class Replay(private val eventStore: EventRepository) {
                 icsCompleted         = icsCompleted,
                 commitContractExists = commitContractExists,
                 commitExecuted       = commitExecuted,
-                commitAborted        = commitAborted
+                commitAborted        = commitAborted,
+                lastSystemMessage    = lastSystemMessage
             ),
             conversation = conversation
         )
