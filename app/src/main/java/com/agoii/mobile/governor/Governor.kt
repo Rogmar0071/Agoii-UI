@@ -285,6 +285,11 @@ class Governor(
                 // Governor owns the recovery transition; TASK_EXECUTED(FAILURE) must never
                 // be a terminal state. Routing through RECOVERY_CONTRACT keeps the ledger
                 // valid and allows the next Send to proceed normally.
+                //
+                // recoveryId is a UUID because this event is written once to the append-only
+                // ledger and subsequently read back — the Governor never re-generates it
+                // during replay. The downstream idempotency guard (deltaContractRecoveryIds)
+                // operates on already-persisted recoveryIds, so uniqueness is safe here.
                 if (execStatus == "FAILURE") {
                     Event(
                         type    = EventTypes.RECOVERY_CONTRACT,

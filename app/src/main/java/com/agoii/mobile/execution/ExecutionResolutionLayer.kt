@@ -108,7 +108,7 @@ class ExecutionResolutionLayer {
         val contractId = taskStartedEvent?.payload?.get("contractId")?.toString()
             // Backward-compat fallback for pre-fix ledgers where TASK_STARTED did not carry
             // contractId. After MQP-CRASH-RECOVERY-v1, Governor always sets contractId in
-            // TASK_STARTED, so taskId == contractId only for executions initiated on old ledgers.
+            // TASK_STARTED; for older ledgers, contractId defaults to taskId.
             ?: result.taskId
         val position = resolveInt(taskStartedEvent?.payload?.get("position")) ?: 1
         val total    = resolveInt(taskStartedEvent?.payload?.get("total"))    ?: 1
