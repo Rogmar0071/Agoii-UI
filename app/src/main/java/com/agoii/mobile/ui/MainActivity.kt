@@ -1,6 +1,7 @@
 package com.agoii.mobile.ui
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
@@ -55,17 +56,33 @@ class MainActivity : ComponentActivity() {
                     },
                     onInteraction = { input ->
                         scope.launch(Dispatchers.IO) {
-                            dispatcher.sendInteraction(input)
-                            withContext(Dispatchers.Main) {
-                                model = binder.getUiModel()
+                            try {
+                                dispatcher.sendInteraction(input)
+                                withContext(Dispatchers.Main) {
+                                    model = binder.getUiModel()
+                                }
+                            } catch (e: Exception) {
+                                Log.e(
+                                    "AGOII_COROUTINE_FAILURE",
+                                    "sendInteraction failed",
+                                    e
+                                )
                             }
                         }
                     },
                     onApproveContract = { contractId ->
                         scope.launch(Dispatchers.IO) {
-                            dispatcher.approve(contractId)
-                            withContext(Dispatchers.Main) {
-                                model = binder.getUiModel()
+                            try {
+                                dispatcher.approve(contractId)
+                                withContext(Dispatchers.Main) {
+                                    model = binder.getUiModel()
+                                }
+                            } catch (e: Exception) {
+                                Log.e(
+                                    "AGOII_COROUTINE_FAILURE",
+                                    "approve failed",
+                                    e
+                                )
                             }
                         }
                     }
