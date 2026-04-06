@@ -78,7 +78,10 @@ class CoreBridgeAdapter(
                 totalEvents = eventCount,
                 contractIds = core.auditView.contractIds,
                 hasContracts = core.auditView.hasContracts,
-                lastSystemMessage = core.auditView.lastSystemMessage
+                lastEventType = core.auditView.lastEventType,
+                lastEventPayload = core.auditView.lastEventPayload,
+                executionStatus = core.auditView.executionStatus,
+                finalOutput = core.auditView.finalOutput
             ),
             conversation = core.conversation.map { msg ->
                 UiConversationMessage(id = msg.id, text = msg.text, isUser = msg.isUser)

@@ -65,7 +65,10 @@ data class AuditView(
     val totalEvents: Int = 0,
     val contractIds: List<String> = emptyList(),
     val hasContracts: Boolean = false,
-    val lastSystemMessage: String? = null
+    val lastEventType: String? = null,
+    val lastEventPayload: String? = null,
+    val executionStatus: String = "idle",
+    val finalOutput: String? = null
 )
 
 /**

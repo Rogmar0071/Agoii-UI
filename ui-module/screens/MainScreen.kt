@@ -85,10 +85,29 @@ fun MainScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            if (model.audit.lastSystemMessage != null) {
+            Text(
+                text = "Status: ${model.audit.executionStatus}",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+
+            model.audit.lastEventType?.let {
                 Text(
-                    text = model.audit.lastSystemMessage,
-                    modifier = Modifier.padding(16.dp)
+                    text = "Last Event: $it",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
+
+            model.audit.lastEventPayload?.let {
+                Text(
+                    text = "Payload: $it",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                )
+            }
+
+            model.audit.finalOutput?.let {
+                Text(
+                    text = "Output: $it",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 )
             }
 
