@@ -1,6 +1,5 @@
 package agoii.ui.core
 
-import android.util.Log
 import agoii.ui.bridge.CoreBridge
 
 /**
@@ -17,20 +16,11 @@ import agoii.ui.bridge.CoreBridge
 class UiActionDispatcher(private val coreBridge: CoreBridge) {
 
     /**
-     * Send a user interaction to the system core.
-     * Delegates to coreBridge.processInteraction().
+     * MQP-UI-DECOUPLE-EXECUTION-v1: NO-OP — dispatcher no longer triggers execution.
+     * UI interaction is now routed exclusively via CoreBridge.appendUserMessage().
      */
     fun sendInteraction(input: String) {
-        Log.e("AGOII_TRACE", "DISPATCH_START: $input")
-        try {
-            Log.e("AGOII_TRACE", "DISPATCH_EXECUTING")
-            coreBridge.processInteraction(input)
-            Log.e("AGOII_TRACE", "DISPATCH_COMPLETED")
-        } catch (t: Throwable) {
-            Log.e("AGOII_FATAL", "DISPATCH_CRASH: ${t.stackTraceToString()}")
-            throw t
-        }
-        Log.e("AGOII_TRACE", "DISPATCH_END")
+        // NO-OP — dispatcher no longer triggers execution
     }
 
     /**

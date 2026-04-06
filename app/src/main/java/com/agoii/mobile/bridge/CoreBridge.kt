@@ -186,6 +186,30 @@ class CoreBridge(context: Context) {
     fun loadEvents(projectId: String): List<Event> =
         ledger.loadEvents(projectId)
 
+    /**
+     * Append USER_MESSAGE_SUBMITTED to the ledger and run the governed execution
+     * pipeline to completion.
+     *
+     * MQP-UI-DECOUPLE-EXECUTION-v1: This is the ONLY entry point for UI-originated
+     * interactions.  Interpretation has already occurred in CoreBridgeAdapter
+     * (ARCH-09) before reaching this boundary.
+     *
+     * @param projectId       Active project scope.
+     * @param rawInput        Original user text (written verbatim to ledger).
+     * @param structuredIntent Pre-interpreted intent from the interaction layer.
+     */
+    fun appendUserMessage(projectId: String, rawInput: String, structuredIntent: Map<String, Any>) {
+        if (rawInput.isBlank()) return
+        Log.e("AGOII_TRACE", "CORE_APPEND_USER_MESSAGE")
+        try {
+            processInteractionInternal(projectId, rawInput, structuredIntent)
+            Log.e("AGOII_TRACE", "CORE_APPEND_USER_MESSAGE_COMPLETE")
+        } catch (t: Throwable) {
+            Log.e("AGOII_TRACE", "CORE_APPEND_USER_MESSAGE_CRASH", t)
+            throw t
+        }
+    }
+
     fun replayState(projectId: String): ReplayStructuralState =
         replay.replayStructuralState(projectId)
 

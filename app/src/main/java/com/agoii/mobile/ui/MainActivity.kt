@@ -74,34 +74,28 @@ class MainActivity : ComponentActivity() {
                         currentProjectId = project.id
                     },
                     onInteraction = { input ->
-                        Log.e("AGOII_TRACE", "ROOT_SEND_TRIGGERED: $input")
+                        Log.e("AGOII_TRACE", "UI_EVENT_EMIT: $input")
                         scope.launch {
                             try {
-                                Log.e("AGOII_TRACE", "SEND_FLOW_START")
-
                                 val updated = withContext(Dispatchers.IO) {
-                                    dispatcher.sendInteraction(input)
-                                    Log.e("AGOII_TRACE", "DISPATCH_RETURNED")
+                                    // 🔴 ONLY WRITE TO LEDGER — UI is a pure emitter
+                                    adapter.appendUserMessage(input)
 
+                                    // 🔴 IMMEDIATELY REFRESH FROM REPLAY
                                     binder.getUiModel()
                                 }
-
                                 model = updated
                                 Log.e("AGOII_TRACE", "MODEL_APPLIED")
 
                             } catch (t: Throwable) {
-
-                                // 🔴 CRITICAL — DO NOT swallow
-                                Log.e("AGOII_FATAL_CRASH", t.stackTraceToString())
-
-                                // 🔴 Force UI state mutation (guarantees visibility)
+                                Log.e("AGOII_FATAL_UI", t.stackTraceToString())
                                 model = UiModel(
                                     governance = GovernanceView(
-                                        lastEventType = "CRASH",
+                                        lastEventType = "UI_ERROR",
                                         lastEventPayload = t.message ?: "UNKNOWN"
                                     ),
                                     execution = ExecutionView(
-                                        executionStatus = "crashed"
+                                        executionStatus = "failed"
                                     ),
                                     audit = AuditView(
                                         finalOutput = t.stackTraceToString()
@@ -109,16 +103,14 @@ class MainActivity : ComponentActivity() {
                                     chat = ChatUiModel(
                                         messages = listOf(
                                             ChatMessage(
-                                                id = "crash",
-                                                text = "CRASH:\n${t.stackTraceToString()}",
+                                                id = "ui_error",
+                                                text = t.stackTraceToString(),
                                                 isUser = false
                                             )
                                         ),
                                         currentInput = ""
                                     )
                                 )
-
-                                // 🔴 IMPORTANT: DO NOT rethrow
                             }
                         }
                     },

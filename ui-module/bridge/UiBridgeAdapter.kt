@@ -33,6 +33,16 @@ interface CoreBridge {
 
     /** Routes contract approval through the governed pipeline. */
     fun approveContracts(contractId: String)
+
+    /**
+     * Append USER_MESSAGE_SUBMITTED event to the ledger and trigger the governed
+     * execution pipeline.  UI MUST call ONLY this method for user input — no
+     * direct execution calls are permitted.
+     *
+     * MQP-UI-DECOUPLE-EXECUTION-v1: UI is a pure emitter.  All execution
+     * originates from the ledger entry written here.
+     */
+    fun appendUserMessage(input: String)
 }
 
 /**
@@ -56,6 +66,14 @@ class UiBridgeAdapter(private val coreBridge: CoreBridge) {
      */
     fun interact(input: String) {
         coreBridge.processInteraction(input)
+    }
+
+    /**
+     * Forward appendUserMessage to the system core via CoreBridge.
+     * MQP-UI-DECOUPLE-EXECUTION-v1: UI emits event; system drives execution.
+     */
+    fun appendUserMessage(input: String) {
+        coreBridge.appendUserMessage(input)
     }
 
     /**
