@@ -30,10 +30,16 @@ class LedgerAudit(private val eventStore: EventRepository) {
 
         val errors = mutableListOf<String>()
 
-        // Rule 1: first event must be intent_submitted
-        if (events.first().type != EventTypes.INTENT_SUBMITTED) {
+        // Rule 1: first event must be intent_submitted or user_message_submitted.
+        // MQP-PHASE-3-FIX-02: USER_MESSAGE_SUBMITTED is the true ledger origin event for
+        // the conversational flow. INTENT_SUBMITTED remains valid for non-conversational
+        // (batch/programmatic) flows to preserve backward compatibility.
+        val firstType = events.first().type
+        if (firstType != EventTypes.INTENT_SUBMITTED &&
+            firstType != EventTypes.USER_MESSAGE_SUBMITTED) {
             errors.add(
-                "First event must be '${EventTypes.INTENT_SUBMITTED}', got '${events.first().type}'"
+                "First event must be '${EventTypes.INTENT_SUBMITTED}' or " +
+                "'${EventTypes.USER_MESSAGE_SUBMITTED}', got '$firstType'"
             )
         }
 
@@ -155,9 +161,12 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.COMMIT_CONTRACT && to == EventTypes.COMMIT_ABORTED) return true
             // ICS loop: re-issued interaction contract (CLOSURE-04)
             if (from == EventTypes.CONTRACTS_GENERATED && to == EventTypes.CONTRACTS_GENERATED) return true
-            // Conversational layer (MQP-PHASE-3): turn-1 user message follows the required first event
+            // Conversational layer (MQP-PHASE-3): turn-1 legacy path (backward compat for batch flows)
             if (from == EventTypes.INTENT_SUBMITTED && to == EventTypes.USER_MESSAGE_SUBMITTED) return true
-            // Conversational layer (MQP-PHASE-3): execution proceeds directly from user message
+            // Conversational layer (MQP-PHASE-3 FIX-02): user message is true ledger origin;
+            // intent is derived from (and always follows) user input
+            if (from == EventTypes.USER_MESSAGE_SUBMITTED && to == EventTypes.INTENT_SUBMITTED) return true
+            // Conversational layer (MQP-PHASE-3): backward-compat direct path without re-issuing intent
             if (from == EventTypes.USER_MESSAGE_SUBMITTED && to == EventTypes.CONTRACTS_GENERATED) return true
             // Conversational layer (MQP-PHASE-3 FIX-01): system response anchored to EXECUTION_COMPLETED
             if (from == EventTypes.EXECUTION_COMPLETED && to == EventTypes.SYSTEM_MESSAGE_EMITTED) return true

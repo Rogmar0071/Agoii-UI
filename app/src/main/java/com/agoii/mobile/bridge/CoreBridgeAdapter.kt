@@ -6,6 +6,7 @@ import agoii.ui.core.ExecutionView as UiExecutionView
 import agoii.ui.core.AuditView as UiAuditView
 import agoii.ui.core.ConversationMessage as UiConversationMessage
 import agoii.ui.core.ReplayStructuralState as UiReplayStructuralState
+import com.agoii.mobile.interaction.InteractionEngine
 
 /**
  * CoreBridgeAdapter — wires the UI module into the Agoii runtime.
@@ -17,11 +18,13 @@ import agoii.ui.core.ReplayStructuralState as UiReplayStructuralState
  *   - Map core [com.agoii.mobile.core.ReplayStructuralState] → UI [UiReplayStructuralState]
  *   - Bind [projectId] for session scope
  *   - Route interactions and approvals
+ *   - Perform interpretation (ARCH-09: interpretation MUST occur before CoreBridge)
  *
  * Invariants:
  *   ARCH-07   (UI_MODULE_ISOLATION) — UI depends ONLY on this adapter
  *   ARCH-08   (UI_STATE_PIPELINE)   — coreBridge.replayState() → UiModel
  *   ARCH-03   (DEPENDENCY_DIRECTION) — UI → CoreBridge → Nemoclaw
+ *   ARCH-09   (INTERACTION_BOUNDARY) — InteractionEngine called HERE, before system CoreBridge
  *
  * ZERO business logic. ZERO state derivation. Pure mapping and delegation.
  */
@@ -30,6 +33,10 @@ class CoreBridgeAdapter(
     private val projectId: String
 ) : UiCoreBridge {
 
+    // ARCH-09: Interpretation occurs at the boundary layer, before system CoreBridge.
+    // CoreBridge itself contains ZERO interpretation logic (FIX-04).
+    private val interactionEngine = InteractionEngine()
+
     override fun replayState(): UiReplayStructuralState {
         val coreState = systemBridge.replayState(projectId)
         val eventCount = systemBridge.loadEvents(projectId).size
@@ -37,7 +44,10 @@ class CoreBridgeAdapter(
     }
 
     override fun processInteraction(input: String) {
-        systemBridge.processInteraction(projectId, input)
+        // ARCH-09: Interpret raw human-language input into structured intent BEFORE
+        // crossing into the system CoreBridge boundary.
+        val structuredIntent = interactionEngine.processInput(input)
+        systemBridge.processInteraction(projectId, input, structuredIntent)
     }
 
     override fun approveContracts(contractId: String) {

@@ -7,7 +7,6 @@ import com.agoii.mobile.contracts.*
 import com.agoii.mobile.core.*
 import com.agoii.mobile.execution.*
 import com.agoii.mobile.governor.Governor
-import com.agoii.mobile.interaction.*
 import com.agoii.mobile.observability.*
 import java.util.UUID
 
@@ -33,45 +32,52 @@ class CoreBridge(context: Context) {
     private val executionAuthority = ExecutionAuthority(contractorRegistry, driverRegistry)
     private val executionEntryPoint = ExecutionEntryPoint(ledger, executionAuthority)
     private val observability = ExecutionObservability(ledger)
-    private val interactionEngine = InteractionEngine()
 
-    fun processInteraction(projectId: String, input: String): String {
-        if (input.isBlank()) return "No input provided"
+    /**
+     * Process an interaction using pre-interpreted structured intent.
+     *
+     * FIX-04: Interpretation MUST occur before CoreBridge (in CoreBridgeAdapter).
+     * CoreBridge is transport + execution boundary ONLY — zero interpretation logic.
+     *
+     * @param rawInput        The original user text (written verbatim to USER_MESSAGE_SUBMITTED).
+     * @param structuredIntent Pre-interpreted intent map from the interaction layer.
+     */
+    fun processInteraction(projectId: String, rawInput: String, structuredIntent: Map<String, Any>): String {
+        if (rawInput.isBlank()) return "No input provided"
         return try {
-            processInteractionInternal(projectId, input)
+            processInteractionInternal(projectId, rawInput, structuredIntent)
         } catch (_: Exception) {
             "Execution failed"
         }
     }
 
-    private fun processInteractionInternal(projectId: String, input: String): String {
+    private fun processInteractionInternal(
+        projectId: String,
+        rawInput: String,
+        structuredIntent: Map<String, Any>
+    ): String {
 
-        val structuredIntent = interactionEngine.processInput(input)
-
-        // MQP-PHASE-3 FIX-02: On the first turn (empty ledger), INTENT_SUBMITTED must be written
-        // first — required by ValidationLayer's structural invariant (first event = INTENT_SUBMITTED).
-        // USER_MESSAGE_SUBMITTED immediately follows as the causal origin of the system flow.
-        // On subsequent turns (ledger not empty, last event = SYSTEM_MESSAGE_EMITTED),
-        // USER_MESSAGE_SUBMITTED is written directly — no new INTENT_SUBMITTED is needed.
-        if (ledger.loadEvents(projectId).isEmpty()) {
-            ledger.appendEvent(
-                projectId,
-                EventTypes.INTENT_SUBMITTED,
-                mapOf("objective" to (structuredIntent["objective"] as? String ?: input))
-            )
-        }
-
-        // USER_MESSAGE_SUBMITTED is written for every interaction:
-        //   turn-1:  INTENT_SUBMITTED → USER_MESSAGE_SUBMITTED (legal transition)
+        // MQP-PHASE-3 FIX-02: USER_MESSAGE_SUBMITTED is ALWAYS the true ledger origin event.
+        // It is written first on every turn:
+        //   turn-1:  USER_MESSAGE_SUBMITTED (first event — origin truth)
         //   turn-2+: SYSTEM_MESSAGE_EMITTED → USER_MESSAGE_SUBMITTED (legal transition)
         ledger.appendEvent(
             projectId,
             EventTypes.USER_MESSAGE_SUBMITTED,
             mapOf(
                 "messageId" to UUID.randomUUID().toString(),
-                "text"      to input,
+                "text"      to rawInput,
                 "timestamp" to System.currentTimeMillis()
             )
+        )
+
+        // MQP-PHASE-3 FIX-02: INTENT_SUBMITTED follows USER_MESSAGE_SUBMITTED on every turn.
+        // Intent is derived FROM user input — not the other way around.
+        // Transition: USER_MESSAGE_SUBMITTED → INTENT_SUBMITTED (legal — FIX-02).
+        ledger.appendEvent(
+            projectId,
+            EventTypes.INTENT_SUBMITTED,
+            mapOf("objective" to (structuredIntent["objective"] as? String ?: rawInput))
         )
 
         val authResult = executionEntryPoint.executeIntent(
@@ -95,8 +101,6 @@ class CoreBridge(context: Context) {
                 val lastType  = lastEvent?.type
 
                 when {
-
-                    lastType == EventTypes.ICS_COMPLETED -> break
 
                     lastType == EventTypes.TASK_STARTED -> {
 
@@ -150,33 +154,25 @@ class CoreBridge(context: Context) {
                 cycles++
             }
         } finally {
-            // MQP-PHASE-3 FIX-03: Guaranteed SYSTEM_MESSAGE_EMITTED emission.
+            // MQP-PHASE-3 FIX-01 + FIX-03: Guaranteed SYSTEM_MESSAGE_EMITTED emission.
             // The Governor exits the loop at EXECUTION_COMPLETED (GovernorResult.COMPLETED),
-            // so EXECUTION_COMPLETED → SYSTEM_MESSAGE_EMITTED is the valid transition.
-            // InteractionEngine formats the state; CoreBridge only forwards the text.
-            try {
-                val interactionResult = interactionEngine.execute(
-                    InteractionContract(
-                        contractId = projectId,
-                        query      = EXECUTION_SUMMARY_QUERY,
-                        outputType = OutputType.EXPLANATION
-                    ),
-                    InteractionInput(state = replay.replayStructuralState(projectId))
+            // so EXECUTION_COMPLETED → SYSTEM_MESSAGE_EMITTED is the valid, deterministic anchor.
+            //
+            // FIX-04: CoreBridge must NOT compute results or call InteractionEngine here.
+            // SYSTEM_MESSAGE_EMITTED.text is the deterministic execution output — no interpretation.
+            //
+            // FIX-03: Emission is unconditional — no swallowing. Any ledger failure propagates.
+            val outputText = output ?: "execution_failed"
+            ledger.appendEvent(
+                projectId,
+                EventTypes.SYSTEM_MESSAGE_EMITTED,
+                mapOf(
+                    "messageId" to UUID.randomUUID().toString(),
+                    "text"      to outputText,
+                    "source"    to "execution",
+                    "timestamp" to System.currentTimeMillis()
                 )
-                ledger.appendEvent(
-                    projectId,
-                    EventTypes.SYSTEM_MESSAGE_EMITTED,
-                    mapOf(
-                        "messageId" to UUID.randomUUID().toString(),
-                        "text"      to interactionResult.content,
-                        "source"    to "execution",
-                        "timestamp" to System.currentTimeMillis()
-                    )
-                )
-            } catch (e: Exception) {
-                // Emission failure is swallowed to preserve the original exception path.
-                println("[PHASE-3] SYSTEM_MESSAGE_EMITTED emission failed: ${e.message}")
-            }
+            )
         }
 
         val finalState = ledger.loadEvents(projectId).lastOrNull()?.type
@@ -220,7 +216,5 @@ class CoreBridge(context: Context) {
 
     companion object {
         private const val MAX_GOVERNOR_CYCLES = 30
-        /** Query label passed to InteractionEngine when generating SYSTEM_MESSAGE_EMITTED text. */
-        private const val EXECUTION_SUMMARY_QUERY = "execution_summary"
     }
 }
