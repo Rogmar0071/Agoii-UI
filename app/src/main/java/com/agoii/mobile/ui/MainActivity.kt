@@ -77,19 +77,14 @@ class MainActivity : ComponentActivity() {
                         scope.launch {
                             try {
                                 Log.e("AGOII_TRACE", "SEND_FLOW_START")
-
                                 val updated = withContext(Dispatchers.IO) {
                                     dispatcher.sendInteraction(input)
                                     Log.e("AGOII_TRACE", "DISPATCH_RETURNED")
                                     binder.getUiModel()
                                 }
-
                                 Log.e("AGOII_TRACE", "MODEL_RECEIVED")
-
                                 model = updated
-
                                 Log.e("AGOII_TRACE", "MODEL_APPLIED")
-
                             } catch (t: Throwable) {
                                 Log.e("AGOII_FATAL", t.stackTraceToString())
                             }

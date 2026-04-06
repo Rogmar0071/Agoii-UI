@@ -32,15 +32,13 @@ class UiStateBinder(private val coreBridge: CoreBridge) {
     fun getUiModel(): UiModel {
         Log.e("AGOII_TRACE", "REPLAY_LOAD_START")
         val state = coreBridge.replayState()
-
-        val model = UiModel(
+        Log.e("AGOII_TRACE", "REPLAY_LOAD_DONE")
+        return UiModel(
             governance = state.governanceView,
             execution = state.executionView,
             audit = state.auditView,
             chat = buildChatModel(state)
         )
-        Log.e("AGOII_TRACE", "REPLAY_LOAD_DONE")
-        return model
     }
 
     /**
