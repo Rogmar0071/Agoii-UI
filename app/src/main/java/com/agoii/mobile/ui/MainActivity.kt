@@ -12,6 +12,11 @@ import com.agoii.mobile.bridge.CoreBridge
 import com.agoii.mobile.bridge.CoreBridgeAdapter
 import com.agoii.mobile.core.CrashHandler
 import com.agoii.mobile.ui.theme.AgoiiTheme
+import agoii.ui.core.AuditView
+import agoii.ui.core.ChatUiModel
+import agoii.ui.core.ExecutionView
+import agoii.ui.core.GovernanceView
+import agoii.ui.core.UiModel
 import agoii.ui.core.UiStateBinder
 import agoii.ui.core.UiActionDispatcher
 import agoii.ui.core.ProjectDescriptor
@@ -38,10 +43,22 @@ class MainActivity : ComponentActivity() {
                 val binder = remember(adapter) { UiStateBinder(adapter) }
                 val dispatcher = remember(adapter) { UiActionDispatcher(adapter) }
 
-                var model by remember { mutableStateOf(binder.getUiModel()) }
+                // Safe empty defaults — no IO on the composition (Main) thread.
+                var model by remember {
+                    mutableStateOf(
+                        UiModel(
+                            governance = GovernanceView(),
+                            execution  = ExecutionView(),
+                            audit      = AuditView(),
+                            chat       = ChatUiModel(messages = emptyList(), currentInput = "")
+                        )
+                    )
+                }
 
+                // Load initial state from IO thread; update model on Main thread.
                 LaunchedEffect(binder) {
-                    model = binder.getUiModel()
+                    val loaded = withContext(Dispatchers.IO) { binder.getUiModel() }
+                    model = loaded
                 }
 
                 val projects = remember {
@@ -60,10 +77,12 @@ class MainActivity : ComponentActivity() {
                         scope.launch(Dispatchers.IO) {
                             try {
                                 dispatcher.sendInteraction(input)
+                                // Fetch updated state on IO thread, then post to Main.
+                                val newModel = binder.getUiModel()
                                 withContext(Dispatchers.Main) {
-                                    model = binder.getUiModel()
+                                    model = newModel
                                 }
-                            } catch (e: Exception) {
+                            } catch (e: Throwable) {
                                 Log.e(
                                     "AGOII_COROUTINE_FAILURE",
                                     "sendInteraction failed",
@@ -76,10 +95,12 @@ class MainActivity : ComponentActivity() {
                         scope.launch(Dispatchers.IO) {
                             try {
                                 dispatcher.approve(contractId)
+                                // Fetch updated state on IO thread, then post to Main.
+                                val newModel = binder.getUiModel()
                                 withContext(Dispatchers.Main) {
-                                    model = binder.getUiModel()
+                                    model = newModel
                                 }
-                            } catch (e: Exception) {
+                            } catch (e: Throwable) {
                                 Log.e(
                                     "AGOII_COROUTINE_FAILURE",
                                     "approve failed",
