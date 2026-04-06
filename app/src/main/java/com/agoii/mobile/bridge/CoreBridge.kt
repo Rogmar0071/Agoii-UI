@@ -96,21 +96,16 @@ class CoreBridge(context: Context) {
         rawInput: String,
         structuredIntent: Map<String, Any>
     ): String {
-        // Hold the spine guard for the duration so the LedgerActivator observer does not
-        // start a concurrent spine while this legacy path is running.
-        if (!spineRunning.compareAndSet(false, true)) {
-            throw LedgerValidationException("ICS BLOCKED: Spine already running")
-        }
-        try {
-            return processInteractionCore(projectId, rawInput, structuredIntent)
-        } finally {
-            spineRunning.set(false)
-        }
+        // No spine guard here — execution is driven exclusively by the LedgerObserver
+        // registered in init (CONTRACT MQP-LEDGER-ACTIVATION-v1). Holding spineRunning
+        // during the ledger appends would block the observer from activating the spine.
+        return processInteractionCore(projectId, rawInput, structuredIntent)
     }
 
     /**
-     * Core execution logic shared by [processInteractionInternal] and [activateSpine].
-     * Caller is responsible for holding [spineRunning].
+     * Ledger ingress only — appends USER_MESSAGE_SUBMITTED and INTENT_SUBMITTED then returns
+     * "INGRESS_ACCEPTED".  Execution is driven by the [LedgerObserver] registered in [init].
+     * Caller MUST NOT hold [spineRunning]; the observer acquires it independently.
      */
     private fun processInteractionCore(
         projectId: String,
@@ -143,12 +138,13 @@ class CoreBridge(context: Context) {
         )
         Log.e("AGOII_TRACE", "LEDGER_APPEND_INTENT")
 
-        return runSpine(projectId, structuredIntent)
+        // INGRESS COMPLETE — LedgerObserver drives the spine via INTENT_SUBMITTED trigger.
+        return "INGRESS_ACCEPTED"
     }
 
     /**
      * Run the full execution spine from INTENT_SUBMITTED onward.
-     * Requires [spineRunning] to already be held by the caller.
+     * Called exclusively from [activateSpine], which holds [spineRunning].
      */
     private fun runSpine(projectId: String, structuredIntent: Map<String, Any>): String {
         Log.e("AGOII_TRACE", "SPINE_START")
