@@ -24,17 +24,12 @@ import com.agoii.mobile.core.Event
  *   2. STRICT MAPPING: Blocked→TASK_BLOCKED, Executed→TASK_EXECUTED
  *   3. NO LOGIC LEAKAGE: Pure translation only
  *   4. FULL COVERAGE: All result types have exactly one emission path
- *   5. RECOVERY HOOK: FAILURE results trigger recovery decision
+ *   5. GOVERNOR OWNS RECOVERY: FAILURE transitions are driven by Governor,
+ *      not by ResolutionLayer. ResolutionLayer emits TASK_EXECUTED only.
  */
 class ExecutionResolutionLayer {
 
     companion object {
-        /** Recovery source identifier for ExecutionAuthority-triggered recoveries. */
-        private const val RECOVERY_SOURCE = "EXECUTION_AUTHORITY"
-
-        /** Maximum delta recovery attempts before convergence ceiling. */
-        private const val MAX_DELTA = 3
-
         /**
          * Contractor ID used when execution is routed through the OpenAI inference pathway.
          * Set by resolveExecuted for all successfully dispatched tasks.
@@ -96,8 +91,8 @@ class ExecutionResolutionLayer {
     /**
      * Resolve Executed result → TASK_EXECUTED event.
      *
-     * RULE 2: Strict mapping
-     * RULE 5: Recovery hook for FAILURE
+     * RULE 2: Strict mapping — emits TASK_EXECUTED only.
+     * Governor owns the recovery transition for FAILURE results (MQP-FAILURE-CONTINUITY-RECOVERY-v1).
      */
     private fun resolveExecuted(
         result:    ExecutionAuthorityExecutionResult.Executed,
@@ -133,11 +128,6 @@ class ExecutionResolutionLayer {
         )
 
         ledger.appendEvent(projectId, EventTypes.TASK_EXECUTED, eventPayload)
-
-        // RULE 5: Recovery hook for FAILURE
-        if (status == ExecutionStatus.FAILURE) {
-            return resolveFailureRecovery(result.taskId, projectId, ledger, events)
-        }
 
         return ResolutionOutcome.Success
     }
@@ -186,60 +176,6 @@ class ExecutionResolutionLayer {
         return ResolutionOutcome.Blocked(result.reason)
     }
 
-    /**
-     * Resolve FAILURE recovery decision.
-     *
-     * RULE 5: Recovery hook based strictly on result
-     *
-     * Decision logic:
-     *   - If recoveryCount < MAX_DELTA → emit RECOVERY_CONTRACT
-     *   - If recoveryCount >= MAX_DELTA → emit CONTRACT_FAILED
-     */
-    private fun resolveFailureRecovery(
-        contractId: String,
-        projectId:  String,
-        ledger:     EventLedger,
-        events:     List<Event>
-    ): ResolutionOutcome {
-        // Check convergence ceiling
-        val recoveryCount = countRecoveryAttempts(events, contractId)
-        
-        if (recoveryCount >= MAX_DELTA) {
-            // Emit CONTRACT_FAILED (convergence ceiling reached)
-            ledger.appendEvent(
-                projectId,
-                EventTypes.CONTRACT_FAILED,
-                mapOf(
-                    "contractId" to contractId,
-                    "reason" to "NON_CONVERGENT_SYSTEM",
-                    "recoveryAttempts" to recoveryCount,
-                    "maxDelta" to MAX_DELTA
-                )
-            )
-            return ResolutionOutcome.ConvergenceCeiling(contractId, recoveryCount)
-        }
-        
-        // Emit RECOVERY_CONTRACT
-        val recoveryId = deriveRecoveryId(projectId, contractId, recoveryCount)
-        val reportReference = extractReportReference(events, contractId)
-        
-        ledger.appendEvent(
-            projectId,
-            EventTypes.RECOVERY_CONTRACT,
-            mapOf(
-                "recoveryId" to recoveryId,
-                "contractId" to contractId,
-                "taskId" to contractId,
-                "report_reference" to reportReference,
-                "failureClass" to "VALIDATION_FAILURE",
-                "violationField" to "unknown",
-                "source" to RECOVERY_SOURCE
-            )
-        )
-        
-        return ResolutionOutcome.RecoveryTriggered(contractId, recoveryCount + 1)
-    }
-
     // ══════════════════════════════════════════════════════════════════════════
     // HELPER FUNCTIONS (Pure utility - no side effects)
     // ══════════════════════════════════════════════════════════════════════════
@@ -255,21 +191,6 @@ class ExecutionResolutionLayer {
         is String -> value.toIntOrNull()
         else      -> null
     }
-
-    /**
-     * Count RECOVERY_CONTRACT events for given contractId.
-     */
-    private fun countRecoveryAttempts(events: List<Event>, contractId: String): Int =
-        events.count { event ->
-            event.type == EventTypes.RECOVERY_CONTRACT &&
-            event.payload["contractId"]?.toString() == contractId
-        }
-
-    /**
-     * Derive deterministic recovery ID.
-     */
-    private fun deriveRecoveryId(projectId: String, contractId: String, attempt: Int): String =
-        "RCF::$projectId::$contractId::attempt_$attempt"
 
     /**
      * Extract report_reference from CONTRACT_CREATED or CONTRACTS_GENERATED.
@@ -299,27 +220,15 @@ class ExecutionResolutionLayer {
 sealed class ResolutionOutcome {
     /** TASK_EXECUTED(SUCCESS) emitted. */
     object Success : ResolutionOutcome()
-    
-    /** TASK_EXECUTED(FAILURE) + RECOVERY_CONTRACT emitted. */
-    data class RecoveryTriggered(
-        val contractId: String,
-        val attemptNumber: Int
-    ) : ResolutionOutcome()
-    
-    /** TASK_EXECUTED(FAILURE) + CONTRACT_FAILED emitted. */
-    data class ConvergenceCeiling(
-        val contractId: String,
-        val finalAttempts: Int
-    ) : ResolutionOutcome()
-    
-    /** TASK_EXECUTED(FAILURE) with blocked=true emitted. */
+
+    /** TASK_EXECUTED(FAILURE) emitted; recovery transition is owned by Governor. */
     data class Blocked(
         val reason: String
     ) : ResolutionOutcome()
-    
+
     /** ICS_COMPLETED - no emission needed. */
     object IcsCompleted : ResolutionOutcome()
-    
+
     /** NotTriggered - no emission needed. */
     object NotTriggered : ResolutionOutcome()
 }

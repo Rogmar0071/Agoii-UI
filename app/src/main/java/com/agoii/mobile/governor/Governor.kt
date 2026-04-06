@@ -4,6 +4,7 @@ import com.agoii.mobile.core.Event
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.ReplayStructuralState
+import java.util.UUID
 
 /**
  * Governor — deterministic ledger-driven state machine.
@@ -273,21 +274,35 @@ class Governor(
             EventTypes.TASK_STARTED -> null
 
             EventTypes.TASK_EXECUTED -> {
-                val taskId      = lastPayload["taskId"]          as? String ?: return null
-                val position    = resolveInt(lastPayload["position"])       ?: return null
-                val total       = resolveInt(lastPayload["total"])          ?: return null
                 val execStatus  = lastPayload["executionStatus"] as? String ?: return null
                 val validStatus = lastPayload["validationStatus"] as? String ?: return null
-                if (execStatus == "SUCCESS" && validStatus == "VALIDATED") {
+                val contractId  = lastPayload["contractId"]?.toString() ?: return null
+                val taskId      = lastPayload["taskId"] as? String ?: return null
+                val position    = resolveInt(lastPayload["position"]) ?: return null
+                val total       = resolveInt(lastPayload["total"]) ?: return null
+
+                // MQP-FAILURE-CONTINUITY-RECOVERY-v1: FAILURE → RECOVERY_CONTRACT
+                // Governor owns the recovery transition; TASK_EXECUTED(FAILURE) must never
+                // be a terminal state. Routing through RECOVERY_CONTRACT keeps the ledger
+                // valid and allows the next Send to proceed normally.
+                if (execStatus == "FAILURE") {
+                    Event(
+                        type    = EventTypes.RECOVERY_CONTRACT,
+                        payload = mapOf(
+                            "contractId"       to contractId,
+                            "taskId"           to taskId,
+                            "recoveryId"       to UUID.randomUUID().toString(),
+                            "report_reference" to gv.reportReference,
+                            "source"           to "EXECUTION_FAILURE"
+                        )
+                    )
+                } else if (execStatus == "SUCCESS" && validStatus == "VALIDATED") {
                     Event(
                         type    = EventTypes.TASK_COMPLETED,
                         payload = mapOf("taskId" to taskId, "position" to position, "total" to total)
                     )
                 } else {
-                    Event(
-                        type    = EventTypes.TASK_FAILED,
-                        payload = mapOf("taskId" to taskId, "position" to position, "total" to total)
-                    )
+                    null
                 }
             }
 
