@@ -13,6 +13,7 @@ import com.agoii.mobile.bridge.CoreBridgeAdapter
 import com.agoii.mobile.core.CrashHandler
 import com.agoii.mobile.ui.theme.AgoiiTheme
 import agoii.ui.core.AuditView
+import agoii.ui.core.ChatMessage
 import agoii.ui.core.ChatUiModel
 import agoii.ui.core.ExecutionView
 import agoii.ui.core.GovernanceView
@@ -77,24 +78,47 @@ class MainActivity : ComponentActivity() {
                         scope.launch {
                             try {
                                 Log.e("AGOII_TRACE", "SEND_FLOW_START")
+
                                 val updated = withContext(Dispatchers.IO) {
                                     dispatcher.sendInteraction(input)
                                     Log.e("AGOII_TRACE", "DISPATCH_RETURNED")
+
                                     binder.getUiModel()
                                 }
-                                Log.e("AGOII_TRACE", "MODEL_RECEIVED")
+
                                 model = updated
                                 Log.e("AGOII_TRACE", "MODEL_APPLIED")
+
                             } catch (t: Throwable) {
-                                Log.e("AGOII_FATAL", t.stackTraceToString())
-                                model = model.copy(
-                                    audit = model.audit.copy(
-                                        lastEventType = "ERROR",
-                                        lastEventPayload = t.message ?: "Unknown error",
-                                        executionStatus = "failed",
+
+                                // 🔴 CRITICAL — DO NOT swallow
+                                Log.e("AGOII_FATAL_CRASH", t.stackTraceToString())
+
+                                // 🔴 Force UI state mutation (guarantees visibility)
+                                model = UiModel(
+                                    governance = GovernanceView(
+                                        lastEventType = "CRASH",
+                                        lastEventPayload = t.message ?: "UNKNOWN"
+                                    ),
+                                    execution = ExecutionView(
+                                        executionStatus = "crashed"
+                                    ),
+                                    audit = AuditView(
                                         finalOutput = t.stackTraceToString()
+                                    ),
+                                    chat = ChatUiModel(
+                                        messages = listOf(
+                                            ChatMessage(
+                                                id = "crash",
+                                                text = "CRASH:\n${t.stackTraceToString()}",
+                                                isUser = false
+                                            )
+                                        ),
+                                        currentInput = ""
                                     )
                                 )
+
+                                // 🔴 IMPORTANT: DO NOT rethrow
                             }
                         }
                     },
