@@ -87,6 +87,14 @@ class MainActivity : ComponentActivity() {
                                 Log.e("AGOII_TRACE", "MODEL_APPLIED")
                             } catch (t: Throwable) {
                                 Log.e("AGOII_FATAL", t.stackTraceToString())
+                                model = model.copy(
+                                    audit = model.audit.copy(
+                                        lastEventType = "ERROR",
+                                        lastEventPayload = t.message ?: "Unknown error",
+                                        executionStatus = "failed",
+                                        finalOutput = t.stackTraceToString()
+                                    )
+                                )
                             }
                         }
                     },
@@ -100,6 +108,14 @@ class MainActivity : ComponentActivity() {
                                 model = updated
                             } catch (t: Throwable) {
                                 Log.e("AGOII_FATAL", t.stackTraceToString())
+                                model = model.copy(
+                                    audit = model.audit.copy(
+                                        lastEventType = "ERROR",
+                                        lastEventPayload = t.message ?: "Unknown error",
+                                        executionStatus = "failed",
+                                        finalOutput = t.stackTraceToString()
+                                    )
+                                )
                             }
                         }
                     }
