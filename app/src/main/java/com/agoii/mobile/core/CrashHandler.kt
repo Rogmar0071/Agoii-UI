@@ -1,6 +1,7 @@
 package com.agoii.mobile.core
 
 import android.content.Context
+import android.util.Log
 import java.io.File
 import java.io.PrintWriter
 import java.io.StringWriter
@@ -11,6 +12,11 @@ object CrashHandler {
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
 
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+
+            Log.e(
+                "AGOII_FATAL",
+                throwable.stackTraceToString()
+            )
 
             try {
                 val stackTrace = StringWriter()
