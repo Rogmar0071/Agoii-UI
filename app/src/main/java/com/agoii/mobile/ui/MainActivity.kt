@@ -30,6 +30,21 @@ class MainActivity : ComponentActivity() {
 
         CrashHandler.install(applicationContext)
 
+        Thread.setDefaultUncaughtExceptionHandler { _, throwable ->
+            android.util.Log.e("AGOII_GLOBAL_CRASH", throwable.stackTraceToString())
+            runOnUiThread {
+                try {
+                    setContent {
+                        androidx.compose.material3.Text(
+                            text = "FATAL CRASH:\n\n${throwable.stackTraceToString()}"
+                        )
+                    }
+                } catch (_: Throwable) {
+                    // If even this fails, we still have logcat
+                }
+            }
+        }
+
         val systemBridge = CoreBridge(applicationContext)
 
         setContent {

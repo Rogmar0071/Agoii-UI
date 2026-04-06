@@ -55,9 +55,13 @@ fun InteractionPanel(
         Button(
             enabled = true,
             onClick = {
-                Log.e("AGOII_TRACE", "SEND_CLICK_CONFIRMED")
-                onSend(input)
-                input = ""
+                try {
+                    Log.e("AGOII_TRACE", "SEND_CLICK_CONFIRMED")
+                    onSend(input)
+                    input = ""
+                } catch (t: Throwable) {
+                    Log.e("AGOII_FATAL_CLICK", t.stackTraceToString())
+                }
             }
         ) {
             Text("Send")
