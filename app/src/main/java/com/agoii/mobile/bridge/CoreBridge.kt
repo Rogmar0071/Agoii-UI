@@ -361,11 +361,13 @@ class CoreBridge(context: Context) {
      * Extract the objective string from [structuredIntent], falling back to [rawInput]
      * if the key is absent or not a String.  Logs a warning when the fallback is used.
      */
-    private fun resolveObjective(structuredIntent: Map<String, Any>, rawInput: String): String =
-        structuredIntent["objective"] as? String
-            ?: rawInput.also {
-                Log.e("AGOII_TRACE", "INTENT_OBJECTIVE_MISSING: using rawInput as fallback")
-            }
+    private fun resolveObjective(structuredIntent: Map<String, Any>, rawInput: String): String {
+        val objective = structuredIntent["objective"] as? String
+        if (objective == null) {
+            Log.e("AGOII_TRACE", "INTENT_OBJECTIVE_MISSING: using rawInput as fallback")
+        }
+        return objective ?: rawInput
+    }
 
     companion object {
         private const val MAX_GOVERNOR_CYCLES = 30

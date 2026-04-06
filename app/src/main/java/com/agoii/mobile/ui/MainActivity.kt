@@ -104,7 +104,7 @@ class MainActivity : ComponentActivity() {
                                         messages = listOf(
                                             ChatMessage(
                                                 id = "ui_error",
-                                                text = "CRASH: " + t.message,
+                                                text = "CRASH: " + (t.message ?: "Unknown error"),
                                                 isUser = false
                                             )
                                         ),
