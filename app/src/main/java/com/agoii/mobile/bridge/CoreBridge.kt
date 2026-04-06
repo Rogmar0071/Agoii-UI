@@ -149,7 +149,7 @@ class CoreBridge(context: Context) {
         val interactionResult = interactionEngine.execute(
             InteractionContract(
                 contractId = projectId,
-                query      = "execution_summary",
+                query      = EXECUTION_SUMMARY_QUERY,
                 outputType = OutputType.EXPLANATION
             ),
             InteractionInput(state = replay.replayStructuralState(projectId))
@@ -204,5 +204,7 @@ class CoreBridge(context: Context) {
 
     companion object {
         private const val MAX_GOVERNOR_CYCLES = 30
+        /** Query label passed to InteractionEngine when generating SYSTEM_MESSAGE_EMITTED text. */
+        private const val EXECUTION_SUMMARY_QUERY = "execution_summary"
     }
 }

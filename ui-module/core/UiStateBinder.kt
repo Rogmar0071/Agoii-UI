@@ -58,6 +58,8 @@ class UiStateBinder(private val coreBridge: CoreBridge) {
                     isUser = msg.isUser
                 )
             },
+            // currentInput is always empty when bound from Replay — transient typing state
+            // is owned by the InteractionPanel composable (local `var input by remember {}`).
             currentInput = ""
         )
     }
