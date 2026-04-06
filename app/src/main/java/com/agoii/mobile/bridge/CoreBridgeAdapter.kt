@@ -1,5 +1,6 @@
 package com.agoii.mobile.bridge
 
+import android.util.Log
 import agoii.ui.bridge.CoreBridge as UiCoreBridge
 import agoii.ui.core.GovernanceView as UiGovernanceView
 import agoii.ui.core.ExecutionView as UiExecutionView
@@ -44,10 +45,12 @@ class CoreBridgeAdapter(
     }
 
     override fun processInteraction(input: String) {
+        Log.e("AGOII_TRACE", "COREBRIDGE_ENTER")
         // ARCH-09: Interpret raw human-language input into structured intent BEFORE
         // crossing into the system CoreBridge boundary.
         val structuredIntent = interactionEngine.processInput(input)
         systemBridge.processInteraction(projectId, input, structuredIntent)
+        Log.e("AGOII_TRACE", "COREBRIDGE_EXIT")
     }
 
     override fun approveContracts(contractId: String) {
@@ -74,7 +77,8 @@ class CoreBridgeAdapter(
             auditView = UiAuditView(
                 totalEvents = eventCount,
                 contractIds = core.auditView.contractIds,
-                hasContracts = core.auditView.hasContracts
+                hasContracts = core.auditView.hasContracts,
+                lastSystemMessage = core.auditView.lastSystemMessage
             ),
             conversation = core.conversation.map { msg ->
                 UiConversationMessage(id = msg.id, text = msg.text, isUser = msg.isUser)
