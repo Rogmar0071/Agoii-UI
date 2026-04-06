@@ -61,8 +61,14 @@ class NemoClawAdapter {
      * so the end-to-end execution loop runs on Android without an external runtime.
      * Returns SUCCESS with a minimal Artifact to satisfy ExecutionAuthority validation.
      *
+     * TODO: Replace this stub with a real NemoClaw execution path (e.g. bundled JVM
+     *   implementation or an HTTP/IPC call to a sidecar) once the Android runtime
+     *   environment can host NemoClaw.  The process-based path below (createTemporaryContractFile,
+     *   serializeContract, parseExecutionReport) is retained for reference and must be
+     *   restored/adapted when real execution is wired up.
+     *
      * @param contract ExecutionContract to execute.
-     * @return ExecutionReport (never null; always SUCCESS).
+     * @return ExecutionReport (never null; always SUCCESS in stub mode).
      */
     fun execute(contract: ExecutionContract): ExecutionReport {
         return ExecutionReport(
