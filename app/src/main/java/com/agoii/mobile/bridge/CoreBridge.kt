@@ -23,11 +23,41 @@ class CoreBridge(context: Context) {
     private val driverRegistry      = DriverRegistry()
     private val contractorRegistry  = ContractorRegistry()
 
+    /**
+     * Guard that prevents the LedgerActivator from running a second, concurrent execution
+     * spine while one is already in progress (either via the observer or the legacy
+     * [processInteractionInternal] path).
+     *
+     * CONTRACT MQP-LEDGER-ACTIVATION-v1: compareAndSet semantics ensure exactly-once
+     * activation per submitted intent.
+     */
+    private val spineRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+
     init {
         driverRegistry.register(
             "llm",
             LLMContractor(OpenAIClient())
         )
+
+        // CONTRACT MQP-LEDGER-ACTIVATION-v1 — register the execution spine as a ledger
+        // observer so that every event append can trigger system progression.
+        // The guard (spineRunning) prevents re-entrant or concurrent spine execution.
+        ledger.registerObserver(object : LedgerObserver {
+            override fun onLedgerUpdated(projectId: String) {
+                // Only activate on INTENT_SUBMITTED — the sole UI-origin trigger.
+                // All other events (emitted by the spine itself) fire this observer but
+                // the guard ensures they are ignored while the spine is running.
+                val lastType = ledger.loadEvents(projectId).lastOrNull()?.type ?: return
+                if (lastType != EventTypes.INTENT_SUBMITTED) return
+
+                if (!spineRunning.compareAndSet(false, true)) return
+                try {
+                    activateSpine(projectId)
+                } finally {
+                    spineRunning.set(false)
+                }
+            }
+        })
     }
 
     private val executionAuthority = ExecutionAuthority(contractorRegistry, driverRegistry)
@@ -61,6 +91,27 @@ class CoreBridge(context: Context) {
         rawInput: String,
         structuredIntent: Map<String, Any>
     ): String {
+        // Hold the spine guard for the duration so the LedgerActivator observer does not
+        // start a concurrent spine while this legacy path is running.
+        if (!spineRunning.compareAndSet(false, true)) {
+            throw LedgerValidationException("ICS BLOCKED: Spine already running")
+        }
+        try {
+            return processInteractionCore(projectId, rawInput, structuredIntent)
+        } finally {
+            spineRunning.set(false)
+        }
+    }
+
+    /**
+     * Core execution logic shared by [processInteractionInternal] and [activateSpine].
+     * Caller is responsible for holding [spineRunning].
+     */
+    private fun processInteractionCore(
+        projectId: String,
+        rawInput: String,
+        structuredIntent: Map<String, Any>
+    ): String {
 
         // MQP-PHASE-3 FIX-02: USER_MESSAGE_SUBMITTED is ALWAYS the true ledger origin event.
         // It is written first on every turn:
@@ -80,13 +131,23 @@ class CoreBridge(context: Context) {
         // MQP-PHASE-3 FIX-02: INTENT_SUBMITTED follows USER_MESSAGE_SUBMITTED on every turn.
         // Intent is derived FROM user input — not the other way around.
         // Transition: USER_MESSAGE_SUBMITTED → INTENT_SUBMITTED (legal — FIX-02).
+        val objective = structuredIntent["objective"] as? String
+            ?: rawInput.also { Log.e("AGOII_TRACE", "INTENT_OBJECTIVE_MISSING: using rawInput as fallback") }
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
-            mapOf("objective" to (structuredIntent["objective"] as? String ?: rawInput))
+            mapOf("objective" to objective)
         )
         Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.INTENT_SUBMITTED}")
 
+        return runSpine(projectId, structuredIntent)
+    }
+
+    /**
+     * Run the full execution spine from INTENT_SUBMITTED onward.
+     * Requires [spineRunning] to already be held by the caller.
+     */
+    private fun runSpine(projectId: String, structuredIntent: Map<String, Any>): String {
         val authResult = executionEntryPoint.executeIntent(
             projectId,
             structuredIntent
@@ -183,31 +244,81 @@ class CoreBridge(context: Context) {
         )
     }
 
+    /**
+     * CONTRACT MQP-LEDGER-ACTIVATION-v1 — execution spine driven from ledger observer.
+     *
+     * Invoked by the [LedgerObserver] registered in [init] when [EventTypes.INTENT_SUBMITTED]
+     * is the last event on the ledger for [projectId].  Caller holds [spineRunning].
+     *
+     * Reads the structured intent from the INTENT_SUBMITTED event payload, then runs the
+     * full execution spine to completion.  Any error is logged and swallowed so that the
+     * calling observer callback never propagates an exception to [EventLedger.appendEvent].
+     */
+    private fun activateSpine(projectId: String) {
+        Log.e("AGOII_TRACE", "SPINE_ACTIVATE: $projectId")
+        try {
+            val events = ledger.loadEvents(projectId)
+            val intentPayload = events.lastOrNull()
+                ?.takeIf { it.type == EventTypes.INTENT_SUBMITTED }?.payload
+                ?: run {
+                    Log.e("AGOII_TRACE", "SPINE_NO_INTENT_EVENT")
+                    return
+                }
+            runSpine(projectId, intentPayload)
+            Log.e("AGOII_TRACE", "SPINE_COMPLETE: $projectId")
+        } catch (t: Throwable) {
+            Log.e("AGOII_TRACE", "SPINE_ERROR: ${t.stackTraceToString()}")
+        }
+    }
+
     fun loadEvents(projectId: String): List<Event> =
         ledger.loadEvents(projectId)
 
     /**
-     * Append USER_MESSAGE_SUBMITTED to the ledger and run the governed execution
-     * pipeline to completion.
+     * CONTRACT MQP-UI-INGRESS-ONLY-v1 — pure ledger ingress.
      *
-     * MQP-UI-DECOUPLE-EXECUTION-v1: This is the ONLY entry point for UI-originated
-     * interactions.  Interpretation has already occurred in CoreBridgeAdapter
-     * (ARCH-09) before reaching this boundary.
+     * Appends [EventTypes.USER_MESSAGE_SUBMITTED] and [EventTypes.INTENT_SUBMITTED] to the
+     * ledger and returns immediately.  MUST NOT trigger execution, the Governor, or any
+     * processing loop directly.
+     *
+     * System progression is driven exclusively by the [LedgerObserver] registered in [init],
+     * which reacts to [EventTypes.INTENT_SUBMITTED] and activates the execution spine
+     * (CONTRACT MQP-LEDGER-ACTIVATION-v1).
+     *
+     * BLOCK CONDITIONS:
+     *  - ANY call chain reachable from this method into execution → BLOCKED
+     *  - ANY call to [processInteractionInternal] or [executionEntryPoint] → BLOCKED
      *
      * @param projectId       Active project scope.
      * @param rawInput        Original user text (written verbatim to ledger).
-     * @param structuredIntent Pre-interpreted intent from the interaction layer.
+     * @param structuredIntent Pre-interpreted intent from the interaction layer (ARCH-09).
      */
     fun appendUserMessage(projectId: String, rawInput: String, structuredIntent: Map<String, Any>) {
         if (rawInput.isBlank()) return
         Log.e("AGOII_TRACE", "CORE_APPEND_USER_MESSAGE")
-        try {
-            processInteractionInternal(projectId, rawInput, structuredIntent)
-            Log.e("AGOII_TRACE", "CORE_APPEND_USER_MESSAGE_COMPLETE")
-        } catch (t: Throwable) {
-            Log.e("AGOII_TRACE", "CORE_APPEND_USER_MESSAGE_CRASH", t)
-            throw t
-        }
+
+        ledger.appendEvent(
+            projectId,
+            EventTypes.USER_MESSAGE_SUBMITTED,
+            mapOf(
+                "messageId" to UUID.randomUUID().toString(),
+                "text"      to rawInput,
+                "timestamp" to System.currentTimeMillis()
+            )
+        )
+        Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.USER_MESSAGE_SUBMITTED}")
+
+        val intentObjective = structuredIntent["objective"] as? String
+            ?: rawInput.also { Log.e("AGOII_TRACE", "INTENT_OBJECTIVE_MISSING: using rawInput as fallback") }
+        ledger.appendEvent(
+            projectId,
+            EventTypes.INTENT_SUBMITTED,
+            mapOf("objective" to intentObjective)
+        )
+        Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.INTENT_SUBMITTED}")
+
+        // HARD STOP — execution is driven by LedgerObserver (CONTRACT MQP-LEDGER-ACTIVATION-v1)
+        Log.e("AGOII_TRACE", "CORE_APPEND_USER_MESSAGE_COMPLETE")
     }
 
     fun replayState(projectId: String): ReplayStructuralState =
