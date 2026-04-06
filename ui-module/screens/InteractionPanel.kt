@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.util.Log
 import agoii.ui.core.ChatUiModel
 
 /**
@@ -78,7 +79,14 @@ fun InteractionPanel(
             Button(
                 onClick = {
                     if (input.isNotBlank()) {
-                        onSend(input)
+                        Log.e("AGOII_TRACE", "CLICK_SEND_START")
+                        try {
+                            onSend(input)
+                            Log.e("AGOII_TRACE", "CLICK_SEND_END")
+                        } catch (t: Throwable) {
+                            Log.e("AGOII_TRACE", "CLICK_SEND_CRASH", t)
+                            throw t
+                        }
                         input = ""
                     }
                 }

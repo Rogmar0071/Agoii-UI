@@ -1,5 +1,6 @@
 package agoii.ui.core
 
+import android.util.Log
 import agoii.ui.bridge.CoreBridge
 
 /**
@@ -20,7 +21,14 @@ class UiActionDispatcher(private val coreBridge: CoreBridge) {
      * Delegates to coreBridge.processInteraction().
      */
     fun sendInteraction(input: String) {
-        coreBridge.processInteraction(input)
+        Log.e("AGOII_TRACE", "DISPATCH_START")
+        try {
+            coreBridge.processInteraction(input)
+            Log.e("AGOII_TRACE", "DISPATCH_END")
+        } catch (t: Throwable) {
+            Log.e("AGOII_TRACE", "DISPATCH_CRASH", t)
+            throw t
+        }
     }
 
     /**
