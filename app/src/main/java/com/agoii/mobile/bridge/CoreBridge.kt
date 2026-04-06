@@ -173,8 +173,9 @@ class CoreBridge(context: Context) {
                         "timestamp" to System.currentTimeMillis()
                     )
                 )
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // Emission failure is swallowed to preserve the original exception path.
+                println("[PHASE-3] SYSTEM_MESSAGE_EMITTED emission failed: ${e.message}")
             }
         }
 
