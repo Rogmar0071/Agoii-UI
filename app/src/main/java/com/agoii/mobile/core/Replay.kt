@@ -147,7 +147,7 @@ data class ExecutionView(
      *
      * Derived during replay construction. UI MUST NOT apply logic to determine this.
      */
-    val executionStatus: String,
+    val executionStatus: String = "not_started",
 
     /**
      * Fully-resolved commit panel visibility flag for UI consumption.
@@ -159,7 +159,7 @@ data class ExecutionView(
      *
      * Derived during replay construction. UI MUST NOT apply logic to determine this.
      */
-    val showCommitPanel: Boolean
+    val showCommitPanel: Boolean = false
 )
 
 // ── AuditView ─────────────────────────────────────────────────────────────────
@@ -193,7 +193,24 @@ data class AuditView(
      * True when at least one CONTRACT_STARTED event exists in the ledger.
      * Derived during replay construction. UI MUST NOT apply logic to determine this.
      */
-    val hasContracts: Boolean = false
+    val hasContracts: Boolean = false,
+
+    // ── ICS / commit phase — observability projections ─────────────────────
+
+    /** True when ICS_STARTED has been seen in the ledger. */
+    val icsStarted: Boolean = false,
+
+    /** True when ICS_COMPLETED has been seen in the ledger. */
+    val icsCompleted: Boolean = false,
+
+    /** True when COMMIT_CONTRACT has been seen in the ledger. */
+    val commitContractExists: Boolean = false,
+
+    /** True when COMMIT_EXECUTED has been seen (commit approved). */
+    val commitExecuted: Boolean = false,
+
+    /** True when COMMIT_ABORTED has been seen (commit rejected). */
+    val commitAborted: Boolean = false
 )
 
 // ── Nested structural sub-states (unchanged) ─────────────────────────────────
@@ -442,7 +459,12 @@ class Replay(private val eventStore: EventRepository) {
                     assemblyCompleted = assemblyCompleted
                 ),
                 contractIds  = contractIds,
-                hasContracts = hasContracts
+                hasContracts = hasContracts,
+                icsStarted           = icsStarted,
+                icsCompleted         = icsCompleted,
+                commitContractExists = commitContractExists,
+                commitExecuted       = commitExecuted,
+                commitAborted        = commitAborted
             ),
             conversation = conversation
         )

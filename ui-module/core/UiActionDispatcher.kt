@@ -23,9 +23,7 @@ class UiActionDispatcher(private val coreBridge: CoreBridge) {
     fun sendInteraction(input: String) {
         Log.e("AGOII_TRACE", "DISPATCH_START: $input")
         try {
-            // MQP-CORE-EXECUTION-ISOLATION-v1: CoreBridge bypassed for crash isolation diagnostics.
-            // coreBridge.processInteraction(input)
-            Log.e("AGOII_TRACE", "CORE_BYPASSED")
+            coreBridge.processInteraction(input)
         } catch (t: Throwable) {
             Log.e("AGOII_FATAL", "DISPATCH_CRASH: ${t.stackTraceToString()}")
             throw t
