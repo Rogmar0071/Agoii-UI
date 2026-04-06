@@ -244,7 +244,14 @@ class Governor(
             }
 
             EventTypes.TASK_ASSIGNED -> {
-                val taskId   = lastPayload["taskId"] as? String ?: return null
+                val taskId     = lastPayload["taskId"] as? String ?: return null
+                // contractId is read from the TASK_ASSIGNED payload (set by Governor when emitting
+                // TASK_ASSIGNED from CONTRACT_STARTED / DELTA_CONTRACT_CREATED).
+                // Falls back to GovernanceView.lastContractStartedId (sourced from the originating
+                // CONTRACT_STARTED event via Replay) so the field is always deterministically present.
+                val contractId = lastPayload["contractId"] as? String
+                    ?: gv.lastContractStartedId.takeIf { it.isNotEmpty() }
+                    ?: return null
                 val position = resolveInt(lastPayload["position"])
                     ?: gv.lastContractStartedPosition
                     ?: return null
@@ -253,7 +260,12 @@ class Governor(
                     ?: return null
                 Event(
                     type    = EventTypes.TASK_STARTED,
-                    payload = mapOf("taskId" to taskId, "position" to position, "total" to total)
+                    payload = mapOf(
+                        "taskId"     to taskId,
+                        "contractId" to contractId,
+                        "position"   to position,
+                        "total"      to total
+                    )
                 )
             }
 
@@ -261,21 +273,53 @@ class Governor(
             EventTypes.TASK_STARTED -> null
 
             EventTypes.TASK_EXECUTED -> {
-                val taskId      = lastPayload["taskId"]          as? String ?: return null
-                val position    = resolveInt(lastPayload["position"])       ?: return null
-                val total       = resolveInt(lastPayload["total"])          ?: return null
                 val execStatus  = lastPayload["executionStatus"] as? String ?: return null
                 val validStatus = lastPayload["validationStatus"] as? String ?: return null
-                if (execStatus == "SUCCESS" && validStatus == "VALIDATED") {
+                val contractId  = lastPayload["contractId"]?.toString() ?: return null
+                val taskId      = lastPayload["taskId"] as? String ?: return null
+                val position    = resolveInt(lastPayload["position"]) ?: return null
+                val total       = resolveInt(lastPayload["total"]) ?: return null
+
+                // MQP-FAILURE-CONTINUITY-RECOVERY-v1: FAILURE → RECOVERY_CONTRACT
+                // Governor owns the recovery transition; TASK_EXECUTED(FAILURE) must never
+                // be a terminal state. Routing through RECOVERY_CONTRACT keeps the ledger
+                // valid and allows the next Send to proceed normally.
+                //
+                // recoveryId is derived deterministically from contractId + attempt number so
+                // that replaying the same event sequence always produces the same recoveryId.
+                // The downstream idempotency guard (deltaContractRecoveryIds) relies on this.
+                //
+                // MQP-RECOVERY-CONVERGENCE-BOUND-v1: each RECOVERY_CONTRACT written to the
+                // ledger adds its recoveryId to gv.deltaContractRecoveryIds. The size of
+                // that set therefore equals the number of recovery attempts already made for
+                // this project. When the bound is reached (≥ 3), emit EXECUTION_COMPLETED
+                // instead so the system terminates cleanly rather than looping forever.
+                if (execStatus == "FAILURE") {
+                    val recoveryCount = gv.deltaContractRecoveryIds.size
+                    if (recoveryCount >= 3) {
+                        Event(
+                            type    = EventTypes.EXECUTION_COMPLETED,
+                            payload = mapOf("total" to gv.totalContracts)
+                        )
+                    } else {
+                        Event(
+                            type    = EventTypes.RECOVERY_CONTRACT,
+                            payload = mapOf(
+                                "contractId"       to contractId,
+                                "taskId"           to taskId,
+                                "recoveryId"       to "RECOVERY::$contractId::attempt_$recoveryCount",
+                                "report_reference" to gv.reportReference,
+                                "source"           to "EXECUTION_FAILURE"
+                            )
+                        )
+                    }
+                } else if (execStatus == "SUCCESS" && validStatus == "VALIDATED") {
                     Event(
                         type    = EventTypes.TASK_COMPLETED,
                         payload = mapOf("taskId" to taskId, "position" to position, "total" to total)
                     )
                 } else {
-                    Event(
-                        type    = EventTypes.TASK_FAILED,
-                        payload = mapOf("taskId" to taskId, "position" to position, "total" to total)
-                    )
+                    null
                 }
             }
 
