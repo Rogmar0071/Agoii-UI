@@ -90,7 +90,10 @@ class ExecutionResolutionLayer {
         // payload satisfies the ValidationLayer schema (MQP-CRASH-RECOVERY-v1).
         val taskStartedEvent = events.lastOrNull { it.type == EventTypes.TASK_STARTED }
         val contractId = taskStartedEvent?.payload?.get("contractId")?.toString()
-            ?: result.taskId  // backward-compat fallback for pre-fix ledgers
+            // Backward-compat fallback for pre-fix ledgers where TASK_STARTED did not carry
+            // contractId. After MQP-CRASH-RECOVERY-v1, Governor always sets contractId in
+            // TASK_STARTED, so taskId == contractId only for executions initiated on old ledgers.
+            ?: result.taskId
         val position = resolveInt(taskStartedEvent?.payload?.get("position")) ?: 1
         val total    = resolveInt(taskStartedEvent?.payload?.get("total"))    ?: 1
         val reportReference = extractReportReference(events, contractId)
@@ -133,7 +136,10 @@ class ExecutionResolutionLayer {
         // Extract task context from the last TASK_STARTED event so the TASK_EXECUTED
         // payload satisfies the ValidationLayer schema (MQP-CRASH-RECOVERY-v1).
         val taskStartedEvent = events.lastOrNull { it.type == EventTypes.TASK_STARTED }
-        val taskId     = taskStartedEvent?.payload?.get("taskId")?.toString()    ?: "unknown-task"
+        val taskId     = taskStartedEvent?.payload?.get("taskId")?.toString()
+            // Fallback indicates a missing TASK_STARTED event — should not occur in a
+            // well-formed ledger but prevents a crash if the ledger is in an unexpected state.
+            ?: "missing-task-id"
         val contractId = taskStartedEvent?.payload?.get("contractId")?.toString() ?: taskId
         val position   = resolveInt(taskStartedEvent?.payload?.get("position")) ?: 1
         val total      = resolveInt(taskStartedEvent?.payload?.get("total"))    ?: 1
