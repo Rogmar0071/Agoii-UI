@@ -212,11 +212,32 @@ data class AuditView(
     /** True when COMMIT_ABORTED has been seen (commit rejected). */
     val commitAborted: Boolean = false,
 
+    // ── EXECUTION OUTPUT SURFACE (MQP-EXECUTION-OUTPUT-SURFACE-v1) ────────
+
     /**
-     * Text of the last SYSTEM_MESSAGE_EMITTED event in the ledger, or null if none.
+     * Last event type written to ledger.
+     * Single source of truth for "what just happened".
      * Derived during replay construction. UI MUST NOT derive this independently.
      */
-    val lastSystemMessage: String? = null
+    val lastEventType: String? = null,
+
+    /**
+     * Human-readable payload of last event.
+     * Derived from event payload during replay. UI MUST NOT format this.
+     */
+    val lastEventPayload: String? = null,
+
+    /**
+     * Deterministic execution status derived from event chain.
+     * Strict mapping from last event type — NOT UI logic.
+     */
+    val executionStatus: String = "idle",
+
+    /**
+     * Final system output, if any.
+     * Derived ONLY from SYSTEM_MESSAGE_EMITTED events.
+     */
+    val finalOutput: String? = null
 )
 
 // ── Nested structural sub-states (unchanged) ─────────────────────────────────
@@ -420,8 +441,23 @@ class Replay(private val eventStore: EventRepository) {
         // ── Compute conversation (MQP-PHASE-3) ───────────────────────────────
         val conversation = conversationMutable.toList()
 
-        // ── Compute lastSystemMessage (MQP-REPLAY-VISUALIZATION-v1) ──────────
-        val lastSystemMessage = conversation.lastOrNull { !it.isUser }?.text
+        // ── EXECUTION OUTPUT DERIVATION (MQP-EXECUTION-OUTPUT-SURFACE-v1) ──
+
+        val auditLastEventPayload = lastEvent?.payload
+            ?.entries
+            ?.joinToString(", ") { "${it.key}=${it.value}" }
+
+        val auditExecutionStatus = when (lastEventType) {
+            EventTypes.INTENT_SUBMITTED    -> "intent_received"
+            EventTypes.CONTRACTS_GENERATED -> "contracts_ready"
+            EventTypes.TASK_STARTED        -> "executing"
+            EventTypes.TASK_COMPLETED      -> "completed"
+            EventTypes.TASK_FAILED         -> "failed"
+            EventTypes.RECOVERY_CONTRACT   -> "recovering"
+            else                           -> "idle"
+        }
+
+        val finalOutput = conversation.lastOrNull { !it.isUser }?.text
 
         // ── Assemble views ────────────────────────────────────────────────────
 
@@ -474,7 +510,10 @@ class Replay(private val eventStore: EventRepository) {
                 commitContractExists = commitContractExists,
                 commitExecuted       = commitExecuted,
                 commitAborted        = commitAborted,
-                lastSystemMessage    = lastSystemMessage
+                lastEventType        = lastEventType,
+                lastEventPayload     = auditLastEventPayload,
+                executionStatus      = auditExecutionStatus,
+                finalOutput          = finalOutput
             ),
             conversation = conversation
         )
