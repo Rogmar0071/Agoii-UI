@@ -42,7 +42,7 @@ You MUST NOT:
 
 ---
 
-ARCH-STOP-04 (NEW — CRITICAL)
+ARCH-STOP-04 (CRITICAL — ENFORCED)
 You MUST NOT:
 - Place interpretation, transformation, or decision logic inside CoreBridge
 - Call contractors (LLM or otherwise) from CoreBridge
@@ -139,7 +139,7 @@ CoreBridge → UiBridgeAdapter → UiStateBinder → UiModel → UI
 
 ---
 
-### INTERACTION LAYER (CLARIFIED — CRITICAL)
+### INTERACTION LAYER (CRITICAL — ENFORCED)
 
 Paths:
 - /interaction/**
@@ -163,7 +163,8 @@ NOT contract runner
 
 ---
 
-### CoreBridge (Boundary Layer)
+### CoreBridge (Boundary Layer — HARD LOCK)
+
 Paths:
 - /bridge/**
 - CoreBridge.kt
@@ -171,7 +172,7 @@ Paths:
 Responsibilities:
 - Route calls between UI and Nemoclaw
 
-Allowed functions:
+Allowed functions ONLY:
 - loadEvents()
 - replayState()
 - processInteraction()
@@ -182,6 +183,7 @@ FORBIDDEN:
 - State transformation
 - Interpretation logic
 - Contractor invocation
+- Conditional execution logic
 
 ---
 
@@ -197,7 +199,7 @@ Forbidden:
 - UI → Knowledge
 - Nemoclaw → UI
 - Replay → UI
-- CoreBridge → Interaction (NEW ENFORCED)
+- CoreBridge → Interaction
 
 ---
 
@@ -235,17 +237,19 @@ If UI derives logic → model is incomplete.
 
 ## ARCH-07 — UI MODULE ISOLATION
 
-UNCHANGED (ENFORCED)
+ENFORCED — UI MUST ONLY USE ui-module/**
 
 ---
 
 ## ARCH-08 — UI STATE PIPELINE
 
-UNCHANGED (MANDATORY)
+MANDATORY:
+
+CoreBridge → UiBridgeAdapter → UiStateBinder → UiModel → UI
 
 ---
 
-## ARCH-09 — INTERACTION BOUNDARY (NEW — CRITICAL)
+## ARCH-09 — INTERACTION BOUNDARY (CRITICAL)
 
 Interpretation MUST occur BEFORE CoreBridge.
 
@@ -260,7 +264,7 @@ CoreBridge → HumanCommunicationContractor
 
 ---
 
-## ARCH-10 — EXECUTION AUTHORITY (NEW LOCK)
+## ARCH-10 — EXECUTION AUTHORITY (HARD LOCK)
 
 There MUST be exactly ONE execution path:
 
@@ -270,49 +274,79 @@ FORBIDDEN:
 
 - LLM execution
 - HTTP execution paths
-- secondary drivers
+- Secondary execution drivers
 
 ---
 
-## ALLOWED OPERATIONS
+# ALLOWED OPERATIONS
 
-UPDATE:
-
-Add:
-- interaction/** modifications (explicitly allowed)
+- Modify /nemoclaw/**
+- Modify /replay/**
+- Modify /ui-module/**
+- Modify /interaction/**
+- Modify /bridge/** (transport only, no logic)
 
 ---
 
-## FORBIDDEN OPERATIONS
+# FORBIDDEN OPERATIONS
 
-ADD:
+OPS-FORB-01  
+No direct UI → execution linkage
 
-OPS-FORB-04
+OPS-FORB-02  
+No Replay mutation outside Replay
+
+OPS-FORB-03  
+No event mutation (append-only only)
+
+OPS-FORB-04  
 DO NOT:
-
 - Introduce LLM into execution layer
 - Reintroduce LLMContractor / LLMDriver
-- Call OpenAI from execution/**
+- Call external AI from execution/**
 
 ---
 
-## REQUIRED WORKFLOW
+# REQUIRED WORKFLOW
 
-ADD VALIDATION STEP:
+STEP 1 — Classify change (UI / Replay / Nemoclaw / Interaction)
 
-STEP 2.5 — BOUNDARY VALIDATION
+STEP 2 — Validate against ARCH rules
+
+STEP 2.5 — BOUNDARY VALIDATION (MANDATORY)
 
 - Is interpretation inside interaction/** ONLY?
 - Is CoreBridge pure transport?
 - Is execution path singular?
 
-If NO → STOP
+If ANY answer = NO → STOP
+
+STEP 3 — Define exact file mutations
+
+STEP 4 — Ensure Replay remains sole state authority
+
+STEP 5 — Verify UI reads only UiModel
+
+STEP 6 — Validate execution path integrity
 
 ---
 
-## DEFINITION OF DONE
+# DEFINITION OF DONE
 
-ADD:
+DONE-01  
+All logic resides in correct layer
+
+DONE-02  
+No duplicated or derived state outside Replay
+
+DONE-03  
+UI uses only UiModel
+
+DONE-04  
+Event flow intact (append-only)
+
+DONE-05  
+No architectural boundary violations
 
 DONE-06  
 CoreBridge contains ZERO interpretation logic
@@ -325,19 +359,26 @@ Execution path is singular and deterministic
 
 ---
 
-## FAILURE RESPONSE FORMAT
+# FAILURE RESPONSE FORMAT
 
-UNCHANGED
+"Blocked: violates architecture rule <rule-id>"
 
----
-
-## REPLAY PURITY LAW (RL-01)
-
-UNCHANGED (ENFORCED)
+Then:
+- Identify violation
+- Provide minimal compliant alternative
 
 ---
 
-## FINAL PRINCIPLE
+# REPLAY PURITY LAW (RL-01)
+
+Replay must:
+- Derive ALL state from ledger events
+- Contain NO external dependencies
+- Perform NO side effects
+
+---
+
+# FINAL PRINCIPLE
 
 Interpret BEFORE the bridge  
 Execute AFTER the bridge  
