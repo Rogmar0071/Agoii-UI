@@ -96,8 +96,7 @@ fun MainScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            if (model.governance.intentApprovalRequired &&
-                model.governance.intentApprovalStatus == "approval_requested") {
+            if (model.governance.showIntentApprovalPanel) {
                 IntentApprovalPanel(
                     governance = model.governance,
                     onApproveIntent = onApproveIntent,

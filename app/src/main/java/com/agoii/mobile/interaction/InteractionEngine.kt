@@ -49,7 +49,8 @@ class InteractionEngine(
      * CoreBridge MUST NOT call any LLM contractor directly.
      *
      * @param input  Raw user text captured by the UI.
-     * @return       Structured map: `{"objective": "...", "intentId": "..."}`.
+     * @return       Structured map:
+     *               `{"objective": "...", "intentId": "...", "interpretedMeaning": "...", "keyConstraints": [...]}`.
      *               Always returns a valid, well-formed map — never throws.
      */
     fun processInput(input: String): Map<String, Any> {
@@ -103,6 +104,8 @@ class InteractionEngine(
 
     private fun safetyFallback(rawInput: String): Map<String, Any> = mapOf(
         "objective" to rawInput,
-        "intentId"  to UUID.randomUUID().toString()
+        "intentId"  to UUID.randomUUID().toString(),
+        "interpretedMeaning" to rawInput,
+        "keyConstraints" to emptyList<String>()
     )
 }

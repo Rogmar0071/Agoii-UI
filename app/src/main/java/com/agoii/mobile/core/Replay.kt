@@ -33,6 +33,12 @@ data class ConversationMessage(
     val isUser: Boolean
 )
 
+data class IntentSummary(
+    val objective: String,
+    val interpretedMeaning: String,
+    val keyConstraints: List<String>
+)
+
 /**
  * Authoritative state container produced by the Replay Engine.
  *
@@ -70,7 +76,13 @@ data class IntentConstructionView(
     val status: String,          // "none"|"partial"|"in_progress"|"completed"|"approval_requested"|"approved"|"rejected"
     val completeness: Double,
     val approvalRequired: Boolean,
-    val isApproved: Boolean      // derived from last INTENT_APPROVED event
+    val isApproved: Boolean,     // derived from last INTENT_APPROVED event
+    val summary: IntentSummary =
+        IntentSummary(
+            objective = "",
+            interpretedMeaning = "",
+            keyConstraints = emptyList()
+        )
 )
 
 // ── GovernanceView ────────────────────────────────────────────────────────────
@@ -138,7 +150,8 @@ data class GovernanceView(
             completeness     = 0.0,
             approvalRequired = false,
             isApproved       = false
-        )
+        ),
+    val showIntentApprovalPanel: Boolean = false
 )
 
 // ── ExecutionView ─────────────────────────────────────────────────────────────
@@ -359,6 +372,8 @@ class Replay(private val eventStore: EventRepository) {
         var intentConstructionCompleteness = 0.0
         var intentApprovalRequired      = false
         var intentIsApproved            = false
+        var intentInterpretedMeaning    = ""
+        var intentKeyConstraints        = emptyList<String>()
 
         for (event in events) {
             when (event.type) {
@@ -469,6 +484,10 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
+                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
+                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
+                        if (hasConstraints) intentKeyConstraints = constraints
+                    }
                     intentConstructionStatus       = "partial"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.0
                 }
@@ -476,6 +495,10 @@ class Replay(private val eventStore: EventRepository) {
                     applyIntentIdentity(event.payload) { id, obj ->
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
+                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
+                        if (hasConstraints) intentKeyConstraints = constraints
                     }
                     intentConstructionStatus       = "in_progress"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.3
@@ -485,6 +508,10 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
+                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
+                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
+                        if (hasConstraints) intentKeyConstraints = constraints
+                    }
                     intentConstructionStatus       = "in_progress"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: intentConstructionCompleteness
                 }
@@ -492,6 +519,10 @@ class Replay(private val eventStore: EventRepository) {
                     applyIntentIdentity(event.payload) { id, obj ->
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
+                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
+                        if (hasConstraints) intentKeyConstraints = constraints
                     }
                     intentConstructionStatus       = "completed"
                     intentConstructionCompleteness = 1.0
@@ -501,6 +532,10 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
+                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
+                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
+                        if (hasConstraints) intentKeyConstraints = constraints
+                    }
                     intentConstructionStatus = "approval_requested"
                     intentApprovalRequired   = true
                 }
@@ -509,6 +544,10 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
+                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
+                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
+                        if (hasConstraints) intentKeyConstraints = constraints
+                    }
                     intentConstructionStatus = "approved"
                     intentIsApproved         = true
                 }
@@ -516,6 +555,10 @@ class Replay(private val eventStore: EventRepository) {
                     applyIntentIdentity(event.payload) { id, obj ->
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
+                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
+                        if (hasConstraints) intentKeyConstraints = constraints
                     }
                     intentConstructionStatus = "rejected"
                     intentIsApproved         = false
@@ -568,6 +611,11 @@ class Replay(private val eventStore: EventRepository) {
         }
 
         val finalOutput = conversation.lastOrNull { !it.isUser }?.text
+        val intentSummary = IntentSummary(
+            objective = intentConstructionObjective,
+            interpretedMeaning = intentInterpretedMeaning.ifEmpty { intentConstructionObjective },
+            keyConstraints = intentKeyConstraints
+        )
 
         // ── Assemble views ────────────────────────────────────────────────────
 
@@ -587,8 +635,11 @@ class Replay(private val eventStore: EventRepository) {
                     status           = intentConstructionStatus,
                     completeness     = intentConstructionCompleteness,
                     approvalRequired = intentApprovalRequired,
-                    isApproved       = intentIsApproved
-                )
+                    isApproved       = intentIsApproved,
+                    summary          = intentSummary
+                ),
+                showIntentApprovalPanel = intentApprovalRequired &&
+                    intentConstructionStatus == "approval_requested"
             ),
             executionView = ExecutionView(
                 taskStatus            = taskStatusMutable,
@@ -667,5 +718,26 @@ class Replay(private val eventStore: EventRepository) {
             payload["intentId"]?.toString().orEmpty(),
             payload["objective"]?.toString().orEmpty()
         )
+    }
+
+    private inline fun applyIntentSummary(
+        payload: Map<String, Any>,
+        apply: (interpretedMeaning: String, keyConstraints: List<String>, hasConstraints: Boolean) -> Unit
+    ) {
+        val interpretedMeaning = payload["interpretedMeaning"]?.toString().orEmpty()
+        val hasConstraints = payload.containsKey("keyConstraints")
+        apply(
+            interpretedMeaning,
+            resolveStringList(payload["keyConstraints"]),
+            hasConstraints
+        )
+    }
+
+    private fun resolveStringList(value: Any?): List<String> = when (value) {
+        is List<*> -> value.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+        is String -> value.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        else -> emptyList()
     }
 }

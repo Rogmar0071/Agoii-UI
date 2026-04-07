@@ -95,7 +95,7 @@ class IcsModule {
             "intentId" to contract.intentId,
             "objective" to contract.userInput,
             "contractId" to contract.contractId
-        )
+        ) + intentSummaryPayload(contract)
 
         return when (lastType) {
             null -> {
@@ -188,6 +188,22 @@ class IcsModule {
         is Long -> value.toDouble()
         is String -> value.toDoubleOrNull() ?: 0.0
         else -> 0.0
+    }
+
+    private fun intentSummaryPayload(contract: ICSContract): Map<String, Any> {
+        val interpretedMeaning = contract.contextSnapshot["interpretedMeaning"]?.toString()
+            ?.takeIf { it.isNotBlank() }
+            ?: contract.userInput
+
+        val keyConstraints = when (val raw = contract.contextSnapshot["keyConstraints"]) {
+            is List<*> -> raw.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+            else -> emptyList()
+        }
+
+        return mapOf(
+            "interpretedMeaning" to interpretedMeaning,
+            "keyConstraints" to keyConstraints
+        )
     }
 
     private companion object {

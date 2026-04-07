@@ -38,7 +38,27 @@ fun IntentApprovalPanel(
 
         ExpandableSection(title = "Objective") {
             Text(
-                text = governance.pendingIntentObjective.ifEmpty { "—" },
+                text = governance.intentSummary.objective.ifEmpty { "—" },
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
+        ExpandableSection(title = "Interpreted Meaning") {
+            Text(
+                text = governance.intentSummary.interpretedMeaning.ifEmpty { "—" },
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
+        ExpandableSection(title = "Key Constraints") {
+            Text(
+                text = governance.intentSummary.keyConstraints.joinToString(", ").ifEmpty { "—" },
                 style = AgoiiTypography.BodyMedium,
                 color = AgoiiColors.TextPrimary
             )
