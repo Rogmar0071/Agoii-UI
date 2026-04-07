@@ -26,12 +26,25 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Setup Gradle Properties
+        run: |
+          mkdir -p ~/.gradle
+          cat <<'EOF' > ~/.gradle/gradle.properties
+          org.gradle.jvmargs=-Xmx4096m
+          android.useAndroidX=true
+          EOF
+
+      - name: Ensure Google Maven reachable
+        run: |
+          curl -I --fail --silent --show-error https://dl.google.com/dl/android/maven2/
+
       - name: Clean
         run: ./gradlew clean
 
-      - name: Build APK (deterministic diagnostics)
+      - name: Build APK (refresh deps)
         run: |
           ./gradlew assembleDebug \
+            --refresh-dependencies \
             --stacktrace \
             --info \
             --no-daemon 2>&1 | tee build.log
