@@ -137,15 +137,9 @@ class ExecutionEntryPoint(
         // until INTENT_APPROVED exists. CONTRACTS_GENERATED remains downstream of
         // that approval boundary.
         val projectEvents = ledger.loadEvents(projectId)
-        val intentAuthorityEventsPresent = projectEvents.any { it.type in setOf(
-            EventTypes.INTENT_PARTIAL_CREATED,
-            EventTypes.INTENT_UPDATED,
-            EventTypes.INTENT_IN_PROGRESS,
-            EventTypes.INTENT_COMPLETED,
-            EventTypes.INTENT_APPROVAL_REQUESTED,
-            EventTypes.INTENT_APPROVED,
-            EventTypes.INTENT_REJECTED
-        )}
+        val intentAuthorityEventsPresent = projectEvents.any { event ->
+            event.type.startsWith("intent_") && event.type != EventTypes.INTENT_SUBMITTED
+        }
         if (intentAuthorityEventsPresent) {
             val intentApproved = projectEvents.any { it.type == EventTypes.INTENT_APPROVED }
             if (!intentApproved) {
