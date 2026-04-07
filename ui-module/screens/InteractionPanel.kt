@@ -60,7 +60,7 @@ fun InteractionPanel(
                 input = ""
             }
         ) {
-            Text("Send")
+            Text("New Intent")
         }
     }
 }

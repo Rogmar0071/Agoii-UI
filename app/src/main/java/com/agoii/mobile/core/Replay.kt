@@ -450,6 +450,7 @@ class Replay(private val eventStore: EventRepository) {
         val auditExecutionStatus = when (lastEventType) {
             EventTypes.INTENT_SUBMITTED    -> "intent_received"
             EventTypes.CONTRACTS_GENERATED -> "contracts_ready"
+            EventTypes.CAPABILITY_DERIVED  -> "contracts_ready"
             EventTypes.TASK_STARTED        -> "executing"
             EventTypes.TASK_COMPLETED      -> "completed"
             EventTypes.TASK_FAILED         -> "failed"

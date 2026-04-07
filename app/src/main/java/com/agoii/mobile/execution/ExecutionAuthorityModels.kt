@@ -49,9 +49,11 @@ sealed class ExecutionAuthorityResult {
      * Contracts approved for execution.
      *
      * @property orderedContracts Approved contracts in execution order.
+     * @property capabilitySet    Deterministic capability set derived from [orderedContracts] (AERP-1).
      */
     data class Approved(
-        val orderedContracts: List<ExecutionContract>
+        val orderedContracts: List<ExecutionContract>,
+        val capabilitySet: CapabilitySet
     ) : ExecutionAuthorityResult()
     
     /**

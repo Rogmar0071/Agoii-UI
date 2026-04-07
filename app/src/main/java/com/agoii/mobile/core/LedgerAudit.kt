@@ -164,6 +164,10 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.COMMIT_CONTRACT && to == EventTypes.COMMIT_ABORTED) return true
             // ICS loop: re-issued interaction contract (CLOSURE-04)
             if (from == EventTypes.CONTRACTS_GENERATED && to == EventTypes.CONTRACTS_GENERATED) return true
+            // MQP-CAPABILITY-DERIVATION-v1: CAPABILITY_DERIVED emitted immediately after CONTRACTS_GENERATED
+            if (from == EventTypes.CONTRACTS_GENERATED && to == EventTypes.CAPABILITY_DERIVED) return true
+            // MQP-CAPABILITY-DERIVATION-v1: Governor advances from CAPABILITY_DERIVED to CONTRACTS_READY
+            if (from == EventTypes.CAPABILITY_DERIVED && to == EventTypes.CONTRACTS_READY) return true
             // Conversational layer (MQP-PHASE-3): turn-1 legacy path (backward compat for batch flows)
             if (from == EventTypes.INTENT_SUBMITTED && to == EventTypes.USER_MESSAGE_SUBMITTED) return true
             // Conversational layer (MQP-PHASE-3 FIX-02): user message is true ledger origin;

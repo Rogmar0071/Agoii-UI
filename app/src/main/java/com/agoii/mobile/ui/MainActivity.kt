@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectAsState
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.agoii.mobile.bridge.CoreBridge
@@ -44,7 +45,14 @@ class MainActivity : ComponentActivity() {
                 val binder = remember(adapter) { UiStateBinder(adapter) }
                 val dispatcher = remember(adapter) { UiActionDispatcher(adapter) }
 
-                // Safe empty defaults — no IO on the composition (Main) thread.
+                // MQP-UI-REACTIVE-BINDING-v1 — observe the ledger tick emitted by
+                // CoreBridge.LedgerObserver after every appendEvent.  Each new tick
+                // value triggers the LaunchedEffect below, which reads the fresh
+                // ReplayStructuralState on the IO thread and updates the Compose model.
+                // No polling. No delays. UI is fully passive.
+                val ledgerTick by adapter.ledgerTick.collectAsState()
+
+                // Safe empty defaults — rendered until the first IO read completes.
                 var model by remember {
                     mutableStateOf(
                         UiModel(
@@ -56,10 +64,11 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                // Load initial state from IO thread; update model on Main thread.
-                LaunchedEffect(binder) {
+                // Reload the model on every ledger tick (initial load at tick=0 included).
+                LaunchedEffect(ledgerTick) {
                     val loaded = withContext(Dispatchers.IO) { binder.getUiModel() }
                     model = loaded
+                    Log.e("AGOII_TRACE", "MODEL_APPLIED tick=$ledgerTick")
                 }
 
                 val projects = remember {
@@ -75,63 +84,19 @@ class MainActivity : ComponentActivity() {
                     },
                     onInteraction = { input ->
                         Log.e("AGOII_TRACE", "UI_SEND: $input")
+                        // MQP-UI-REACTIVE-BINDING-v1: pure ledger ingress — fire and forget.
+                        // The LedgerObserver fires on each appendEvent, bumps ledgerTick,
+                        // and the LaunchedEffect above reloads the model automatically.
                         scope.launch {
-                            try {
-                                val updated = withContext(Dispatchers.IO) {
-                                    // 🔴 ONLY WRITE TO LEDGER — UI is a pure emitter
-                                    adapter.appendUserMessage(input)
-
-                                    // 🔴 IMMEDIATELY REFRESH FROM REPLAY
-                                    binder.getUiModel()
-                                }
-                                model = updated
-                                Log.e("AGOII_TRACE", "MODEL_APPLIED")
-
-                            } catch (t: Throwable) {
-                                Log.e("AGOII_FATAL_CRASH", t.stackTraceToString())
-                                model = UiModel(
-                                    governance = GovernanceView(
-                                        lastEventType = "UI_ERROR",
-                                        lastEventPayload = t.message ?: "UNKNOWN"
-                                    ),
-                                    execution = ExecutionView(
-                                        executionStatus = "failed"
-                                    ),
-                                    audit = AuditView(
-                                        finalOutput = t.stackTraceToString()
-                                    ),
-                                    chat = ChatUiModel(
-                                        messages = listOf(
-                                            ChatMessage(
-                                                id = "ui_error",
-                                                text = "CRASH: " + (t.message ?: "Unknown error"),
-                                                isUser = false
-                                            )
-                                        ),
-                                        currentInput = ""
-                                    )
-                                )
+                            withContext(Dispatchers.IO) {
+                                adapter.appendUserMessage(input)
                             }
                         }
                     },
                     onApproveContract = { contractId ->
                         scope.launch {
-                            try {
-                                val updated = withContext(Dispatchers.IO) {
-                                    dispatcher.approve(contractId)
-                                    binder.getUiModel()
-                                }
-                                model = updated
-                            } catch (t: Throwable) {
-                                Log.e("AGOII_FATAL", t.stackTraceToString())
-                                model = model.copy(
-                                    audit = model.audit.copy(
-                                        lastEventType = "ERROR",
-                                        lastEventPayload = t.message ?: "Unknown error",
-                                        executionStatus = "failed",
-                                        finalOutput = t.stackTraceToString()
-                                    )
-                                )
+                            withContext(Dispatchers.IO) {
+                                dispatcher.approve(contractId)
                             }
                         }
                     }
