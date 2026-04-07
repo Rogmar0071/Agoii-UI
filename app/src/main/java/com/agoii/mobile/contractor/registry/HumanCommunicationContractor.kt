@@ -71,10 +71,10 @@ Rules:
      * fallback map.
      *
      * @param rawInput  Unstructured user text from the UI.
-      * @return          Structured intent:
-      *                  `{"objective": "...", "intentId": "...", "interpretedMeaning": "...", "keyConstraints": [...]}`.
-      *                  Falls back to treating raw input as objective if LLM is
-      *                  unavailable, times out, or returns an unparseable response.
+     * @return          Structured intent:
+     *                  `{"objective": "...", "intentId": "...", "interpretedMeaning": "...", "keyConstraints": [...]}`.
+     *                  Falls back to treating raw input as objective if LLM is
+     *                  unavailable, times out, or returns an unparseable response.
      */
     fun parse(rawInput: String): Map<String, Any> {
         if (rawInput.isBlank()) return structuredFallback("unspecified")
