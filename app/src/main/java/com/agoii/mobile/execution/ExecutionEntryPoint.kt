@@ -106,8 +106,8 @@ class ExecutionEntryPoint(
         // If the new intent-authority flow is in use (any of the intent authority
         // events are present), execution is only permitted after INTENT_APPROVED.
         // Old flow (no intent authority events) proceeds normally for backward compat.
-        val currentEventsForGate = ledger.loadEvents(projectId)
-        val intentAuthorityEventsPresent = currentEventsForGate.any { it.type in setOf(
+        val projectEvents = ledger.loadEvents(projectId)
+        val intentAuthorityEventsPresent = projectEvents.any { it.type in setOf(
             EventTypes.INTENT_PARTIAL_CREATED,
             EventTypes.INTENT_UPDATED,
             EventTypes.INTENT_IN_PROGRESS,
@@ -117,7 +117,7 @@ class ExecutionEntryPoint(
             EventTypes.INTENT_REJECTED
         )}
         if (intentAuthorityEventsPresent) {
-            val intentApproved = currentEventsForGate.any { it.type == EventTypes.INTENT_APPROVED }
+            val intentApproved = projectEvents.any { it.type == EventTypes.INTENT_APPROVED }
             if (!intentApproved) {
                 return AuthorizationResult.blocked("INTENT_NOT_APPROVED", "INTENT_AUTHORITY")
             }

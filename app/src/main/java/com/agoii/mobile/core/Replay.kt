@@ -463,48 +463,62 @@ class Replay(private val eventStore: EventRepository) {
                 }
 
                 // ── Intent Authority (MQP-POST-INTENT-AUTHORITY-GATE-v1) ──────
-                // Forward-only: last event per intent wins; objective is carried forward.
+                // Forward-only: last event per intent wins; intentId/objective carried forward.
                 EventTypes.INTENT_PARTIAL_CREATED -> {
-                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
-                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
-                    intentConstructionStatus     = "partial"
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus       = "partial"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.0
                 }
                 EventTypes.INTENT_IN_PROGRESS -> {
-                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
-                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
-                    intentConstructionStatus     = "in_progress"
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus       = "in_progress"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.3
                 }
                 EventTypes.INTENT_UPDATED -> {
-                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
-                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
-                    intentConstructionStatus     = "in_progress"
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus       = "in_progress"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: intentConstructionCompleteness
                 }
                 EventTypes.INTENT_COMPLETED -> {
-                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
-                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
-                    intentConstructionStatus     = "completed"
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus       = "completed"
                     intentConstructionCompleteness = 1.0
                 }
                 EventTypes.INTENT_APPROVAL_REQUESTED -> {
-                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
-                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
-                    intentConstructionStatus     = "approval_requested"
-                    intentApprovalRequired       = true
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus = "approval_requested"
+                    intentApprovalRequired   = true
                 }
                 EventTypes.INTENT_APPROVED -> {
-                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
-                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
-                    intentConstructionStatus     = "approved"
-                    intentIsApproved             = true
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus = "approved"
+                    intentIsApproved         = true
                 }
                 EventTypes.INTENT_REJECTED -> {
-                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
-                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
-                    intentConstructionStatus     = "rejected"
-                    intentIsApproved             = false
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus = "rejected"
+                    intentIsApproved         = false
                 }
             }
         }
@@ -638,5 +652,20 @@ class Replay(private val eventStore: EventRepository) {
         is Float  -> value.toDouble()
         is String -> value.toDoubleOrNull()
         else      -> null
+    }
+
+    /**
+     * Extracts intentId and objective from an intent-authority event payload and
+     * invokes [apply] with the extracted values (empty string when absent).
+     * Callers should guard against empty strings to preserve carry-forward semantics.
+     */
+    private inline fun applyIntentIdentity(
+        payload: Map<String, Any>,
+        apply: (intentId: String, objective: String) -> Unit
+    ) {
+        apply(
+            payload["intentId"]?.toString().orEmpty(),
+            payload["objective"]?.toString().orEmpty()
+        )
     }
 }
