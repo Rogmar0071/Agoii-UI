@@ -6,7 +6,9 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    env:
+      GRADLE_OPTS: "-Dorg.gradle.internal.http.socketTimeout=60000 -Dorg.gradle.internal.http.connectionTimeout=60000"
 
     steps:
       - name: Checkout repo
@@ -19,6 +21,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
+          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -36,10 +39,15 @@ jobs:
 
       - name: Ensure Google Maven reachable
         run: |
+          echo "Testing connectivity..."
+          nslookup dl.google.com || true
+          ping -c 2 dl.google.com || true
           curl -I \
             --fail \
             --show-error \
             --location \
+            --retry 3 \
+            --retry-delay 5 \
             --write-out '\nHTTP %{http_code}\n' \
             https://dl.google.com/dl/android/maven2/
 
