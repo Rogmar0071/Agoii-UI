@@ -62,6 +62,21 @@ class InteractionEngine(
     }
 
     /**
+     * Interpret human approval language into a structured [ApprovalIntent].
+     *
+     * Pure interpretation only: no execution, no ledger writes, no side effects.
+     * Returns null when the text does not map to a governed approval action.
+     */
+    fun processApprovalInput(input: String, intentId: String): ApprovalIntent? {
+        if (intentId.isBlank()) return null
+        return when (input.trim().lowercase()) {
+            "approve", "confirm" -> ApprovalIntent(intentId, ApprovalAction.APPROVE)
+            "reject", "change" -> ApprovalIntent(intentId, ApprovalAction.REJECT)
+            else -> null
+        }
+    }
+
+    /**
      * Execute [contract] against [input] and return a fully-formed result.
      *
      * Flow:

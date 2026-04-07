@@ -44,6 +44,12 @@ interface CoreBridge {
 
     /** Routes contract approval through the governed pipeline. */
     fun approveContracts(contractId: String)
+
+    /** Routes intent approval through the governed pipeline. */
+    fun approveIntent(intentId: String)
+
+    /** Routes intent rejection through the governed pipeline. */
+    fun rejectIntent(intentId: String)
 }
 
 /**
@@ -75,5 +81,13 @@ class UiBridgeAdapter(private val coreBridge: CoreBridge) {
      */
     fun approve(contractId: String) {
         coreBridge.approveContracts(contractId)
+    }
+
+    fun approveIntent(intentId: String) {
+        coreBridge.approveIntent(intentId)
+    }
+
+    fun rejectIntent(intentId: String) {
+        coreBridge.rejectIntent(intentId)
     }
 }

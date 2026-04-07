@@ -8,6 +8,7 @@ import com.agoii.mobile.core.ExecutionView
 import com.agoii.mobile.core.GovernanceView
 import com.agoii.mobile.core.IntentStructuralState
 import com.agoii.mobile.core.ReplayStructuralState
+import com.agoii.mobile.interaction.ApprovalAction
 import com.agoii.mobile.interaction.InteractionContract
 import com.agoii.mobile.interaction.InteractionEngine
 import com.agoii.mobile.interaction.InteractionFormatter
@@ -175,6 +176,36 @@ class InteractionContractTest {
             InteractionInput(state())
         )
         assertEquals(id, result.contractId)
+    }
+
+    @Test
+    fun `processApprovalInput maps approve synonyms to APPROVE`() {
+        assertEquals(
+            ApprovalAction.APPROVE,
+            engine.processApprovalInput("approve", "intent-1")?.action
+        )
+        assertEquals(
+            ApprovalAction.APPROVE,
+            engine.processApprovalInput("confirm", "intent-1")?.action
+        )
+    }
+
+    @Test
+    fun `processApprovalInput maps reject synonyms to REJECT`() {
+        assertEquals(
+            ApprovalAction.REJECT,
+            engine.processApprovalInput("reject", "intent-1")?.action
+        )
+        assertEquals(
+            ApprovalAction.REJECT,
+            engine.processApprovalInput("change", "intent-1")?.action
+        )
+    }
+
+    @Test
+    fun `processApprovalInput returns null for unsupported approval text`() {
+        assertNull(engine.processApprovalInput("later maybe", "intent-1"))
+        assertNull(engine.processApprovalInput("approve", ""))
     }
 
     // ── 5. Correct formatting per OutputType ─────────────────────────────────

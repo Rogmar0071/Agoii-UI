@@ -99,10 +99,23 @@ class MainActivity : ComponentActivity() {
                                 dispatcher.approve(contractId)
                             }
                         }
+                    },
+                    onApproveIntent = { intentId ->
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                dispatcher.approveIntent(intentId)
+                            }
+                        }
+                    },
+                    onRejectIntent = { intentId ->
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                dispatcher.rejectIntent(intentId)
+                            }
+                        }
                     }
                 )
             }
         }
     }
 }
-

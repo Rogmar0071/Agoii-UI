@@ -12,6 +12,8 @@ import com.agoii.mobile.core.ValidationLayer
 import com.agoii.mobile.ics.ICSContract
 import com.agoii.mobile.ics.IcsModule
 import com.agoii.mobile.ics.IntentConstructionResult
+import com.agoii.mobile.interaction.ApprovalAction
+import com.agoii.mobile.interaction.ApprovalIntent
 import java.util.UUID
 
 /**
@@ -247,5 +249,26 @@ class ExecutionEntryPoint(
         return AuthorizationResult.authorized(
             Event(type = EventTypes.CONTRACTS_GENERATED, payload = payload)
         )
+    }
+
+    fun handleApprovalIntent(projectId: String, intent: ApprovalIntent): AuthorizationResult {
+        val eventType = when (intent.action) {
+            ApprovalAction.APPROVE -> EventTypes.INTENT_APPROVED
+            ApprovalAction.REJECT -> EventTypes.INTENT_REJECTED
+        }
+
+        val payload = mapOf(
+            "intentId" to intent.intentId,
+            "timestamp" to System.currentTimeMillis()
+        )
+
+        return try {
+            ledger.appendEvent(projectId, eventType, payload)
+            AuthorizationResult.authorized(
+                Event(type = eventType, payload = payload)
+            )
+        } catch (e: LedgerValidationException) {
+            AuthorizationResult.blocked("validation failed: ${e.message}", "INTENT_AUTHORITY")
+        }
     }
 }
