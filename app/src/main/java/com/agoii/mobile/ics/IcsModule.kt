@@ -28,11 +28,11 @@
 
 package com.agoii.mobile.ics
 
+import android.util.Log
 import com.agoii.mobile.assembly.ContractOutput
 import com.agoii.mobile.assembly.FinalArtifact
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
-import android.util.Log
 
 /**
  * ICS Module — deterministic transformer from [FinalArtifact] to [IcsOutput].
