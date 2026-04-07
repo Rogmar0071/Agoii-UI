@@ -36,7 +36,12 @@ jobs:
 
       - name: Ensure Google Maven reachable
         run: |
-          curl -I --fail --silent --show-error https://dl.google.com/dl/android/maven2/
+          curl -I \
+            --fail \
+            --show-error \
+            --location \
+            --write-out '\nHTTP %{http_code}\n' \
+            https://dl.google.com/dl/android/maven2/
 
       - name: Clean
         run: ./gradlew clean
