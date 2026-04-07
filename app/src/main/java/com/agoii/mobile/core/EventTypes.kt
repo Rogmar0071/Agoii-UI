@@ -26,6 +26,17 @@ object EventTypes {
     const val COMMIT_EXECUTED     = "commit_executed"
     const val COMMIT_ABORTED      = "commit_aborted"
 
+    // ── Intent Authority events (MQP-POST-INTENT-AUTHORITY-GATE-v1) ─────────────
+    // Emitted during the intent construction and approval sub-lifecycle.
+    // Forward-only; last event per intent wins during replay.
+    const val INTENT_PARTIAL_CREATED     = "intent_partial_created"
+    const val INTENT_UPDATED             = "intent_updated"
+    const val INTENT_IN_PROGRESS         = "intent_in_progress"
+    const val INTENT_COMPLETED           = "intent_completed"
+    const val INTENT_APPROVAL_REQUESTED  = "intent_approval_requested"
+    const val INTENT_APPROVED            = "intent_approved"
+    const val INTENT_REJECTED            = "intent_rejected"
+
     // ── Conversational layer events (MQP-PHASE-3) ─────────────────────────────
     // Emitted by CoreBridge to record the conversational surface in the ledger.
     // USER_MESSAGE_SUBMITTED: user input captured before execution.
@@ -96,7 +107,14 @@ object EventTypes {
         COMMIT_EXECUTED,
         COMMIT_ABORTED,
         USER_MESSAGE_SUBMITTED,
-        SYSTEM_MESSAGE_EMITTED
+        SYSTEM_MESSAGE_EMITTED,
+        INTENT_PARTIAL_CREATED,
+        INTENT_UPDATED,
+        INTENT_IN_PROGRESS,
+        INTENT_COMPLETED,
+        INTENT_APPROVAL_REQUESTED,
+        INTENT_APPROVED,
+        INTENT_REJECTED
     )
 
     /** Default number of contracts generated per intent. */

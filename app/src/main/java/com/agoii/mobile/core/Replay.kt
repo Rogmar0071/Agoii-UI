@@ -46,6 +46,33 @@ data class ReplayStructuralState(
     val conversation:   List<ConversationMessage> = emptyList()
 )
 
+// ── IntentConstructionView ────────────────────────────────────────────────────
+
+/**
+ * Intent construction sub-lifecycle state derived exclusively from the ledger.
+ *
+ * Derived during replay from INTENT_PARTIAL_CREATED, INTENT_IN_PROGRESS,
+ * INTENT_UPDATED, INTENT_COMPLETED, INTENT_APPROVAL_REQUESTED, INTENT_APPROVED,
+ * and INTENT_REJECTED events (MQP-POST-INTENT-AUTHORITY-GATE-v1).
+ *
+ * Status values (forward-only, last event per intent wins):
+ *   "none"                — no intent authority events seen yet
+ *   "partial"             — INTENT_PARTIAL_CREATED
+ *   "in_progress"         — INTENT_IN_PROGRESS or INTENT_UPDATED
+ *   "completed"           — INTENT_COMPLETED
+ *   "approval_requested"  — INTENT_APPROVAL_REQUESTED
+ *   "approved"            — INTENT_APPROVED
+ *   "rejected"            — INTENT_REJECTED
+ */
+data class IntentConstructionView(
+    val intentId: String,
+    val objective: String,
+    val status: String,          // "none"|"partial"|"in_progress"|"completed"|"approval_requested"|"approved"|"rejected"
+    val completeness: Double,
+    val approvalRequired: Boolean,
+    val isApproved: Boolean      // derived from last INTENT_APPROVED event
+)
+
 // ── GovernanceView ────────────────────────────────────────────────────────────
 
 /**
@@ -96,7 +123,22 @@ data class GovernanceView(
      * position from the most recent CONTRACT_STARTED event.
      * Used by Governor as a fallback when TASK_ASSIGNED.position is absent.
      */
-    val lastContractStartedPosition: Int?
+    val lastContractStartedPosition: Int?,
+
+    /**
+     * Intent construction sub-lifecycle state (MQP-POST-INTENT-AUTHORITY-GATE-v1).
+     * Derived from INTENT_PARTIAL_CREATED / INTENT_IN_PROGRESS / INTENT_UPDATED /
+     * INTENT_COMPLETED / INTENT_APPROVAL_REQUESTED / INTENT_APPROVED / INTENT_REJECTED events.
+     */
+    val intentConstruction: IntentConstructionView =
+        IntentConstructionView(
+            intentId         = "",
+            objective        = "",
+            status           = "none",
+            completeness     = 0.0,
+            approvalRequired = false,
+            isApproved       = false
+        )
 )
 
 // ── ExecutionView ─────────────────────────────────────────────────────────────
@@ -310,6 +352,14 @@ class Replay(private val eventStore: EventRepository) {
         // ── Conversation accumulators (MQP-PHASE-3) ───────────────────────────
         val conversationMutable = mutableListOf<ConversationMessage>()
 
+        // ── Intent authority accumulators (MQP-POST-INTENT-AUTHORITY-GATE-v1) ──
+        var intentConstructionId        = ""
+        var intentConstructionObjective = ""
+        var intentConstructionStatus    = "none"
+        var intentConstructionCompleteness = 0.0
+        var intentApprovalRequired      = false
+        var intentIsApproved            = false
+
         for (event in events) {
             when (event.type) {
                 // ── Intent / contract ─────────────────────────────────────────
@@ -411,6 +461,51 @@ class Replay(private val eventStore: EventRepository) {
                     val text = event.payload["text"]?.toString() ?: ""
                     conversationMutable.add(ConversationMessage(id = id, text = text, isUser = false))
                 }
+
+                // ── Intent Authority (MQP-POST-INTENT-AUTHORITY-GATE-v1) ──────
+                // Forward-only: last event per intent wins; objective is carried forward.
+                EventTypes.INTENT_PARTIAL_CREATED -> {
+                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
+                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
+                    intentConstructionStatus     = "partial"
+                    intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.0
+                }
+                EventTypes.INTENT_IN_PROGRESS -> {
+                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
+                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
+                    intentConstructionStatus     = "in_progress"
+                    intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.3
+                }
+                EventTypes.INTENT_UPDATED -> {
+                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
+                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
+                    intentConstructionStatus     = "in_progress"
+                    intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: intentConstructionCompleteness
+                }
+                EventTypes.INTENT_COMPLETED -> {
+                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
+                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
+                    intentConstructionStatus     = "completed"
+                    intentConstructionCompleteness = 1.0
+                }
+                EventTypes.INTENT_APPROVAL_REQUESTED -> {
+                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
+                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
+                    intentConstructionStatus     = "approval_requested"
+                    intentApprovalRequired       = true
+                }
+                EventTypes.INTENT_APPROVED -> {
+                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
+                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
+                    intentConstructionStatus     = "approved"
+                    intentIsApproved             = true
+                }
+                EventTypes.INTENT_REJECTED -> {
+                    val pid = event.payload["intentId"]?.toString(); if (!pid.isNullOrEmpty()) intentConstructionId = pid
+                    val obj = event.payload["objective"]?.toString(); if (!obj.isNullOrEmpty()) intentConstructionObjective = obj
+                    intentConstructionStatus     = "rejected"
+                    intentIsApproved             = false
+                }
             }
         }
 
@@ -471,7 +566,15 @@ class Replay(private val eventStore: EventRepository) {
                 deltaContractRecoveryIds = deltaContractRecoveryIds,
                 taskAssignedTaskIds      = taskAssignedTaskIds,
                 lastContractStartedId    = lastContractStartedId,
-                lastContractStartedPosition = lastContractStartedPosition
+                lastContractStartedPosition = lastContractStartedPosition,
+                intentConstruction       = IntentConstructionView(
+                    intentId         = intentConstructionId,
+                    objective        = intentConstructionObjective,
+                    status           = intentConstructionStatus,
+                    completeness     = intentConstructionCompleteness,
+                    approvalRequired = intentApprovalRequired,
+                    isApproved       = intentIsApproved
+                )
             ),
             executionView = ExecutionView(
                 taskStatus            = taskStatusMutable,
@@ -525,6 +628,15 @@ class Replay(private val eventStore: EventRepository) {
         is Double -> value.toInt()
         is Long   -> value.toInt()
         is String -> value.toIntOrNull()
+        else      -> null
+    }
+
+    private fun resolveDouble(value: Any?): Double? = when (value) {
+        is Double -> value
+        is Int    -> value.toDouble()
+        is Long   -> value.toDouble()
+        is Float  -> value.toDouble()
+        is String -> value.toDoubleOrNull()
         else      -> null
     }
 }

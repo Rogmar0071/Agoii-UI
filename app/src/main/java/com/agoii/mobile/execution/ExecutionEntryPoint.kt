@@ -102,6 +102,25 @@ class ExecutionEntryPoint(
         projectId:     String,
         intentPayload: Map<String, Any>
     ): AuthorizationResult {
+        // ── Phase gate: Intent Authority (MQP-POST-INTENT-AUTHORITY-GATE-v1) ──
+        // If the new intent-authority flow is in use (any of the intent authority
+        // events are present), execution is only permitted after INTENT_APPROVED.
+        // Old flow (no intent authority events) proceeds normally for backward compat.
+        val currentEventsForGate = ledger.loadEvents(projectId)
+        val intentAuthorityEventsPresent = currentEventsForGate.any { it.type in setOf(
+            EventTypes.INTENT_PARTIAL_CREATED,
+            EventTypes.INTENT_IN_PROGRESS,
+            EventTypes.INTENT_COMPLETED,
+            EventTypes.INTENT_APPROVAL_REQUESTED,
+            EventTypes.INTENT_APPROVED
+        )}
+        if (intentAuthorityEventsPresent) {
+            val intentApproved = currentEventsForGate.any { it.type == EventTypes.INTENT_APPROVED }
+            if (!intentApproved) {
+                return AuthorizationResult.blocked("INTENT_NOT_APPROVED", "INTENT_AUTHORITY")
+            }
+        }
+
         val objective = intentPayload["objective"] as? String
             ?: return AuthorizationResult.blocked(
                 "Intent payload missing 'objective'",
