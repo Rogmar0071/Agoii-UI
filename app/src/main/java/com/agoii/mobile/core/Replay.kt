@@ -46,6 +46,33 @@ data class ReplayStructuralState(
     val conversation:   List<ConversationMessage> = emptyList()
 )
 
+// ── IntentConstructionView ────────────────────────────────────────────────────
+
+/**
+ * Intent construction sub-lifecycle state derived exclusively from the ledger.
+ *
+ * Derived during replay from INTENT_PARTIAL_CREATED, INTENT_IN_PROGRESS,
+ * INTENT_UPDATED, INTENT_COMPLETED, INTENT_APPROVAL_REQUESTED, INTENT_APPROVED,
+ * and INTENT_REJECTED events (MQP-POST-INTENT-AUTHORITY-GATE-v1).
+ *
+ * Status values (forward-only, last event per intent wins):
+ *   "none"                — no intent authority events seen yet
+ *   "partial"             — INTENT_PARTIAL_CREATED
+ *   "in_progress"         — INTENT_IN_PROGRESS or INTENT_UPDATED
+ *   "completed"           — INTENT_COMPLETED
+ *   "approval_requested"  — INTENT_APPROVAL_REQUESTED
+ *   "approved"            — INTENT_APPROVED
+ *   "rejected"            — INTENT_REJECTED
+ */
+data class IntentConstructionView(
+    val intentId: String,
+    val objective: String,
+    val status: String,          // "none"|"partial"|"in_progress"|"completed"|"approval_requested"|"approved"|"rejected"
+    val completeness: Double,
+    val approvalRequired: Boolean,
+    val isApproved: Boolean      // derived from last INTENT_APPROVED event
+)
+
 // ── GovernanceView ────────────────────────────────────────────────────────────
 
 /**
@@ -96,7 +123,22 @@ data class GovernanceView(
      * position from the most recent CONTRACT_STARTED event.
      * Used by Governor as a fallback when TASK_ASSIGNED.position is absent.
      */
-    val lastContractStartedPosition: Int?
+    val lastContractStartedPosition: Int?,
+
+    /**
+     * Intent construction sub-lifecycle state (MQP-POST-INTENT-AUTHORITY-GATE-v1).
+     * Derived from INTENT_PARTIAL_CREATED / INTENT_IN_PROGRESS / INTENT_UPDATED /
+     * INTENT_COMPLETED / INTENT_APPROVAL_REQUESTED / INTENT_APPROVED / INTENT_REJECTED events.
+     */
+    val intentConstruction: IntentConstructionView =
+        IntentConstructionView(
+            intentId         = "",
+            objective        = "",
+            status           = "none",
+            completeness     = 0.0,
+            approvalRequired = false,
+            isApproved       = false
+        )
 )
 
 // ── ExecutionView ─────────────────────────────────────────────────────────────
@@ -310,6 +352,14 @@ class Replay(private val eventStore: EventRepository) {
         // ── Conversation accumulators (MQP-PHASE-3) ───────────────────────────
         val conversationMutable = mutableListOf<ConversationMessage>()
 
+        // ── Intent authority accumulators (MQP-POST-INTENT-AUTHORITY-GATE-v1) ──
+        var intentConstructionId        = ""
+        var intentConstructionObjective = ""
+        var intentConstructionStatus    = "none"
+        var intentConstructionCompleteness = 0.0
+        var intentApprovalRequired      = false
+        var intentIsApproved            = false
+
         for (event in events) {
             when (event.type) {
                 // ── Intent / contract ─────────────────────────────────────────
@@ -411,6 +461,65 @@ class Replay(private val eventStore: EventRepository) {
                     val text = event.payload["text"]?.toString() ?: ""
                     conversationMutable.add(ConversationMessage(id = id, text = text, isUser = false))
                 }
+
+                // ── Intent Authority (MQP-POST-INTENT-AUTHORITY-GATE-v1) ──────
+                // Forward-only: last event per intent wins; intentId/objective carried forward.
+                EventTypes.INTENT_PARTIAL_CREATED -> {
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus       = "partial"
+                    intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.0
+                }
+                EventTypes.INTENT_IN_PROGRESS -> {
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus       = "in_progress"
+                    intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.3
+                }
+                EventTypes.INTENT_UPDATED -> {
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus       = "in_progress"
+                    intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: intentConstructionCompleteness
+                }
+                EventTypes.INTENT_COMPLETED -> {
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus       = "completed"
+                    intentConstructionCompleteness = 1.0
+                }
+                EventTypes.INTENT_APPROVAL_REQUESTED -> {
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus = "approval_requested"
+                    intentApprovalRequired   = true
+                }
+                EventTypes.INTENT_APPROVED -> {
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus = "approved"
+                    intentIsApproved         = true
+                }
+                EventTypes.INTENT_REJECTED -> {
+                    applyIntentIdentity(event.payload) { id, obj ->
+                        if (id.isNotEmpty()) intentConstructionId = id
+                        if (obj.isNotEmpty()) intentConstructionObjective = obj
+                    }
+                    intentConstructionStatus = "rejected"
+                    intentIsApproved         = false
+                }
             }
         }
 
@@ -471,7 +580,15 @@ class Replay(private val eventStore: EventRepository) {
                 deltaContractRecoveryIds = deltaContractRecoveryIds,
                 taskAssignedTaskIds      = taskAssignedTaskIds,
                 lastContractStartedId    = lastContractStartedId,
-                lastContractStartedPosition = lastContractStartedPosition
+                lastContractStartedPosition = lastContractStartedPosition,
+                intentConstruction       = IntentConstructionView(
+                    intentId         = intentConstructionId,
+                    objective        = intentConstructionObjective,
+                    status           = intentConstructionStatus,
+                    completeness     = intentConstructionCompleteness,
+                    approvalRequired = intentApprovalRequired,
+                    isApproved       = intentIsApproved
+                )
             ),
             executionView = ExecutionView(
                 taskStatus            = taskStatusMutable,
@@ -526,5 +643,29 @@ class Replay(private val eventStore: EventRepository) {
         is Long   -> value.toInt()
         is String -> value.toIntOrNull()
         else      -> null
+    }
+
+    private fun resolveDouble(value: Any?): Double? = when (value) {
+        is Double -> value
+        is Int    -> value.toDouble()
+        is Long   -> value.toDouble()
+        is Float  -> value.toDouble()
+        is String -> value.toDoubleOrNull()
+        else      -> null
+    }
+
+    /**
+     * Extracts intentId and objective from an intent-authority event payload and
+     * invokes [apply] with the extracted values (empty string when absent).
+     * Callers should guard against empty strings to preserve carry-forward semantics.
+     */
+    private inline fun applyIntentIdentity(
+        payload: Map<String, Any>,
+        apply: (intentId: String, objective: String) -> Unit
+    ) {
+        apply(
+            payload["intentId"]?.toString().orEmpty(),
+            payload["objective"]?.toString().orEmpty()
+        )
     }
 }

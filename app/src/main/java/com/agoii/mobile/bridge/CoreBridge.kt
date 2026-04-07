@@ -8,6 +8,7 @@ import com.agoii.mobile.contracts.*
 import com.agoii.mobile.core.*
 import com.agoii.mobile.execution.*
 import com.agoii.mobile.governor.Governor
+import com.agoii.mobile.interaction.ApprovalIntent
 import com.agoii.mobile.observability.*
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
@@ -64,16 +65,16 @@ class CoreBridge(context: Context) {
         )
 
         // CONTRACT MQP-LEDGER-ACTIVATION-ASYNC-v1 — observer is notification-only.
-        // It reads the last event type and, on INTENT_SUBMITTED, schedules the spine
-        // on a background coroutine.  The ledger append thread is NEVER blocked by
-        // spine execution.
+        // It reads the last event type and, on INTENT_SUBMITTED or INTENT_APPROVED,
+        // schedules the spine on a background coroutine.  The ledger append thread
+        // is NEVER blocked by spine execution.
         ledger.registerObserver { projectId ->
             Log.e("AGOII_TRACE", "[OBSERVER_TRIGGER] projectId=$projectId thread=${Thread.currentThread().name}")
             // MQP-UI-REACTIVE-BINDING-v1: bump tick on EVERY event so the UI layer
             // reacts to all ledger changes, not only INTENT_SUBMITTED.
             _ledgerTick.update { it + 1 }
             val lastType = ledger.loadEvents(projectId).lastOrNull()?.type ?: return@registerObserver
-            if (lastType == EventTypes.INTENT_SUBMITTED) {
+            if (lastType == EventTypes.INTENT_SUBMITTED || lastType == EventTypes.INTENT_APPROVED) {
                 Log.e("AGOII_TRACE", "ACTIVATOR_TRIGGERED")
                 scheduleSpine(projectId)
             }
@@ -267,17 +268,19 @@ class CoreBridge(context: Context) {
      * Invoked by [scheduleSpine] on a background coroutine.  [spineRunning] is held by the
      * caller for the lifetime of this call.
      *
-     * Reads the structured intent from the INTENT_SUBMITTED event payload, then runs the
-     * full execution spine to completion.  Any error is logged and swallowed so that the
-     * spine failure does not propagate to [scheduleSpine]'s outer catch (which also logs).
+     * Reads the latest INTENT_SUBMITTED payload from the ledger, then runs the full
+     * execution spine to completion.  This allows INTENT_APPROVED to re-enter the same
+     * governed intent cycle without inventing a new ingress event. Any error is logged
+     * and swallowed so that the spine failure does not propagate to [scheduleSpine]'s
+     * outer catch (which also logs).
      */
     private fun activateSpine(projectId: String) {
         Log.e("AGOII_TRACE", "[SPINE_ACTIVATE] projectId=$projectId thread=${Thread.currentThread().name}")
         Log.e("AGOII_TRACE", "SPINE_ACTIVATE: $projectId")
         try {
             val events = ledger.loadEvents(projectId)
-            val intentPayload = events.lastOrNull()
-                ?.takeIf { it.type == EventTypes.INTENT_SUBMITTED }?.payload
+            val intentPayload = events.lastOrNull { it.type == EventTypes.INTENT_SUBMITTED }
+                ?.payload
                 ?: run {
                     Log.e("AGOII_TRACE", "SPINE_NO_INTENT_EVENT")
                     return
@@ -372,6 +375,10 @@ class CoreBridge(context: Context) {
     fun approveContracts(projectId: String) {
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_APPROVED, emptyMap())
         Log.e("AGOII_TRACE", "LEDGER_EVENT_APPENDED: ${EventTypes.CONTRACTS_APPROVED}")
+    }
+
+    fun submitApprovalIntent(projectId: String, intent: ApprovalIntent) {
+        executionEntryPoint.handleApprovalIntent(projectId, intent)
     }
 
     /**

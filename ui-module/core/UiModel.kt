@@ -25,7 +25,11 @@ data class GovernanceView(
     val lastEventType: String = "",
     val lastEventPayload: String = "",
     val reportReference: String = "",
-    val hasLastEvent: Boolean = false
+    val hasLastEvent: Boolean = false,
+    val intentApprovalRequired: Boolean = false,
+    val intentApprovalStatus: String = "none",
+    val pendingIntentId: String = "",
+    val pendingIntentObjective: String = ""
 )
 
 /**

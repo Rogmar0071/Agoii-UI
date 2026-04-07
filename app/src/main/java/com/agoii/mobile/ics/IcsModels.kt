@@ -83,6 +83,54 @@ data class IcsOutput(
     val sections:           List<IcsOutputSection>
 )
 
+// ── Intent Construction Contract (MQP-INTENT-ACTIVATION-LOOP-v1) ─────────────
+
+/**
+ * ICS contract type discriminator.
+ *
+ * [INTENT_CONSTRUCTION] — routes the intent construction loop inside the
+ * execution pipeline (MQP-INTENT-ACTIVATION-LOOP-v1).  Handled exclusively by
+ * [IcsModule.constructIntent]; no other module may emit intent authority events.
+ */
+enum class ICSContractType {
+    INTENT_CONSTRUCTION
+}
+
+/**
+ * Contract driving a single intent construction cycle.
+ *
+ * Consumed by [IcsModule.constructIntentStep] to emit exactly one deterministic
+ * INTENT_* transition per execution cycle.
+ *
+ * @property contractId      Stable, deterministic identifier ("ic_<intentId>").
+ * @property intentId        Identity of the intent being constructed.
+ * @property userInput       Raw objective text from the INTENT_SUBMITTED payload.
+ * @property contextSnapshot Full INTENT_SUBMITTED payload snapshot for traceability.
+ */
+data class ICSContract(
+    val contractId:      String,
+    val intentId:        String,
+    val userInput:       String,
+    val contextSnapshot: Map<String, Any>
+)
+
+/**
+ * Result of [IcsModule.constructIntentStep].
+ */
+sealed class IntentConstructionResult {
+    /** One governed construction step was written for the intent. */
+    data class Constructed(val intentId: String) : IntentConstructionResult()
+
+    /** Construction was already complete; INTENT_APPROVED already present — idempotent no-op. */
+    data class AlreadyConstructed(val intentId: String) : IntentConstructionResult()
+
+    /**
+     * Construction blocked — intent authority events are present but the loop did not
+     * reach INTENT_APPROVED (e.g. stuck in INTENT_REJECTED).
+     */
+    data class Blocked(val reason: String) : IntentConstructionResult()
+}
+
 // ── Result ────────────────────────────────────────────────────────────────────
 
 /**

@@ -45,6 +45,8 @@ import agoii.ui.theme.AgoiiColors
  * @param onSelectProject    Project selection callback
  * @param onInteraction      User interaction callback (routes to CoreBridge)
  * @param onApproveContract  Contract approval callback (routes to CoreBridge)
+ * @param onApproveIntent    Intent approval callback (routes to CoreBridge)
+ * @param onRejectIntent     Intent rejection callback (routes to CoreBridge)
  */
 @Composable
 fun MainScreen(
@@ -53,7 +55,9 @@ fun MainScreen(
     selectedProjectId: String,
     onSelectProject: (ProjectDescriptor) -> Unit,
     onInteraction: (String) -> Unit,
-    onApproveContract: (String) -> Unit
+    onApproveContract: (String) -> Unit,
+    onApproveIntent: (String) -> Unit,
+    onRejectIntent: (String) -> Unit
 ) {
     Log.e("AGOII_TRACE", "MAIN_SCREEN_RENDERED")
 
@@ -91,6 +95,17 @@ fun MainScreen(
             GovernancePanel(governance = model.governance)
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            if (model.governance.intentApprovalRequired &&
+                model.governance.intentApprovalStatus == "approval_requested") {
+                IntentApprovalPanel(
+                    governance = model.governance,
+                    onApproveIntent = onApproveIntent,
+                    onRejectIntent = onRejectIntent
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
             ExecutionPanel(execution = model.execution)
 
@@ -144,4 +159,3 @@ fun MainScreen(
         )
     }
 }
-

@@ -65,6 +65,16 @@ class CoreBridgeAdapter(
         systemBridge.approveContracts(projectId)
     }
 
+    override fun approveIntent(intentId: String) {
+        val approvalIntent = interactionEngine.processApprovalInput("approve", intentId) ?: return
+        systemBridge.submitApprovalIntent(projectId, approvalIntent)
+    }
+
+    override fun rejectIntent(intentId: String) {
+        val approvalIntent = interactionEngine.processApprovalInput("reject", intentId) ?: return
+        systemBridge.submitApprovalIntent(projectId, approvalIntent)
+    }
+
     private fun mapToUiState(
         core: com.agoii.mobile.core.ReplayStructuralState,
         eventCount: Int
@@ -75,7 +85,11 @@ class CoreBridgeAdapter(
                 lastEventPayload = core.governanceView.lastEventPayload
                     .entries.joinToString(", ") { "${it.key}=${it.value}" },
                 reportReference = core.governanceView.reportReference,
-                hasLastEvent = core.governanceView.lastEventType != null
+                hasLastEvent = core.governanceView.lastEventType != null,
+                intentApprovalRequired = core.governanceView.intentConstruction.approvalRequired,
+                intentApprovalStatus = core.governanceView.intentConstruction.status,
+                pendingIntentId = core.governanceView.intentConstruction.intentId,
+                pendingIntentObjective = core.governanceView.intentConstruction.objective
             ),
             executionView = UiExecutionView(
                 executionStatus = core.executionView.executionStatus,

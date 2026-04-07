@@ -181,6 +181,22 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.SYSTEM_MESSAGE_EMITTED && to == EventTypes.COMMIT_CONTRACT) return true
             // Conversational layer (MQP-PHASE-3): multi-turn — next user message follows system response
             if (from == EventTypes.SYSTEM_MESSAGE_EMITTED && to == EventTypes.USER_MESSAGE_SUBMITTED) return true
+            // Intent Authority (MQP-POST-INTENT-AUTHORITY-GATE-v1): intent construction sub-lifecycle
+            if (from == EventTypes.INTENT_SUBMITTED && to == EventTypes.INTENT_PARTIAL_CREATED) return true
+            if (from == EventTypes.INTENT_PARTIAL_CREATED && to == EventTypes.INTENT_IN_PROGRESS) return true
+            if (from == EventTypes.INTENT_PARTIAL_CREATED && to == EventTypes.INTENT_UPDATED) return true
+            if (from == EventTypes.INTENT_IN_PROGRESS && to == EventTypes.INTENT_UPDATED) return true
+            // INTENT_UPDATED ↔ INTENT_IN_PROGRESS cycle is intentional: intent construction
+            // may iterate between updated and in-progress states multiple times before completing.
+            // "Forward-only" applies to status derivation in Replay (last event wins),
+            // not to the transition table itself.
+            if (from == EventTypes.INTENT_UPDATED && to == EventTypes.INTENT_IN_PROGRESS) return true
+            if (from == EventTypes.INTENT_IN_PROGRESS && to == EventTypes.INTENT_COMPLETED) return true
+            if (from == EventTypes.INTENT_COMPLETED && to == EventTypes.INTENT_APPROVAL_REQUESTED) return true
+            if (from == EventTypes.INTENT_APPROVAL_REQUESTED && to == EventTypes.INTENT_APPROVED) return true
+            if (from == EventTypes.INTENT_APPROVAL_REQUESTED && to == EventTypes.INTENT_REJECTED) return true
+            if (from == EventTypes.INTENT_APPROVED && to == EventTypes.CONTRACTS_GENERATED) return true
+            if (from == EventTypes.INTENT_REJECTED && to == EventTypes.USER_MESSAGE_SUBMITTED) return true
             return false
         }
     }

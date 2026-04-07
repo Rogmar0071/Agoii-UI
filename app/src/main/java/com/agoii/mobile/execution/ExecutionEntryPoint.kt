@@ -9,6 +9,11 @@ import com.agoii.mobile.core.EventLedger
 import com.agoii.mobile.core.EventTypes
 import com.agoii.mobile.core.LedgerValidationException
 import com.agoii.mobile.core.ValidationLayer
+import com.agoii.mobile.ics.ICSContract
+import com.agoii.mobile.ics.IcsModule
+import com.agoii.mobile.ics.IntentConstructionResult
+import com.agoii.mobile.interaction.ApprovalAction
+import com.agoii.mobile.interaction.ApprovalIntent
 import java.util.UUID
 
 /**
@@ -59,6 +64,7 @@ class ExecutionEntryPoint(
 
     private val contractSystemOrchestrator = ContractSystemOrchestrator()
     private val validationLayer            = ValidationLayer()
+    private val icsModule                  = IcsModule()
 
     companion object {
         private const val DEFAULT_CONSTRAINTS = "standard"
@@ -102,6 +108,9 @@ class ExecutionEntryPoint(
         projectId:     String,
         intentPayload: Map<String, Any>
     ): AuthorizationResult {
+        // ── Phase 0: Extract intent identity ─────────────────────────────────
+        // Moved before the construction step so intentId/objective can be passed
+        // to IcsModule.constructIntentStep without a second payload scan.
         val objective = intentPayload["objective"] as? String
             ?: return AuthorizationResult.blocked(
                 "Intent payload missing 'objective'",
@@ -111,6 +120,36 @@ class ExecutionEntryPoint(
         val intentId = intentPayload["intentId"] as? String
             ?: UUID.nameUUIDFromBytes(objective.toByteArray()).toString()
 
+        // ── Phase 1: Intent construction step (MQP-INTENT-STEP-EXECUTION-v1) ──
+        // Emit exactly one INTENT_* event per execution cycle. Contract derivation
+        // remains blocked until a later cycle observes INTENT_APPROVED.
+        val icsContract = ICSContract(
+            contractId      = "ic_$intentId",
+            intentId        = intentId,
+            userInput       = objective,
+            contextSnapshot = intentPayload
+        )
+        val constructionResult = icsModule.constructIntentStep(projectId, icsContract, ledger)
+        if (constructionResult is IntentConstructionResult.Blocked) {
+            return AuthorizationResult.blocked(constructionResult.reason, "INTENT_CONSTRUCTION")
+        }
+
+        // ── Phase 2: Intent Authority gate (MQP-POST-INTENT-AUTHORITY-GATE-v1) ─
+        // Reload events after the single-step write so the gate can stop execution
+        // until INTENT_APPROVED exists. CONTRACTS_GENERATED remains downstream of
+        // that approval boundary.
+        val projectEvents = ledger.loadEvents(projectId)
+        val intentAuthorityEventsPresent = projectEvents.any { event ->
+            event.type.startsWith("intent_") && event.type != EventTypes.INTENT_SUBMITTED
+        }
+        if (intentAuthorityEventsPresent) {
+            val intentApproved = projectEvents.any { it.type == EventTypes.INTENT_APPROVED }
+            if (!intentApproved) {
+                return AuthorizationResult.blocked("INTENT_NOT_APPROVED", "INTENT_AUTHORITY")
+            }
+        }
+
+        // ── Phase 3: Contract derivation ──────────────────────────────────────
         val intent = ContractIntent(
             objective   = objective,
             constraints = DEFAULT_CONSTRAINTS,
@@ -174,13 +213,15 @@ class ExecutionEntryPoint(
             "total"           to total
         )
 
-        val currentEvents = ledger.loadEvents(projectId)
+        // projectEvents is the reloaded list (post-construction loop).
+        // The last event is INTENT_APPROVED, making the transition
+        // INTENT_APPROVED → CONTRACTS_GENERATED legal per LedgerAudit.
         try {
             validationLayer.validate(
                 projectId     = projectId,
                 type          = EventTypes.CONTRACTS_GENERATED,
                 payload       = payload,
-                currentEvents = currentEvents
+                currentEvents = projectEvents
             )
         } catch (e: LedgerValidationException) {
             return AuthorizationResult.blocked("validation failed: ${e.message}", "VALIDATION")
@@ -208,5 +249,26 @@ class ExecutionEntryPoint(
         return AuthorizationResult.authorized(
             Event(type = EventTypes.CONTRACTS_GENERATED, payload = payload)
         )
+    }
+
+    fun handleApprovalIntent(projectId: String, intent: ApprovalIntent): AuthorizationResult {
+        val eventType = when (intent.action) {
+            ApprovalAction.APPROVE -> EventTypes.INTENT_APPROVED
+            ApprovalAction.REJECT -> EventTypes.INTENT_REJECTED
+        }
+
+        val payload = mapOf(
+            "intentId" to intent.intentId,
+            "timestamp" to System.currentTimeMillis()
+        )
+
+        return try {
+            ledger.appendEvent(projectId, eventType, payload)
+            AuthorizationResult.authorized(
+                Event(type = eventType, payload = payload)
+            )
+        } catch (e: LedgerValidationException) {
+            AuthorizationResult.blocked("validation failed: ${e.message}", "INTENT_AUTHORITY")
+        }
     }
 }

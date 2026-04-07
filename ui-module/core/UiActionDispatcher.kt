@@ -32,4 +32,12 @@ class UiActionDispatcher(private val coreBridge: CoreBridge) {
     fun approve(contractId: String) {
         coreBridge.approveContracts(contractId)
     }
+
+    fun approveIntent(intentId: String) {
+        coreBridge.approveIntent(intentId)
+    }
+
+    fun rejectIntent(intentId: String) {
+        coreBridge.rejectIntent(intentId)
+    }
 }
