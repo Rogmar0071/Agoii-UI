@@ -13,6 +13,10 @@ import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class CoreBridge(context: Context) {
@@ -42,6 +46,17 @@ class CoreBridge(context: Context) {
      */
     private val spineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /**
+     * MQP-UI-REACTIVE-BINDING-v1 — ledger version counter.
+     *
+     * Incremented by the [LedgerObserver] on EVERY [EventLedger.appendEvent] call so that
+     * the UI layer can observe ledger changes via [StateFlow.collectAsState] without
+     * polling.  Each increment triggers a Compose recomposition in [MainActivity], which
+     * calls [CoreBridgeAdapter.replayState] on the IO thread and updates the rendered model.
+     */
+    private val _ledgerTick = MutableStateFlow(0)
+    val ledgerTick: StateFlow<Int> = _ledgerTick.asStateFlow()
+
     init {
         driverRegistry.register(
             "llm",
@@ -54,6 +69,9 @@ class CoreBridge(context: Context) {
         // spine execution.
         ledger.registerObserver { projectId ->
             Log.e("AGOII_TRACE", "[OBSERVER_TRIGGER] projectId=$projectId thread=${Thread.currentThread().name}")
+            // MQP-UI-REACTIVE-BINDING-v1: bump tick on EVERY event so the UI layer
+            // reacts to all ledger changes, not only INTENT_SUBMITTED.
+            _ledgerTick.update { it + 1 }
             val lastType = ledger.loadEvents(projectId).lastOrNull()?.type ?: return@registerObserver
             if (lastType == EventTypes.INTENT_SUBMITTED) {
                 Log.e("AGOII_TRACE", "ACTIVATOR_TRIGGERED")

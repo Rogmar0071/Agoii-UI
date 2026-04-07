@@ -8,6 +8,7 @@ import agoii.ui.core.AuditView as UiAuditView
 import agoii.ui.core.ConversationMessage as UiConversationMessage
 import agoii.ui.core.ReplayStructuralState as UiReplayStructuralState
 import com.agoii.mobile.interaction.InteractionEngine
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * CoreBridgeAdapter — wires the UI module into the Agoii runtime.
@@ -37,6 +38,15 @@ class CoreBridgeAdapter(
     // ARCH-09: Interpretation occurs at the boundary layer, before system CoreBridge.
     // CoreBridge itself contains ZERO interpretation logic (FIX-04).
     private val interactionEngine = InteractionEngine()
+
+    /**
+     * MQP-UI-REACTIVE-BINDING-v1 — forwarded ledger version counter.
+     *
+     * Delegates to [CoreBridge.ledgerTick].  The UI layer collects this flow via
+     * [kotlinx.coroutines.flow.StateFlow.collectAsState] so that any ledger change
+     * triggers a recomposition and a fresh [replayState] call — no polling needed.
+     */
+    val ledgerTick: StateFlow<Int> get() = systemBridge.ledgerTick
 
     override fun replayState(): UiReplayStructuralState {
         val coreState = systemBridge.replayState(projectId)
