@@ -43,12 +43,16 @@ jobs:
       - name: Ensure Google Maven reachable
         run: |
           echo "Testing connectivity..."
+          diagnostic_failures=0
           if ! nslookup dl.google.com; then
             echo "DNS resolution failed for dl.google.com; continuing to curl for authoritative failure"
+            diagnostic_failures=$((diagnostic_failures + 1))
           fi
           if ! ping -c 2 dl.google.com; then
             echo "ICMP ping failed for dl.google.com; continuing to curl for authoritative failure"
+            diagnostic_failures=$((diagnostic_failures + 1))
           fi
+          echo "Pre-curl diagnostic failures: ${diagnostic_failures}"
           curl -I \
             --fail \
             --show-error \
