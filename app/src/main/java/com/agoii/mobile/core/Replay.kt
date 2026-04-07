@@ -391,13 +391,21 @@ class Replay(private val eventStore: EventRepository) {
             if (summary.interpretedMeaning.isNotEmpty()) {
                 intentInterpretedMeaning = summary.interpretedMeaning
             }
-            if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
-            if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
-            if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
+            if (summary.hasKeyConstraints) {
+                intentKeyConstraints = summary.keyConstraints
+            }
+            if (summary.hasAssumptions) {
+                intentAssumptions = summary.riskSurface.assumptions
+            }
+            if (summary.hasUncertainties) {
+                intentUncertainties = summary.riskSurface.uncertainties
+            }
             if (summary.hasMissingInformation) {
                 intentMissingInformation = summary.riskSurface.missingInformation
             }
-            if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
+            if (summary.hasFailureRisks) {
+                intentFailureRisks = summary.riskSurface.failureRisks
+            }
         }
 
         for (event in events) {
