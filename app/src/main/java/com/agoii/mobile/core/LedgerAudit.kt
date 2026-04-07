@@ -186,6 +186,10 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.INTENT_PARTIAL_CREATED && to == EventTypes.INTENT_IN_PROGRESS) return true
             if (from == EventTypes.INTENT_PARTIAL_CREATED && to == EventTypes.INTENT_UPDATED) return true
             if (from == EventTypes.INTENT_IN_PROGRESS && to == EventTypes.INTENT_UPDATED) return true
+            // INTENT_UPDATED ↔ INTENT_IN_PROGRESS cycle is intentional: intent construction
+            // may iterate between updated and in-progress states multiple times before completing.
+            // "Forward-only" applies to status derivation in Replay (last event wins),
+            // not to the transition table itself.
             if (from == EventTypes.INTENT_UPDATED && to == EventTypes.INTENT_IN_PROGRESS) return true
             if (from == EventTypes.INTENT_IN_PROGRESS && to == EventTypes.INTENT_COMPLETED) return true
             if (from == EventTypes.INTENT_COMPLETED && to == EventTypes.INTENT_APPROVAL_REQUESTED) return true

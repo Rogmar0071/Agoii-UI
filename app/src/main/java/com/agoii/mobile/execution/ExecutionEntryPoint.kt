@@ -109,10 +109,12 @@ class ExecutionEntryPoint(
         val currentEventsForGate = ledger.loadEvents(projectId)
         val intentAuthorityEventsPresent = currentEventsForGate.any { it.type in setOf(
             EventTypes.INTENT_PARTIAL_CREATED,
+            EventTypes.INTENT_UPDATED,
             EventTypes.INTENT_IN_PROGRESS,
             EventTypes.INTENT_COMPLETED,
             EventTypes.INTENT_APPROVAL_REQUESTED,
-            EventTypes.INTENT_APPROVED
+            EventTypes.INTENT_APPROVED,
+            EventTypes.INTENT_REJECTED
         )}
         if (intentAuthorityEventsPresent) {
             val intentApproved = currentEventsForGate.any { it.type == EventTypes.INTENT_APPROVED }
@@ -193,7 +195,7 @@ class ExecutionEntryPoint(
             "total"           to total
         )
 
-        val currentEvents = ledger.loadEvents(projectId)
+        val currentEvents = currentEventsForGate
         try {
             validationLayer.validate(
                 projectId     = projectId,
