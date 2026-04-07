@@ -134,4 +134,8 @@ fun IntentApprovalPanel(
     }
 }
 
-private fun List<String>.toDisplayText(): String = joinToString(", ").ifEmpty { "—" }
+private fun List<String>.toDisplayText(): String = when {
+    isEmpty() -> "—"
+    size == 1 -> first()
+    else -> joinToString(separator = "\n") { "• $it" }
+}
