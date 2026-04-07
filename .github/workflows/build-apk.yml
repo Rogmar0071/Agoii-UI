@@ -44,10 +44,10 @@ jobs:
         run: |
           echo "Testing connectivity..."
           if ! nslookup dl.google.com; then
-            echo "nslookup failed for dl.google.com"
+            echo "nslookup failed for dl.google.com; continuing to curl for authoritative failure"
           fi
           if ! ping -c 2 dl.google.com; then
-            echo "ping failed for dl.google.com"
+            echo "ping failed for dl.google.com; continuing to curl for authoritative failure"
           fi
           curl -I \
             --fail \
