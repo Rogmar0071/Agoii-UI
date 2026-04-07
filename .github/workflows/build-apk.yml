@@ -43,8 +43,12 @@ jobs:
       - name: Ensure Google Maven reachable
         run: |
           echo "Testing connectivity..."
-          nslookup dl.google.com || true
-          ping -c 2 dl.google.com || true
+          if ! nslookup dl.google.com; then
+            echo "nslookup failed for dl.google.com"
+          fi
+          if ! ping -c 2 dl.google.com; then
+            echo "ping failed for dl.google.com"
+          fi
           curl -I \
             --fail \
             --show-error \
