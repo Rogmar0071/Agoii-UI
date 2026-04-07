@@ -152,7 +152,9 @@ class ExecutionEntryPoint(
             return AuthorizationResult.blocked(authorityResult.reason, "AUTHORIZATION")
         }
 
-        val ordered = (authorityResult as ExecutionAuthorityResult.Approved).orderedContracts
+        val approved      = authorityResult as ExecutionAuthorityResult.Approved
+        val ordered       = approved.orderedContracts
+        val capabilitySet = approved.capabilitySet
         val total = ordered.size
 
         val contractSetId = UUID.randomUUID().toString()
@@ -186,6 +188,23 @@ class ExecutionEntryPoint(
 
         Log.e("AGOII_TRACE", "[CONTRACT_GENERATED] projectId=$projectId")
         ledger.appendEvent(projectId, EventTypes.CONTRACTS_GENERATED, payload)
+
+        val capabilityPayload: Map<String, Any> = mapOf(
+            "intentId"        to intentId,
+            "reportReference" to reportId,
+            "capabilities"    to capabilitySet.capabilities.map { cap ->
+                mapOf(
+                    "id"              to cap.id,
+                    "objectiveLink"   to cap.objectiveLink,
+                    "requiredOutcome" to cap.requiredOutcome,
+                    "constraints"     to cap.constraints
+                )
+            },
+            "total"           to capabilitySet.capabilities.size
+        )
+        Log.e("AGOII_TRACE", "[CAPABILITY_DERIVED] projectId=$projectId total=${capabilitySet.capabilities.size}")
+        ledger.appendEvent(projectId, EventTypes.CAPABILITY_DERIVED, capabilityPayload)
+
         return AuthorizationResult.authorized(
             Event(type = EventTypes.CONTRACTS_GENERATED, payload = payload)
         )

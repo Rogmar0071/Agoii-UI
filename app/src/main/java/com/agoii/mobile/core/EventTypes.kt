@@ -53,6 +53,14 @@ object EventTypes {
     const val CONTRACT_VALIDATED = "contract_validated"
     const val CONTRACT_APPROVED  = "contract_approved"
 
+    // ── Capability derivation events (MQP-CAPABILITY-DERIVATION-v1) ───────────
+    // CAPABILITY_DERIVED:    emitted by ExecutionEntryPoint after CONTRACTS_GENERATED;
+    //                        records the deterministic capability set for the intent (AERP-1).
+    // CAPABILITY_REINJECTED: emitted on recovery reinjection (RCF-1);
+    //                        signals that capabilities have been re-derived after failure.
+    const val CAPABILITY_DERIVED    = "capability_derived"
+    const val CAPABILITY_REINJECTED = "capability_reinjected"
+
     val ALL: Set<String> = setOf(
         INTENT_SUBMITTED,
         CONTRACTS_GENERATED,
@@ -82,6 +90,8 @@ object EventTypes {
         CONTRACT_CREATED,
         CONTRACT_VALIDATED,
         CONTRACT_APPROVED,
+        CAPABILITY_DERIVED,
+        CAPABILITY_REINJECTED,
         COMMIT_CONTRACT,
         COMMIT_EXECUTED,
         COMMIT_ABORTED,
