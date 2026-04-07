@@ -26,11 +26,18 @@ import agoii.ui.theme.AgoiiColors
  *   - Root container (full-screen, panels above fixed interaction bar)
  *   - Project selection (ProjectSwitcher)
  *   - Layer panel rendering (GovernancePanel → ExecutionPanel → AuditPanel)
+ *   - Chat surface (ChatPanel — conversation from Replay)
+ *   - Status blocks (last event, execution status, contract presence, total events)
  *   - Interaction panel (fixed at bottom, no overlap)
  *
  * UI-01 ENFORCEMENT: ALL data comes from UiModel (mapped from ReplayStructuralState).
  * UI-02 ENFORCEMENT: ZERO derivation — values displayed as-is.
  * UI-03 ENFORCEMENT: Interactions delegated via callbacks.
+ *
+ * MQP-UNIFIED-EXECUTION-LOOP-v1 — Section 2.2/2.3:
+ *   Chat surface renders USER_MESSAGE_SUBMITTED (user bubble) and
+ *   SYSTEM_MESSAGE_EMITTED (system bubble) from Replay conversation list.
+ *   Status blocks are driven exclusively by Replay-projected values.
  *
  * @param model              UiModel bound from ReplayStructuralState
  * @param projects           Available project descriptors
@@ -73,6 +80,14 @@ fun MainScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // ── Section 2.2: Chat Surface (Replay-driven) ────────────────
+            // USER_MESSAGE_SUBMITTED → user bubble
+            // SYSTEM_MESSAGE_EMITTED → system bubble
+            // NO local state. NO formatting logic beyond role distinction.
+            ChatPanel(chat = model.chat)
+
+            Spacer(modifier = Modifier.height(12.dp))
+
             GovernancePanel(governance = model.governance)
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -85,6 +100,9 @@ fun MainScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // ── Section 2.3: Status Blocks (Replay-driven) ───────────────
+            // Last event type, execution status, contract presence, total events.
+            // Values come exclusively from model.audit — ZERO derivation.
             Text(
                 text = "Status: ${model.audit.executionStatus}",
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
@@ -126,3 +144,4 @@ fun MainScreen(
         )
     }
 }
+

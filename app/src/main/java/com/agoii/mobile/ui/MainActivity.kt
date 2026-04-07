@@ -6,6 +6,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.agoii.mobile.bridge.CoreBridge
@@ -77,14 +78,21 @@ class MainActivity : ComponentActivity() {
                         Log.e("AGOII_TRACE", "UI_SEND: $input")
                         scope.launch {
                             try {
-                                val updated = withContext(Dispatchers.IO) {
-                                    // 🔴 ONLY WRITE TO LEDGER — UI is a pure emitter
-                                    adapter.appendUserMessage(input)
+                                // 🔴 ONLY WRITE TO LEDGER — UI is a pure emitter
+                                withContext(Dispatchers.IO) { adapter.appendUserMessage(input) }
 
-                                    // 🔴 IMMEDIATELY REFRESH FROM REPLAY
-                                    binder.getUiModel()
+                                // 🔴 POLL REPLAY until execution produces SYSTEM_MESSAGE_EMITTED
+                                // or timeout. Spine is async; we must wait for it so the UI
+                                // surface reflects the completed execution cycle.
+                                val startMs = System.currentTimeMillis()
+                                var snapshot = withContext(Dispatchers.IO) { binder.getUiModel() }
+                                while (System.currentTimeMillis() - startMs < EXECUTION_POLL_TIMEOUT_MS) {
+                                    val last = snapshot.audit.lastEventType
+                                    if (last != null && last in EXECUTION_TERMINAL_STATES) break
+                                    delay(EXECUTION_POLL_INTERVAL_MS)
+                                    snapshot = withContext(Dispatchers.IO) { binder.getUiModel() }
                                 }
-                                model = updated
+                                model = snapshot
                                 Log.e("AGOII_TRACE", "MODEL_APPLIED")
 
                             } catch (t: Throwable) {
@@ -138,6 +146,22 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    companion object {
+        /** Terminal event types that signal the execution spine has completed a cycle. */
+        private val EXECUTION_TERMINAL_STATES = setOf(
+            "system_message_emitted",
+            "execution_completed",
+            "assembly_completed",
+            "ics_completed"
+        )
+
+        /** Maximum time (ms) to poll for execution completion before returning the current snapshot. */
+        private const val EXECUTION_POLL_TIMEOUT_MS = 30_000L
+
+        /** Polling interval (ms) between replay state reads while waiting for execution. */
+        private const val EXECUTION_POLL_INTERVAL_MS = 200L
     }
 }
 
