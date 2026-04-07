@@ -197,6 +197,9 @@ class IcsModule {
 
         val keyConstraints = when (val raw = contract.contextSnapshot["keyConstraints"]) {
             is List<*> -> raw.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+            is String -> raw.split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
             else -> emptyList()
         }
 
