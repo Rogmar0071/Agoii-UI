@@ -33,6 +33,20 @@ data class ConversationMessage(
     val isUser: Boolean
 )
 
+data class IntentSummary(
+    val objective: String,
+    val interpretedMeaning: String,
+    val keyConstraints: List<String>,
+    val riskSurface: RiskSurface = RiskSurface()
+)
+
+data class RiskSurface(
+    val assumptions: List<String> = emptyList(),
+    val uncertainties: List<String> = emptyList(),
+    val missingInformation: List<String> = emptyList(),
+    val failureRisks: List<String> = emptyList()
+)
+
 /**
  * Authoritative state container produced by the Replay Engine.
  *
@@ -70,7 +84,13 @@ data class IntentConstructionView(
     val status: String,          // "none"|"partial"|"in_progress"|"completed"|"approval_requested"|"approved"|"rejected"
     val completeness: Double,
     val approvalRequired: Boolean,
-    val isApproved: Boolean      // derived from last INTENT_APPROVED event
+    val isApproved: Boolean,     // derived from last INTENT_APPROVED event
+    val summary: IntentSummary =
+        IntentSummary(
+            objective = "",
+            interpretedMeaning = "",
+            keyConstraints = emptyList()
+        )
 )
 
 // ── GovernanceView ────────────────────────────────────────────────────────────
@@ -138,7 +158,8 @@ data class GovernanceView(
             completeness     = 0.0,
             approvalRequired = false,
             isApproved       = false
-        )
+        ),
+    val showIntentApprovalPanel: Boolean = false
 )
 
 // ── ExecutionView ─────────────────────────────────────────────────────────────
@@ -359,6 +380,33 @@ class Replay(private val eventStore: EventRepository) {
         var intentConstructionCompleteness = 0.0
         var intentApprovalRequired      = false
         var intentIsApproved            = false
+        var intentInterpretedMeaning    = ""
+        var intentKeyConstraints        = emptyList<String>()
+        var intentAssumptions           = emptyList<String>()
+        var intentUncertainties         = emptyList<String>()
+        var intentMissingInformation    = emptyList<String>()
+        var intentFailureRisks          = emptyList<String>()
+
+        fun mergeIntentSummary(summary: IntentSummaryProjection) {
+            if (summary.interpretedMeaning.isNotEmpty()) {
+                intentInterpretedMeaning = summary.interpretedMeaning
+            }
+            if (summary.hasKeyConstraints) {
+                intentKeyConstraints = summary.keyConstraints
+            }
+            if (summary.hasAssumptions) {
+                intentAssumptions = summary.riskSurface.assumptions
+            }
+            if (summary.hasUncertainties) {
+                intentUncertainties = summary.riskSurface.uncertainties
+            }
+            if (summary.hasMissingInformation) {
+                intentMissingInformation = summary.riskSurface.missingInformation
+            }
+            if (summary.hasFailureRisks) {
+                intentFailureRisks = summary.riskSurface.failureRisks
+            }
+        }
 
         for (event in events) {
             when (event.type) {
@@ -469,6 +517,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus       = "partial"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.0
                 }
@@ -477,6 +526,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus       = "in_progress"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.3
                 }
@@ -485,6 +535,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus       = "in_progress"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: intentConstructionCompleteness
                 }
@@ -493,6 +544,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus       = "completed"
                     intentConstructionCompleteness = 1.0
                 }
@@ -501,6 +553,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus = "approval_requested"
                     intentApprovalRequired   = true
                 }
@@ -509,6 +562,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus = "approved"
                     intentIsApproved         = true
                 }
@@ -517,6 +571,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus = "rejected"
                     intentIsApproved         = false
                 }
@@ -568,6 +623,17 @@ class Replay(private val eventStore: EventRepository) {
         }
 
         val finalOutput = conversation.lastOrNull { !it.isUser }?.text
+        val intentSummary = IntentSummary(
+            objective = intentConstructionObjective,
+            interpretedMeaning = intentInterpretedMeaning.ifEmpty { intentConstructionObjective },
+            keyConstraints = intentKeyConstraints,
+            riskSurface = RiskSurface(
+                assumptions = intentAssumptions,
+                uncertainties = intentUncertainties,
+                missingInformation = intentMissingInformation,
+                failureRisks = intentFailureRisks
+            )
+        )
 
         // ── Assemble views ────────────────────────────────────────────────────
 
@@ -587,8 +653,11 @@ class Replay(private val eventStore: EventRepository) {
                     status           = intentConstructionStatus,
                     completeness     = intentConstructionCompleteness,
                     approvalRequired = intentApprovalRequired,
-                    isApproved       = intentIsApproved
-                )
+                    isApproved       = intentIsApproved,
+                    summary          = intentSummary
+                ),
+                showIntentApprovalPanel = intentApprovalRequired &&
+                    intentConstructionStatus == "approval_requested"
             ),
             executionView = ExecutionView(
                 taskStatus            = taskStatusMutable,
@@ -668,4 +737,43 @@ class Replay(private val eventStore: EventRepository) {
             payload["objective"]?.toString().orEmpty()
         )
     }
+
+    private fun applyIntentSummary(payload: Map<String, Any>, apply: (IntentSummaryProjection) -> Unit) {
+        apply(
+            IntentSummaryProjection(
+                interpretedMeaning = payload["interpretedMeaning"]?.toString().orEmpty(),
+                keyConstraints = resolveStringList(payload["keyConstraints"]),
+                hasKeyConstraints = payload.containsKey("keyConstraints"),
+                riskSurface = RiskSurface(
+                    assumptions = resolveStringList(payload["assumptions"]),
+                    uncertainties = resolveStringList(payload["uncertainties"]),
+                    missingInformation = resolveStringList(payload["missingInformation"]),
+                    failureRisks = resolveStringList(payload["failureRisks"])
+                ),
+                hasAssumptions = payload.containsKey("assumptions"),
+                hasUncertainties = payload.containsKey("uncertainties"),
+                hasMissingInformation = payload.containsKey("missingInformation"),
+                hasFailureRisks = payload.containsKey("failureRisks")
+            )
+        )
+    }
+
+    private fun resolveStringList(value: Any?): List<String> = when (value) {
+        is List<*> -> value.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+        is String -> value.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        else -> emptyList()
+    }
+
+    private data class IntentSummaryProjection(
+        val interpretedMeaning: String,
+        val keyConstraints: List<String>,
+        val hasKeyConstraints: Boolean,
+        val riskSurface: RiskSurface,
+        val hasAssumptions: Boolean,
+        val hasUncertainties: Boolean,
+        val hasMissingInformation: Boolean,
+        val hasFailureRisks: Boolean
+    )
 }

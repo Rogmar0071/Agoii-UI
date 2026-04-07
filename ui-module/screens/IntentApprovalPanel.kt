@@ -38,7 +38,67 @@ fun IntentApprovalPanel(
 
         ExpandableSection(title = "Objective") {
             Text(
-                text = governance.pendingIntentObjective.ifEmpty { "—" },
+                text = governance.intentSummary.objective.ifEmpty { "—" },
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
+        ExpandableSection(title = "Interpreted Meaning") {
+            Text(
+                text = governance.intentSummary.interpretedMeaning.ifEmpty { "—" },
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
+        ExpandableSection(title = "Key Constraints") {
+            Text(
+                text = governance.intentSummary.keyConstraints.toDisplayText(),
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
+        ExpandableSection(title = "Assumptions") {
+            Text(
+                text = governance.intentSummary.riskSurface.assumptions.toDisplayText(),
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
+        ExpandableSection(title = "Uncertainty") {
+            Text(
+                text = governance.intentSummary.riskSurface.uncertainties.toDisplayText(),
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
+        ExpandableSection(title = "Missing Information") {
+            Text(
+                text = governance.intentSummary.riskSurface.missingInformation.toDisplayText(),
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
+        ExpandableSection(title = "Failure Risks") {
+            Text(
+                text = governance.intentSummary.riskSurface.failureRisks.toDisplayText(),
                 style = AgoiiTypography.BodyMedium,
                 color = AgoiiColors.TextPrimary
             )
@@ -72,4 +132,10 @@ fun IntentApprovalPanel(
             )
         }
     }
+}
+
+private fun List<String>.toDisplayText(): String = when {
+    isEmpty() -> "—"
+    size == 1 -> first()
+    else -> joinToString(separator = "\n") { "• $it" }
 }

@@ -29,7 +29,22 @@ data class GovernanceView(
     val intentApprovalRequired: Boolean = false,
     val intentApprovalStatus: String = "none",
     val pendingIntentId: String = "",
-    val pendingIntentObjective: String = ""
+    val intentSummary: IntentSummary = IntentSummary(),
+    val showIntentApprovalPanel: Boolean = false
+)
+
+data class IntentSummary(
+    val objective: String = "",
+    val interpretedMeaning: String = "",
+    val keyConstraints: List<String> = emptyList(),
+    val riskSurface: RiskSurface = RiskSurface()
+)
+
+data class RiskSurface(
+    val assumptions: List<String> = emptyList(),
+    val uncertainties: List<String> = emptyList(),
+    val missingInformation: List<String> = emptyList(),
+    val failureRisks: List<String> = emptyList()
 )
 
 /**

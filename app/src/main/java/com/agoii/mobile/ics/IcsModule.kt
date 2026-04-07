@@ -95,7 +95,7 @@ class IcsModule {
             "intentId" to contract.intentId,
             "objective" to contract.userInput,
             "contractId" to contract.contractId
-        )
+        ) + intentSummaryPayload(contract)
 
         return when (lastType) {
             null -> {
@@ -190,6 +190,27 @@ class IcsModule {
         else -> 0.0
     }
 
+    private fun intentSummaryPayload(contract: ICSContract): Map<String, Any> {
+        val interpretedMeaning = contract.contextSnapshot["interpretedMeaning"]?.toString()
+            ?.takeIf { it.isNotBlank() }
+            ?: contract.userInput
+
+        val keyConstraints = resolveStringList(contract.contextSnapshot["keyConstraints"])
+        val assumptions = resolveStringList(contract.contextSnapshot["assumptions"])
+        val uncertainties = resolveStringList(contract.contextSnapshot["uncertainties"])
+        val missingInformation = resolveStringList(contract.contextSnapshot["missingInformation"])
+        val failureRisks = resolveStringList(contract.contextSnapshot["failureRisks"])
+
+        return mapOf(
+            "interpretedMeaning" to interpretedMeaning,
+            "keyConstraints" to keyConstraints,
+            "assumptions" to assumptions,
+            "uncertainties" to uncertainties,
+            "missingInformation" to missingInformation,
+            "failureRisks" to failureRisks
+        )
+    }
+
     private companion object {
         val INTENT_AUTHORITY_TYPES = setOf(
             EventTypes.INTENT_PARTIAL_CREATED,
@@ -200,6 +221,14 @@ class IcsModule {
             EventTypes.INTENT_APPROVED,
             EventTypes.INTENT_REJECTED
         )
+    }
+
+    private fun resolveStringList(value: Any?): List<String> = when (value) {
+        is List<*> -> value.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+        is String -> value.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        else -> emptyList()
     }
 
     // ── ICS Processing Pipeline ───────────────────────────────────────────────

@@ -49,12 +49,24 @@ object HumanCommunicationContractor {
 Convert the user's natural language input into a JSON object with EXACTLY these fields:
 {
   "objective": "<clear, actionable, single-sentence goal derived from user input>",
-  "intentId": "<a new UUID v4>"
+  "intentId": "<a new UUID v4>",
+  "interpretedMeaning": "<what the system believes the user wants, in one sentence>",
+  "keyConstraints": ["<short constraint or risk>", "<short constraint or risk>"],
+  "assumptions": ["<assumption the system is making>"],
+  "uncertainties": ["<where the interpretation may be wrong or incomplete>"],
+  "missingInformation": ["<information needed for safer execution>"],
+  "failureRisks": ["<what may fail if execution proceeds>"]
 }
 Rules:
 - Respond with ONLY the JSON object. No explanation, no markdown, no code fences.
 - The objective MUST be a single, clear, actionable sentence.
-- The intentId MUST be a valid UUID v4."""
+- The intentId MUST be a valid UUID v4.
+- interpretedMeaning MUST be a faithful paraphrase of the request, not a new request.
+- keyConstraints MUST be a JSON array of short strings. Use an empty array when there are no explicit constraints.
+- assumptions MUST list execution assumptions the system is making. Use an empty array when none are implied.
+- uncertainties MUST list places where the request could be ambiguous. Use an empty array when none are apparent.
+- missingInformation MUST list information needed for safer execution. Use an empty array when none is missing.
+- failureRisks MUST list concrete ways execution could fail. Use an empty array when none are apparent."""
 
     /**
      * Parse raw human-language input into a structured intent payload.
@@ -67,7 +79,9 @@ Rules:
      * fallback map.
      *
      * @param rawInput  Unstructured user text from the UI.
-     * @return          Structured intent: `{"objective": "...", "intentId": "..."}`.
+     * @return          Structured intent:
+     *                  `{"objective": "...", "intentId": "...", "interpretedMeaning": "...", "keyConstraints": [...],`
+     *                  `"assumptions": [...], "uncertainties": [...], "missingInformation": [...], "failureRisks": [...]}`.
      *                  Falls back to treating raw input as objective if LLM is
      *                  unavailable, times out, or returns an unparseable response.
      */
@@ -105,9 +119,25 @@ Rules:
                 ?.takeIf { it.isNotBlank() }
                 ?: UUID.randomUUID().toString()
 
+            val interpretedMeaning = (parsed["interpretedMeaning"] as? String)?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: objective
+
+            val keyConstraints = resolveStringList(parsed["keyConstraints"])
+            val assumptions = resolveStringList(parsed["assumptions"])
+            val uncertainties = resolveStringList(parsed["uncertainties"])
+            val missingInformation = resolveStringList(parsed["missingInformation"])
+            val failureRisks = resolveStringList(parsed["failureRisks"])
+
             mapOf(
                 "objective" to objective,
-                "intentId"  to intentId
+                "intentId"  to intentId,
+                "interpretedMeaning" to interpretedMeaning,
+                "keyConstraints" to keyConstraints,
+                "assumptions" to assumptions,
+                "uncertainties" to uncertainties,
+                "missingInformation" to missingInformation,
+                "failureRisks" to failureRisks
             )
         } catch (_: Throwable) {
             structuredFallback(rawInput)
@@ -117,7 +147,13 @@ Rules:
     private fun structuredFallback(rawInput: String): Map<String, Any> =
         mapOf(
             "objective" to rawInput,
-            "intentId"  to UUID.randomUUID().toString()
+            "intentId"  to UUID.randomUUID().toString(),
+            "interpretedMeaning" to rawInput,
+            "keyConstraints" to emptyList<String>(),
+            "assumptions" to emptyList<String>(),
+            "uncertainties" to emptyList<String>(),
+            "missingInformation" to emptyList<String>(),
+            "failureRisks" to emptyList<String>()
         )
 
     @Suppress("UNCHECKED_CAST")
@@ -131,5 +167,13 @@ Rules:
         } catch (_: Throwable) {
             raw
         }
+    }
+
+    private fun resolveStringList(value: Any?): List<String> = when (value) {
+        is List<*> -> value.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+        is String -> value.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        else -> emptyList()
     }
 }
