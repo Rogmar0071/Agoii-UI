@@ -43,7 +43,62 @@ data class ReplayStructuralState(
     val governanceView: GovernanceView,
     val executionView:  ExecutionView,
     val auditView:      AuditView,
-    val conversation:   List<ConversationMessage> = emptyList()
+    val conversation:   List<ConversationMessage> = emptyList(),
+    val intentConstruction: IntentConstructionView = IntentConstructionView()
+)
+
+// ── IntentConstructionView ────────────────────────────────────────────────────
+
+/**
+ * READ-ONLY INTENT CONSTRUCTION SURFACE (MQP-INTENT-CONSTRUCTION-LOOP-v1).
+ *
+ * Derived exclusively from the intent construction loop events:
+ *   INTENT_PARTIAL_CREATED → INTENT_IN_PROGRESS / INTENT_UPDATED →
+ *   INTENT_COMPLETED → INTENT_APPROVAL_REQUESTED →
+ *   INTENT_APPROVED / INTENT_REJECTED
+ *
+ * Replay is the SOLE authority. UI MUST NOT derive any field independently.
+ *
+ * Status values (forward-only):
+ *   "none"               — no intent construction event seen yet
+ *   "partial"            — INTENT_PARTIAL_CREATED; fields incomplete
+ *   "in_progress"        — actively collecting missing fields
+ *   "completed"          — all mandatory fields validated; Intent Master locked
+ *   "approval_requested" — approval gate presented to human actor
+ *   "approved"           — human actor approved; execution path unlocked
+ *   "rejected"           — human actor rejected; loop restarts
+ */
+data class IntentConstructionView(
+    /** Intent session identifier, sourced from the INTENT_PARTIAL_CREATED payload. */
+    val intentId: String? = null,
+
+    /** Objective field value as last seen in the construction loop payloads. */
+    val objective: String? = null,
+
+    /** Constraint map as last seen in the construction loop payloads. */
+    val constraints: Map<String, Any> = emptyMap(),
+
+    /**
+     * Lifecycle status of the intent construction loop.
+     *
+     * Possible values: "none" | "partial" | "in_progress" | "completed" |
+     *                  "approval_requested" | "approved" | "rejected"
+     */
+    val status: String = "none",
+
+    /**
+     * True when INTENT_APPROVAL_REQUESTED has been seen and neither
+     * INTENT_APPROVED nor INTENT_REJECTED has been seen since.
+     * Derived during replay. UI MUST NOT apply logic to determine this.
+     */
+    val approvalRequired: Boolean = false,
+
+    /**
+     * Fraction of mandatory fields that have been validated.
+     * Range [0.0, 1.0]. Sourced from event payload "completeness" key when present;
+     * set to 1.0 on INTENT_COMPLETED.
+     */
+    val completeness: Double = 0.0
 )
 
 // ── GovernanceView ────────────────────────────────────────────────────────────
@@ -310,6 +365,14 @@ class Replay(private val eventStore: EventRepository) {
         // ── Conversation accumulators (MQP-PHASE-3) ───────────────────────────
         val conversationMutable = mutableListOf<ConversationMessage>()
 
+        // ── Intent construction accumulators (MQP-INTENT-CONSTRUCTION-LOOP-v1) ─
+        var intentConstructionId: String?       = null
+        var intentConstructionObjective: String? = null
+        var intentConstructionConstraints: Map<String, Any> = emptyMap()
+        var intentConstructionStatus: String    = "none"
+        var intentApprovalRequired: Boolean     = false
+        var intentConstructionCompleteness: Double = 0.0
+
         for (event in events) {
             when (event.type) {
                 // ── Intent / contract ─────────────────────────────────────────
@@ -411,6 +474,57 @@ class Replay(private val eventStore: EventRepository) {
                     val text = event.payload["text"]?.toString() ?: ""
                     conversationMutable.add(ConversationMessage(id = id, text = text, isUser = false))
                 }
+
+                // ── Intent construction loop (MQP-INTENT-CONSTRUCTION-LOOP-v1) ─
+                EventTypes.INTENT_PARTIAL_CREATED -> {
+                    intentConstructionId          = event.payload["intentId"]?.toString()
+                        ?: intentConstructionId
+                    intentConstructionObjective   = event.payload["objective"]?.toString()
+                        ?: intentConstructionObjective
+                    @Suppress("UNCHECKED_CAST")
+                    val c = event.payload["constraints"] as? Map<String, Any>
+                    if (c != null) intentConstructionConstraints = c
+                    intentConstructionStatus      = "partial"
+                    intentApprovalRequired        = false
+                    intentConstructionCompleteness =
+                        resolveDouble(event.payload["completeness"]) ?: intentConstructionCompleteness
+                }
+                EventTypes.INTENT_UPDATED -> {
+                    intentConstructionObjective   = event.payload["objective"]?.toString()
+                        ?: intentConstructionObjective
+                    @Suppress("UNCHECKED_CAST")
+                    val c = event.payload["constraints"] as? Map<String, Any>
+                    if (c != null) intentConstructionConstraints = c
+                    if (canTransitionToInProgress(intentConstructionStatus)) {
+                        intentConstructionStatus = "in_progress"
+                    }
+                    intentConstructionCompleteness =
+                        resolveDouble(event.payload["completeness"]) ?: intentConstructionCompleteness
+                }
+                EventTypes.INTENT_IN_PROGRESS -> {
+                    if (canTransitionToInProgress(intentConstructionStatus)) {
+                        intentConstructionStatus = "in_progress"
+                    }
+                    intentConstructionCompleteness =
+                        resolveDouble(event.payload["completeness"]) ?: intentConstructionCompleteness
+                }
+                EventTypes.INTENT_COMPLETED -> {
+                    intentConstructionStatus      = "completed"
+                    intentApprovalRequired        = false
+                    intentConstructionCompleteness = 1.0
+                }
+                EventTypes.INTENT_APPROVAL_REQUESTED -> {
+                    intentConstructionStatus = "approval_requested"
+                    intentApprovalRequired   = true
+                }
+                EventTypes.INTENT_APPROVED -> {
+                    intentConstructionStatus = "approved"
+                    intentApprovalRequired   = false
+                }
+                EventTypes.INTENT_REJECTED -> {
+                    intentConstructionStatus = "rejected"
+                    intentApprovalRequired   = false
+                }
             }
         }
 
@@ -440,6 +554,16 @@ class Replay(private val eventStore: EventRepository) {
 
         // ── Compute conversation (MQP-PHASE-3) ───────────────────────────────
         val conversation = conversationMutable.toList()
+
+        // ── Compute intentConstruction (MQP-INTENT-CONSTRUCTION-LOOP-v1) ─────
+        val intentConstruction = IntentConstructionView(
+            intentId        = intentConstructionId,
+            objective       = intentConstructionObjective,
+            constraints     = intentConstructionConstraints,
+            status          = intentConstructionStatus,
+            approvalRequired = intentApprovalRequired,
+            completeness    = intentConstructionCompleteness
+        )
 
         // ── EXECUTION OUTPUT DERIVATION (MQP-EXECUTION-OUTPUT-SURFACE-v1) ──
 
@@ -516,7 +640,8 @@ class Replay(private val eventStore: EventRepository) {
                 executionStatus      = auditExecutionStatus,
                 finalOutput          = finalOutput
             ),
-            conversation = conversation
+            conversation = conversation,
+            intentConstruction = intentConstruction
         )
     }
 
@@ -527,4 +652,24 @@ class Replay(private val eventStore: EventRepository) {
         is String -> value.toIntOrNull()
         else      -> null
     }
+
+    private fun resolveDouble(value: Any?): Double? = when (value) {
+        is Double -> value
+        is Float  -> value.toDouble()
+        is Int    -> value.toDouble()
+        is Long   -> value.toDouble()
+        is String -> value.toDoubleOrNull()
+        else      -> null
+    }
+
+    /**
+     * Returns true when the intent construction status is in an early enough stage that
+     * an INTENT_IN_PROGRESS or INTENT_UPDATED event may advance it to "in_progress".
+     *
+     * Once the status reaches "completed", "approval_requested", "approved", or "rejected"
+     * it MUST NOT be rolled back by these events (forward-only invariant).
+     */
+    private fun canTransitionToInProgress(status: String): Boolean =
+        status != "completed" && status != "approval_requested" &&
+        status != "approved"  && status != "rejected"
 }

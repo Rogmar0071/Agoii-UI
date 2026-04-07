@@ -181,6 +181,24 @@ class LedgerAudit(private val eventStore: EventRepository) {
             if (from == EventTypes.SYSTEM_MESSAGE_EMITTED && to == EventTypes.COMMIT_CONTRACT) return true
             // Conversational layer (MQP-PHASE-3): multi-turn — next user message follows system response
             if (from == EventTypes.SYSTEM_MESSAGE_EMITTED && to == EventTypes.USER_MESSAGE_SUBMITTED) return true
+            // Intent construction loop (MQP-INTENT-CONSTRUCTION-LOOP-v1): initial capture
+            if (from == EventTypes.USER_MESSAGE_SUBMITTED && to == EventTypes.INTENT_PARTIAL_CREATED) return true
+            // Intent construction loop: partial → collection begins
+            if (from == EventTypes.INTENT_PARTIAL_CREATED && to == EventTypes.INTENT_IN_PROGRESS) return true
+            if (from == EventTypes.INTENT_PARTIAL_CREATED && to == EventTypes.INTENT_UPDATED) return true
+            // Intent construction loop: in-progress iterations
+            if (from == EventTypes.INTENT_IN_PROGRESS && to == EventTypes.INTENT_UPDATED) return true
+            if (from == EventTypes.INTENT_IN_PROGRESS && to == EventTypes.INTENT_COMPLETED) return true
+            if (from == EventTypes.INTENT_UPDATED && to == EventTypes.INTENT_IN_PROGRESS) return true
+            if (from == EventTypes.INTENT_UPDATED && to == EventTypes.INTENT_COMPLETED) return true
+            // Intent construction loop: completion and approval gate
+            if (from == EventTypes.INTENT_COMPLETED && to == EventTypes.INTENT_APPROVAL_REQUESTED) return true
+            if (from == EventTypes.INTENT_APPROVAL_REQUESTED && to == EventTypes.INTENT_APPROVED) return true
+            if (from == EventTypes.INTENT_APPROVAL_REQUESTED && to == EventTypes.INTENT_REJECTED) return true
+            // Intent construction loop: approved intent advances to execution spine
+            if (from == EventTypes.INTENT_APPROVED && to == EventTypes.INTENT_SUBMITTED) return true
+            // Intent construction loop: rejection restarts the user input cycle
+            if (from == EventTypes.INTENT_REJECTED && to == EventTypes.USER_MESSAGE_SUBMITTED) return true
             return false
         }
     }

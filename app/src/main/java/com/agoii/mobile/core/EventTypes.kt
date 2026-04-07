@@ -33,6 +33,24 @@ object EventTypes {
     const val USER_MESSAGE_SUBMITTED = "user_message_submitted"
     const val SYSTEM_MESSAGE_EMITTED = "system_message_emitted"
 
+    // ── Intent construction loop events (MQP-INTENT-CONSTRUCTION-LOOP-v1) ─────
+    // Represent the forward-only lifecycle of Intent Master construction,
+    // field collection, and the hard approval gate that precedes execution.
+    // INTENT_PARTIAL_CREATED:    initial intent recorded; mandatory fields incomplete.
+    // INTENT_UPDATED:            one or more fields revised during collection.
+    // INTENT_IN_PROGRESS:        active collection cycle for missing fields.
+    // INTENT_COMPLETED:          all mandatory fields validated; Intent Master locked.
+    // INTENT_APPROVAL_REQUESTED: approval gate presented to human actor.
+    // INTENT_APPROVED:           human actor approved; flow advances to INTENT_SUBMITTED.
+    // INTENT_REJECTED:           human actor rejected; loop restarts from user input.
+    const val INTENT_PARTIAL_CREATED    = "intent_partial_created"
+    const val INTENT_UPDATED            = "intent_updated"
+    const val INTENT_IN_PROGRESS        = "intent_in_progress"
+    const val INTENT_COMPLETED          = "intent_completed"
+    const val INTENT_APPROVAL_REQUESTED = "intent_approval_requested"
+    const val INTENT_APPROVED           = "intent_approved"
+    const val INTENT_REJECTED           = "intent_rejected"
+
     // ── Task execution lifecycle events ──────────────────────────────────────
     const val TASK_CREATED            = "task_created"
     const val TASK_ASSIGNED           = "task_assigned"
@@ -96,7 +114,14 @@ object EventTypes {
         COMMIT_EXECUTED,
         COMMIT_ABORTED,
         USER_MESSAGE_SUBMITTED,
-        SYSTEM_MESSAGE_EMITTED
+        SYSTEM_MESSAGE_EMITTED,
+        INTENT_PARTIAL_CREATED,
+        INTENT_UPDATED,
+        INTENT_IN_PROGRESS,
+        INTENT_COMPLETED,
+        INTENT_APPROVAL_REQUESTED,
+        INTENT_APPROVED,
+        INTENT_REJECTED
     )
 
     /** Default number of contracts generated per intent. */

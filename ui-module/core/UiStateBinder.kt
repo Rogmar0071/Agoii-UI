@@ -37,7 +37,8 @@ class UiStateBinder(private val coreBridge: CoreBridge) {
             governance = state.governanceView,
             execution = state.executionView,
             audit = state.auditView,
-            chat = buildChatModel(state)
+            chat = buildChatModel(state),
+            intentConstruction = state.intentConstruction
         )
     }
 

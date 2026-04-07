@@ -88,6 +88,32 @@ data class ConversationMessage(
 )
 
 /**
+ * IntentConstructionView — intent construction loop state projected from Replay.
+ *
+ * Maps 1:1 from core IntentConstructionView
+ * (MQP-INTENT-CONSTRUCTION-LOOP-v1).
+ *
+ * NOTE: The `constraints` field from the core view is intentionally omitted here.
+ * Constraints are a raw Map<String, Any> consumed by Nemoclaw, not by the UI layer.
+ * Exposing a raw map to UI would violate ARCH-03 (UI must not access Nemoclaw internals)
+ * and ARCH-06 (if UI renders constraints it must be pre-formatted by Replay, not a map).
+ * When constraint display is required, a pre-formatted `constraintsSummary: String`
+ * field must be derived in the core Replay layer and surfaced here.
+ *
+ * Invariants:
+ *   RL-01 (REPLAY_PURITY)  — all values originate exclusively from Replay
+ *   ARCH-06 (MODEL_COMPLETENESS_RULE) — UI never derives intent construction state
+ */
+data class IntentConstructionView(
+    val intentId: String? = null,
+    val objective: String? = null,
+    /** Forward-only status: "none"|"partial"|"in_progress"|"completed"|"approval_requested"|"approved"|"rejected" */
+    val status: String = "none",
+    val approvalRequired: Boolean = false,
+    val completeness: Double = 0.0
+)
+
+/**
  * ReplayStructuralState — the COMPLETE state surface for UI rendering.
  *
  * This is the ONLY object the UI reads.
@@ -97,7 +123,8 @@ data class ReplayStructuralState(
     val governanceView: GovernanceView = GovernanceView(),
     val executionView: ExecutionView = ExecutionView(),
     val auditView: AuditView = AuditView(),
-    val conversation: List<ConversationMessage> = emptyList()
+    val conversation: List<ConversationMessage> = emptyList(),
+    val intentConstruction: IntentConstructionView = IntentConstructionView()
 )
 
 /**
@@ -110,7 +137,8 @@ data class UiModel(
     val governance: GovernanceView,
     val execution: ExecutionView,
     val audit: AuditView,
-    val chat: ChatUiModel
+    val chat: ChatUiModel,
+    val intentConstruction: IntentConstructionView = IntentConstructionView()
 )
 
 /**

@@ -6,6 +6,7 @@ import agoii.ui.core.GovernanceView as UiGovernanceView
 import agoii.ui.core.ExecutionView as UiExecutionView
 import agoii.ui.core.AuditView as UiAuditView
 import agoii.ui.core.ConversationMessage as UiConversationMessage
+import agoii.ui.core.IntentConstructionView as UiIntentConstructionView
 import agoii.ui.core.ReplayStructuralState as UiReplayStructuralState
 import com.agoii.mobile.interaction.InteractionEngine
 import kotlinx.coroutines.flow.StateFlow
@@ -93,7 +94,14 @@ class CoreBridgeAdapter(
             ),
             conversation = core.conversation.map { msg ->
                 UiConversationMessage(id = msg.id, text = msg.text, isUser = msg.isUser)
-            }
+            },
+            intentConstruction = UiIntentConstructionView(
+                intentId        = core.intentConstruction.intentId,
+                objective       = core.intentConstruction.objective,
+                status          = core.intentConstruction.status,
+                approvalRequired = core.intentConstruction.approvalRequired,
+                completeness    = core.intentConstruction.completeness
+            )
         )
     }
 }
