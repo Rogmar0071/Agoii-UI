@@ -202,10 +202,42 @@ class IcsModule {
                 .filter { it.isNotEmpty() }
             else -> emptyList()
         }
+        val assumptions = when (val raw = contract.contextSnapshot["assumptions"]) {
+            is List<*> -> raw.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+            is String -> raw.split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            else -> emptyList()
+        }
+        val uncertainties = when (val raw = contract.contextSnapshot["uncertainties"]) {
+            is List<*> -> raw.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+            is String -> raw.split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            else -> emptyList()
+        }
+        val missingInformation = when (val raw = contract.contextSnapshot["missingInformation"]) {
+            is List<*> -> raw.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+            is String -> raw.split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            else -> emptyList()
+        }
+        val failureRisks = when (val raw = contract.contextSnapshot["failureRisks"]) {
+            is List<*> -> raw.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+            is String -> raw.split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+            else -> emptyList()
+        }
 
         return mapOf(
             "interpretedMeaning" to interpretedMeaning,
-            "keyConstraints" to keyConstraints
+            "keyConstraints" to keyConstraints,
+            "assumptions" to assumptions,
+            "uncertainties" to uncertainties,
+            "missingInformation" to missingInformation,
+            "failureRisks" to failureRisks
         )
     }
 

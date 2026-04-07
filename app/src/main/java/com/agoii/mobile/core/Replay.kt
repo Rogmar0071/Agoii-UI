@@ -36,7 +36,15 @@ data class ConversationMessage(
 data class IntentSummary(
     val objective: String,
     val interpretedMeaning: String,
-    val keyConstraints: List<String>
+    val keyConstraints: List<String>,
+    val riskSurface: RiskSurface = RiskSurface()
+)
+
+data class RiskSurface(
+    val assumptions: List<String> = emptyList(),
+    val uncertainties: List<String> = emptyList(),
+    val missingInformation: List<String> = emptyList(),
+    val failureRisks: List<String> = emptyList()
 )
 
 /**
@@ -374,6 +382,10 @@ class Replay(private val eventStore: EventRepository) {
         var intentIsApproved            = false
         var intentInterpretedMeaning    = ""
         var intentKeyConstraints        = emptyList<String>()
+        var intentAssumptions           = emptyList<String>()
+        var intentUncertainties         = emptyList<String>()
+        var intentMissingInformation    = emptyList<String>()
+        var intentFailureRisks          = emptyList<String>()
 
         for (event in events) {
             when (event.type) {
@@ -484,9 +496,17 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
-                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
-                        if (hasConstraints) intentKeyConstraints = constraints
+                    applyIntentSummary(event.payload) { summary ->
+                        if (summary.interpretedMeaning.isNotEmpty()) {
+                            intentInterpretedMeaning = summary.interpretedMeaning
+                        }
+                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
+                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
+                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
+                        if (summary.hasMissingInformation) {
+                            intentMissingInformation = summary.riskSurface.missingInformation
+                        }
+                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
                     }
                     intentConstructionStatus       = "partial"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.0
@@ -496,9 +516,17 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
-                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
-                        if (hasConstraints) intentKeyConstraints = constraints
+                    applyIntentSummary(event.payload) { summary ->
+                        if (summary.interpretedMeaning.isNotEmpty()) {
+                            intentInterpretedMeaning = summary.interpretedMeaning
+                        }
+                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
+                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
+                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
+                        if (summary.hasMissingInformation) {
+                            intentMissingInformation = summary.riskSurface.missingInformation
+                        }
+                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
                     }
                     intentConstructionStatus       = "in_progress"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.3
@@ -508,9 +536,17 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
-                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
-                        if (hasConstraints) intentKeyConstraints = constraints
+                    applyIntentSummary(event.payload) { summary ->
+                        if (summary.interpretedMeaning.isNotEmpty()) {
+                            intentInterpretedMeaning = summary.interpretedMeaning
+                        }
+                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
+                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
+                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
+                        if (summary.hasMissingInformation) {
+                            intentMissingInformation = summary.riskSurface.missingInformation
+                        }
+                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
                     }
                     intentConstructionStatus       = "in_progress"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: intentConstructionCompleteness
@@ -520,9 +556,17 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
-                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
-                        if (hasConstraints) intentKeyConstraints = constraints
+                    applyIntentSummary(event.payload) { summary ->
+                        if (summary.interpretedMeaning.isNotEmpty()) {
+                            intentInterpretedMeaning = summary.interpretedMeaning
+                        }
+                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
+                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
+                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
+                        if (summary.hasMissingInformation) {
+                            intentMissingInformation = summary.riskSurface.missingInformation
+                        }
+                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
                     }
                     intentConstructionStatus       = "completed"
                     intentConstructionCompleteness = 1.0
@@ -532,9 +576,17 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
-                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
-                        if (hasConstraints) intentKeyConstraints = constraints
+                    applyIntentSummary(event.payload) { summary ->
+                        if (summary.interpretedMeaning.isNotEmpty()) {
+                            intentInterpretedMeaning = summary.interpretedMeaning
+                        }
+                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
+                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
+                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
+                        if (summary.hasMissingInformation) {
+                            intentMissingInformation = summary.riskSurface.missingInformation
+                        }
+                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
                     }
                     intentConstructionStatus = "approval_requested"
                     intentApprovalRequired   = true
@@ -544,9 +596,17 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
-                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
-                        if (hasConstraints) intentKeyConstraints = constraints
+                    applyIntentSummary(event.payload) { summary ->
+                        if (summary.interpretedMeaning.isNotEmpty()) {
+                            intentInterpretedMeaning = summary.interpretedMeaning
+                        }
+                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
+                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
+                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
+                        if (summary.hasMissingInformation) {
+                            intentMissingInformation = summary.riskSurface.missingInformation
+                        }
+                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
                     }
                     intentConstructionStatus = "approved"
                     intentIsApproved         = true
@@ -556,9 +616,17 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { meaning, constraints, hasConstraints ->
-                        if (meaning.isNotEmpty()) intentInterpretedMeaning = meaning
-                        if (hasConstraints) intentKeyConstraints = constraints
+                    applyIntentSummary(event.payload) { summary ->
+                        if (summary.interpretedMeaning.isNotEmpty()) {
+                            intentInterpretedMeaning = summary.interpretedMeaning
+                        }
+                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
+                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
+                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
+                        if (summary.hasMissingInformation) {
+                            intentMissingInformation = summary.riskSurface.missingInformation
+                        }
+                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
                     }
                     intentConstructionStatus = "rejected"
                     intentIsApproved         = false
@@ -614,7 +682,13 @@ class Replay(private val eventStore: EventRepository) {
         val intentSummary = IntentSummary(
             objective = intentConstructionObjective,
             interpretedMeaning = intentInterpretedMeaning.ifEmpty { intentConstructionObjective },
-            keyConstraints = intentKeyConstraints
+            keyConstraints = intentKeyConstraints,
+            riskSurface = RiskSurface(
+                assumptions = intentAssumptions,
+                uncertainties = intentUncertainties,
+                missingInformation = intentMissingInformation,
+                failureRisks = intentFailureRisks
+            )
         )
 
         // ── Assemble views ────────────────────────────────────────────────────
@@ -720,16 +794,23 @@ class Replay(private val eventStore: EventRepository) {
         )
     }
 
-    private inline fun applyIntentSummary(
-        payload: Map<String, Any>,
-        apply: (interpretedMeaning: String, keyConstraints: List<String>, hasConstraints: Boolean) -> Unit
-    ) {
-        val interpretedMeaning = payload["interpretedMeaning"]?.toString().orEmpty()
-        val hasConstraints = payload.containsKey("keyConstraints")
+    private fun applyIntentSummary(payload: Map<String, Any>, apply: (IntentSummaryProjection) -> Unit) {
         apply(
-            interpretedMeaning,
-            resolveStringList(payload["keyConstraints"]),
-            hasConstraints
+            IntentSummaryProjection(
+                interpretedMeaning = payload["interpretedMeaning"]?.toString().orEmpty(),
+                keyConstraints = resolveStringList(payload["keyConstraints"]),
+                hasKeyConstraints = payload.containsKey("keyConstraints"),
+                riskSurface = RiskSurface(
+                    assumptions = resolveStringList(payload["assumptions"]),
+                    uncertainties = resolveStringList(payload["uncertainties"]),
+                    missingInformation = resolveStringList(payload["missingInformation"]),
+                    failureRisks = resolveStringList(payload["failureRisks"])
+                ),
+                hasAssumptions = payload.containsKey("assumptions"),
+                hasUncertainties = payload.containsKey("uncertainties"),
+                hasMissingInformation = payload.containsKey("missingInformation"),
+                hasFailureRisks = payload.containsKey("failureRisks")
+            )
         )
     }
 
@@ -740,4 +821,15 @@ class Replay(private val eventStore: EventRepository) {
             .filter { it.isNotEmpty() }
         else -> emptyList()
     }
+
+    private data class IntentSummaryProjection(
+        val interpretedMeaning: String,
+        val keyConstraints: List<String>,
+        val hasKeyConstraints: Boolean,
+        val riskSurface: RiskSurface,
+        val hasAssumptions: Boolean,
+        val hasUncertainties: Boolean,
+        val hasMissingInformation: Boolean,
+        val hasFailureRisks: Boolean
+    )
 }

@@ -7,6 +7,7 @@ import agoii.ui.core.ExecutionView as UiExecutionView
 import agoii.ui.core.AuditView as UiAuditView
 import agoii.ui.core.ConversationMessage as UiConversationMessage
 import agoii.ui.core.IntentSummary as UiIntentSummary
+import agoii.ui.core.RiskSurface as UiRiskSurface
 import agoii.ui.core.ReplayStructuralState as UiReplayStructuralState
 import com.agoii.mobile.interaction.InteractionEngine
 import kotlinx.coroutines.flow.StateFlow
@@ -93,7 +94,13 @@ class CoreBridgeAdapter(
                 intentSummary = UiIntentSummary(
                     objective = core.governanceView.intentConstruction.summary.objective,
                     interpretedMeaning = core.governanceView.intentConstruction.summary.interpretedMeaning,
-                    keyConstraints = core.governanceView.intentConstruction.summary.keyConstraints
+                    keyConstraints = core.governanceView.intentConstruction.summary.keyConstraints,
+                    riskSurface = UiRiskSurface(
+                        assumptions = core.governanceView.intentConstruction.summary.riskSurface.assumptions,
+                        uncertainties = core.governanceView.intentConstruction.summary.riskSurface.uncertainties,
+                        missingInformation = core.governanceView.intentConstruction.summary.riskSurface.missingInformation,
+                        failureRisks = core.governanceView.intentConstruction.summary.riskSurface.failureRisks
+                    )
                 ),
                 showIntentApprovalPanel = core.governanceView.showIntentApprovalPanel
             ),

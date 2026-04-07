@@ -36,7 +36,15 @@ data class GovernanceView(
 data class IntentSummary(
     val objective: String = "",
     val interpretedMeaning: String = "",
-    val keyConstraints: List<String> = emptyList()
+    val keyConstraints: List<String> = emptyList(),
+    val riskSurface: RiskSurface = RiskSurface()
+)
+
+data class RiskSurface(
+    val assumptions: List<String> = emptyList(),
+    val uncertainties: List<String> = emptyList(),
+    val missingInformation: List<String> = emptyList(),
+    val failureRisks: List<String> = emptyList()
 )
 
 /**

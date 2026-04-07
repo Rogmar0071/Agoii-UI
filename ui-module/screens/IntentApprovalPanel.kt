@@ -66,6 +66,46 @@ fun IntentApprovalPanel(
 
         Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
 
+        ExpandableSection(title = "Assumptions") {
+            Text(
+                text = governance.intentSummary.riskSurface.assumptions.joinToString(", ").ifEmpty { "—" },
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
+        ExpandableSection(title = "Uncertainty") {
+            Text(
+                text = governance.intentSummary.riskSurface.uncertainties.joinToString(", ").ifEmpty { "—" },
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
+        ExpandableSection(title = "Missing Information") {
+            Text(
+                text = governance.intentSummary.riskSurface.missingInformation.joinToString(", ").ifEmpty { "—" },
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
+        ExpandableSection(title = "Failure Risks") {
+            Text(
+                text = governance.intentSummary.riskSurface.failureRisks.joinToString(", ").ifEmpty { "—" },
+                style = AgoiiTypography.BodyMedium,
+                color = AgoiiColors.TextPrimary
+            )
+        }
+
+        Spacer(modifier = Modifier.height(AgoiiSpacing.SectionGap))
+
         ExpandableSection(title = "Intent Id") {
             Text(
                 text = governance.pendingIntentId.ifEmpty { "—" },
