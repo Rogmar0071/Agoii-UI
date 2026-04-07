@@ -109,8 +109,8 @@ class ExecutionEntryPoint(
         intentPayload: Map<String, Any>
     ): AuthorizationResult {
         // ── Phase 0: Extract intent identity ─────────────────────────────────
-        // Moved before the construction loop so intentId/objective can be passed
-        // to IcsModule.constructIntent without a second payload scan.
+        // Moved before the construction step so intentId/objective can be passed
+        // to IcsModule.constructIntentStep without a second payload scan.
         val objective = intentPayload["objective"] as? String
             ?: return AuthorizationResult.blocked(
                 "Intent payload missing 'objective'",

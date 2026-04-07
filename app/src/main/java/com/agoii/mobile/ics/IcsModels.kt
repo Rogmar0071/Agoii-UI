@@ -99,9 +99,8 @@ enum class ICSContractType {
 /**
  * Contract driving a single intent construction cycle.
  *
- * Consumed by [IcsModule.constructIntent] to emit the deterministic chain:
- * INTENT_PARTIAL_CREATED → INTENT_IN_PROGRESS → INTENT_COMPLETED →
- * INTENT_APPROVAL_REQUESTED → INTENT_APPROVED.
+ * Consumed by [IcsModule.constructIntentStep] to emit exactly one deterministic
+ * INTENT_* transition per execution cycle.
  *
  * @property contractId      Stable, deterministic identifier ("ic_<intentId>").
  * @property intentId        Identity of the intent being constructed.
@@ -116,10 +115,10 @@ data class ICSContract(
 )
 
 /**
- * Result of [IcsModule.constructIntent].
+ * Result of [IcsModule.constructIntentStep].
  */
 sealed class IntentConstructionResult {
-    /** Construction loop completed; INTENT_APPROVED written to the ledger. */
+    /** One governed construction step was written for the intent. */
     data class Constructed(val intentId: String) : IntentConstructionResult()
 
     /** Construction was already complete; INTENT_APPROVED already present — idempotent no-op. */
