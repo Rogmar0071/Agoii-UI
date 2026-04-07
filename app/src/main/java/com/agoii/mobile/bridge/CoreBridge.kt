@@ -309,10 +309,16 @@ class CoreBridge(context: Context) {
         Log.e("AGOII_TRACE", "LEDGER_APPEND_USER")
 
         val intentObjective = resolveObjective(structuredIntent, rawInput)
+        // INV-6 (NO intent loss): persist the full structuredIntent so that intentId and all
+        // other fields produced by the interaction layer survive into the execution spine.
+        // The objective key is always overwritten with the resolved value as the canonical form.
+        val intentPayload: Map<String, Any> = structuredIntent.toMutableMap().apply {
+            put("objective", intentObjective)
+        }
         ledger.appendEvent(
             projectId,
             EventTypes.INTENT_SUBMITTED,
-            mapOf("objective" to intentObjective)
+            intentPayload
         )
         Log.e("AGOII_TRACE", "LEDGER_APPEND_INTENT")
 
