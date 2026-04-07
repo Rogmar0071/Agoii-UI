@@ -32,6 +32,7 @@ import com.agoii.mobile.assembly.ContractOutput
 import com.agoii.mobile.assembly.FinalArtifact
 import com.agoii.mobile.core.EventRepository
 import com.agoii.mobile.core.EventTypes
+import android.util.Log
 
 /**
  * ICS Module — deterministic transformer from [FinalArtifact] to [IcsOutput].
@@ -52,6 +53,110 @@ import com.agoii.mobile.core.EventTypes
  * 11. Return [IcsExecutionResult.Processed]
  */
 class IcsModule {
+
+    // ── Intent Construction Loop (MQP-INTENT-ACTIVATION-LOOP-v1) ─────────────
+
+    /**
+     * Run the deterministic intent construction loop for the given [contract].
+     *
+     * Emits the following chain to [ledger] in order:
+     *   INTENT_PARTIAL_CREATED → INTENT_IN_PROGRESS → INTENT_COMPLETED →
+     *   INTENT_APPROVAL_REQUESTED → INTENT_APPROVED
+     *
+     * All transitions are legal per LedgerAudit (MQP-POST-INTENT-AUTHORITY-GATE-v1).
+     * The loop is idempotent: if any intent authority event is already present the method
+     * returns [IntentConstructionResult.AlreadyConstructed] (INTENT_APPROVED exists) or
+     * [IntentConstructionResult.Blocked] (construction started but not yet approved).
+     *
+     * Called exclusively by [ExecutionEntryPoint.executeIntent] before the intent
+     * authority gate check.  No other module may call this method.
+     *
+     * @param projectId  Project ledger identifier.
+     * @param contract   ICS contract describing the intent to construct.
+     * @param ledger     [EventRepository] — sole write authority.
+     * @return [IntentConstructionResult] — Constructed, AlreadyConstructed, or Blocked.
+     */
+    fun constructIntent(
+        projectId: String,
+        contract:  ICSContract,
+        ledger:    EventRepository
+    ): IntentConstructionResult {
+
+        val events = ledger.loadEvents(projectId)
+
+        // ── Idempotency guard ─────────────────────────────────────────────────
+        val intentAuthorityTypes = setOf(
+            EventTypes.INTENT_PARTIAL_CREATED,
+            EventTypes.INTENT_IN_PROGRESS,
+            EventTypes.INTENT_UPDATED,
+            EventTypes.INTENT_COMPLETED,
+            EventTypes.INTENT_APPROVAL_REQUESTED,
+            EventTypes.INTENT_APPROVED,
+            EventTypes.INTENT_REJECTED
+        )
+        if (events.any { it.type in intentAuthorityTypes }) {
+            return if (events.any { it.type == EventTypes.INTENT_APPROVED }) {
+                Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] already_approved intentId=${contract.intentId}")
+                IntentConstructionResult.AlreadyConstructed(contract.intentId)
+            } else {
+                IntentConstructionResult.Blocked(
+                    "Intent construction already started for intentId='${contract.intentId}' but not approved"
+                )
+            }
+        }
+
+        // ── Deterministic construction loop ───────────────────────────────────
+        // All five transitions are legal per LedgerAudit:
+        //   INTENT_SUBMITTED          → INTENT_PARTIAL_CREATED
+        //   INTENT_PARTIAL_CREATED    → INTENT_IN_PROGRESS
+        //   INTENT_IN_PROGRESS        → INTENT_COMPLETED
+        //   INTENT_COMPLETED          → INTENT_APPROVAL_REQUESTED
+        //   INTENT_APPROVAL_REQUESTED → INTENT_APPROVED
+        val base = mapOf(
+            "intentId"   to contract.intentId,
+            "objective"  to contract.userInput,
+            "contractId" to contract.contractId
+        )
+
+        Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] partial_created intentId=${contract.intentId}")
+        ledger.appendEvent(
+            projectId,
+            EventTypes.INTENT_PARTIAL_CREATED,
+            base + mapOf("completeness" to 0.2)
+        )
+
+        Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] in_progress intentId=${contract.intentId}")
+        ledger.appendEvent(
+            projectId,
+            EventTypes.INTENT_IN_PROGRESS,
+            base + mapOf("completeness" to 0.6)
+        )
+
+        Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] completed intentId=${contract.intentId}")
+        ledger.appendEvent(
+            projectId,
+            EventTypes.INTENT_COMPLETED,
+            base + mapOf("completeness" to 1.0)
+        )
+
+        Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] approval_requested intentId=${contract.intentId}")
+        ledger.appendEvent(
+            projectId,
+            EventTypes.INTENT_APPROVAL_REQUESTED,
+            base + mapOf("approvalRequired" to true)
+        )
+
+        Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] approved intentId=${contract.intentId}")
+        ledger.appendEvent(
+            projectId,
+            EventTypes.INTENT_APPROVED,
+            base + mapOf("source" to "INTENT_CONSTRUCTION_LOOP")
+        )
+
+        return IntentConstructionResult.Constructed(contract.intentId)
+    }
+
+    // ── ICS Processing Pipeline ───────────────────────────────────────────────
 
     /**
      * Execute the ICS processing pipeline.
