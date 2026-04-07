@@ -195,41 +195,11 @@ class IcsModule {
             ?.takeIf { it.isNotBlank() }
             ?: contract.userInput
 
-        val keyConstraints = when (val raw = contract.contextSnapshot["keyConstraints"]) {
-            is List<*> -> raw.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
-            is String -> raw.split(",")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-            else -> emptyList()
-        }
-        val assumptions = when (val raw = contract.contextSnapshot["assumptions"]) {
-            is List<*> -> raw.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
-            is String -> raw.split(",")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-            else -> emptyList()
-        }
-        val uncertainties = when (val raw = contract.contextSnapshot["uncertainties"]) {
-            is List<*> -> raw.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
-            is String -> raw.split(",")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-            else -> emptyList()
-        }
-        val missingInformation = when (val raw = contract.contextSnapshot["missingInformation"]) {
-            is List<*> -> raw.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
-            is String -> raw.split(",")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-            else -> emptyList()
-        }
-        val failureRisks = when (val raw = contract.contextSnapshot["failureRisks"]) {
-            is List<*> -> raw.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
-            is String -> raw.split(",")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-            else -> emptyList()
-        }
+        val keyConstraints = resolveStringList(contract.contextSnapshot["keyConstraints"])
+        val assumptions = resolveStringList(contract.contextSnapshot["assumptions"])
+        val uncertainties = resolveStringList(contract.contextSnapshot["uncertainties"])
+        val missingInformation = resolveStringList(contract.contextSnapshot["missingInformation"])
+        val failureRisks = resolveStringList(contract.contextSnapshot["failureRisks"])
 
         return mapOf(
             "interpretedMeaning" to interpretedMeaning,
@@ -251,6 +221,14 @@ class IcsModule {
             EventTypes.INTENT_APPROVED,
             EventTypes.INTENT_REJECTED
         )
+    }
+
+    private fun resolveStringList(value: Any?): List<String> = when (value) {
+        is List<*> -> value.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+        is String -> value.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+        else -> emptyList()
     }
 
     // ── ICS Processing Pipeline ───────────────────────────────────────────────
