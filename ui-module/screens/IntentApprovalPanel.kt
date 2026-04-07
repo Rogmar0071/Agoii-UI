@@ -58,7 +58,7 @@ fun IntentApprovalPanel(
 
         ExpandableSection(title = "Key Constraints") {
             Text(
-                text = governance.intentSummary.keyConstraints.joinToString(", ").ifEmpty { "—" },
+                text = governance.intentSummary.keyConstraints.toDisplayText(),
                 style = AgoiiTypography.BodyMedium,
                 color = AgoiiColors.TextPrimary
             )
@@ -68,7 +68,7 @@ fun IntentApprovalPanel(
 
         ExpandableSection(title = "Assumptions") {
             Text(
-                text = governance.intentSummary.riskSurface.assumptions.joinToString(", ").ifEmpty { "—" },
+                text = governance.intentSummary.riskSurface.assumptions.toDisplayText(),
                 style = AgoiiTypography.BodyMedium,
                 color = AgoiiColors.TextPrimary
             )
@@ -78,7 +78,7 @@ fun IntentApprovalPanel(
 
         ExpandableSection(title = "Uncertainty") {
             Text(
-                text = governance.intentSummary.riskSurface.uncertainties.joinToString(", ").ifEmpty { "—" },
+                text = governance.intentSummary.riskSurface.uncertainties.toDisplayText(),
                 style = AgoiiTypography.BodyMedium,
                 color = AgoiiColors.TextPrimary
             )
@@ -88,7 +88,7 @@ fun IntentApprovalPanel(
 
         ExpandableSection(title = "Missing Information") {
             Text(
-                text = governance.intentSummary.riskSurface.missingInformation.joinToString(", ").ifEmpty { "—" },
+                text = governance.intentSummary.riskSurface.missingInformation.toDisplayText(),
                 style = AgoiiTypography.BodyMedium,
                 color = AgoiiColors.TextPrimary
             )
@@ -98,7 +98,7 @@ fun IntentApprovalPanel(
 
         ExpandableSection(title = "Failure Risks") {
             Text(
-                text = governance.intentSummary.riskSurface.failureRisks.joinToString(", ").ifEmpty { "—" },
+                text = governance.intentSummary.riskSurface.failureRisks.toDisplayText(),
                 style = AgoiiTypography.BodyMedium,
                 color = AgoiiColors.TextPrimary
             )
@@ -133,3 +133,5 @@ fun IntentApprovalPanel(
         }
     }
 }
+
+private fun List<String>.toDisplayText(): String = joinToString(", ").ifEmpty { "—" }

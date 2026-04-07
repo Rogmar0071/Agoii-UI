@@ -387,6 +387,19 @@ class Replay(private val eventStore: EventRepository) {
         var intentMissingInformation    = emptyList<String>()
         var intentFailureRisks          = emptyList<String>()
 
+        fun mergeIntentSummary(summary: IntentSummaryProjection) {
+            if (summary.interpretedMeaning.isNotEmpty()) {
+                intentInterpretedMeaning = summary.interpretedMeaning
+            }
+            if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
+            if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
+            if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
+            if (summary.hasMissingInformation) {
+                intentMissingInformation = summary.riskSurface.missingInformation
+            }
+            if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
+        }
+
         for (event in events) {
             when (event.type) {
                 // ── Intent / contract ─────────────────────────────────────────
@@ -496,18 +509,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { summary ->
-                        if (summary.interpretedMeaning.isNotEmpty()) {
-                            intentInterpretedMeaning = summary.interpretedMeaning
-                        }
-                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
-                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
-                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
-                        if (summary.hasMissingInformation) {
-                            intentMissingInformation = summary.riskSurface.missingInformation
-                        }
-                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
-                    }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus       = "partial"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.0
                 }
@@ -516,18 +518,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { summary ->
-                        if (summary.interpretedMeaning.isNotEmpty()) {
-                            intentInterpretedMeaning = summary.interpretedMeaning
-                        }
-                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
-                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
-                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
-                        if (summary.hasMissingInformation) {
-                            intentMissingInformation = summary.riskSurface.missingInformation
-                        }
-                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
-                    }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus       = "in_progress"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: 0.3
                 }
@@ -536,18 +527,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { summary ->
-                        if (summary.interpretedMeaning.isNotEmpty()) {
-                            intentInterpretedMeaning = summary.interpretedMeaning
-                        }
-                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
-                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
-                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
-                        if (summary.hasMissingInformation) {
-                            intentMissingInformation = summary.riskSurface.missingInformation
-                        }
-                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
-                    }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus       = "in_progress"
                     intentConstructionCompleteness = resolveDouble(event.payload["completeness"]) ?: intentConstructionCompleteness
                 }
@@ -556,18 +536,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { summary ->
-                        if (summary.interpretedMeaning.isNotEmpty()) {
-                            intentInterpretedMeaning = summary.interpretedMeaning
-                        }
-                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
-                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
-                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
-                        if (summary.hasMissingInformation) {
-                            intentMissingInformation = summary.riskSurface.missingInformation
-                        }
-                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
-                    }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus       = "completed"
                     intentConstructionCompleteness = 1.0
                 }
@@ -576,18 +545,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { summary ->
-                        if (summary.interpretedMeaning.isNotEmpty()) {
-                            intentInterpretedMeaning = summary.interpretedMeaning
-                        }
-                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
-                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
-                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
-                        if (summary.hasMissingInformation) {
-                            intentMissingInformation = summary.riskSurface.missingInformation
-                        }
-                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
-                    }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus = "approval_requested"
                     intentApprovalRequired   = true
                 }
@@ -596,18 +554,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { summary ->
-                        if (summary.interpretedMeaning.isNotEmpty()) {
-                            intentInterpretedMeaning = summary.interpretedMeaning
-                        }
-                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
-                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
-                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
-                        if (summary.hasMissingInformation) {
-                            intentMissingInformation = summary.riskSurface.missingInformation
-                        }
-                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
-                    }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus = "approved"
                     intentIsApproved         = true
                 }
@@ -616,18 +563,7 @@ class Replay(private val eventStore: EventRepository) {
                         if (id.isNotEmpty()) intentConstructionId = id
                         if (obj.isNotEmpty()) intentConstructionObjective = obj
                     }
-                    applyIntentSummary(event.payload) { summary ->
-                        if (summary.interpretedMeaning.isNotEmpty()) {
-                            intentInterpretedMeaning = summary.interpretedMeaning
-                        }
-                        if (summary.hasKeyConstraints) intentKeyConstraints = summary.keyConstraints
-                        if (summary.hasAssumptions) intentAssumptions = summary.riskSurface.assumptions
-                        if (summary.hasUncertainties) intentUncertainties = summary.riskSurface.uncertainties
-                        if (summary.hasMissingInformation) {
-                            intentMissingInformation = summary.riskSurface.missingInformation
-                        }
-                        if (summary.hasFailureRisks) intentFailureRisks = summary.riskSurface.failureRisks
-                    }
+                    applyIntentSummary(event.payload, ::mergeIntentSummary)
                     intentConstructionStatus = "rejected"
                     intentIsApproved         = false
                 }
