@@ -118,26 +118,24 @@ class ExecutionEntryPoint(
         val intentId = intentPayload["intentId"] as? String
             ?: UUID.nameUUIDFromBytes(objective.toByteArray()).toString()
 
-        // ── Phase 1: Intent construction loop (MQP-INTENT-ACTIVATION-LOOP-v1) ─
-        // Run the deterministic INTENT_* event chain inside the execution pipeline
-        // as a contract-driven loop.  IcsModule is the SOLE emitter of intent
-        // authority events.  The loop is idempotent: if INTENT_APPROVED already
-        // exists it returns AlreadyConstructed without writing any events.
+        // ── Phase 1: Intent construction step (MQP-INTENT-STEP-EXECUTION-v1) ──
+        // Emit exactly one INTENT_* event per execution cycle. Contract derivation
+        // remains blocked until a later cycle observes INTENT_APPROVED.
         val icsContract = ICSContract(
             contractId      = "ic_$intentId",
             intentId        = intentId,
             userInput       = objective,
             contextSnapshot = intentPayload
         )
-        val constructionResult = icsModule.constructIntent(projectId, icsContract, ledger)
+        val constructionResult = icsModule.constructIntentStep(projectId, icsContract, ledger)
         if (constructionResult is IntentConstructionResult.Blocked) {
             return AuthorizationResult.blocked(constructionResult.reason, "INTENT_CONSTRUCTION")
         }
 
         // ── Phase 2: Intent Authority gate (MQP-POST-INTENT-AUTHORITY-GATE-v1) ─
-        // Reload events after construction loop so the gate sees INTENT_APPROVED.
-        // This list is also used later for the pre-write CONTRACTS_GENERATED
-        // validation, where the prior event must be INTENT_APPROVED.
+        // Reload events after the single-step write so the gate can stop execution
+        // until INTENT_APPROVED exists. CONTRACTS_GENERATED remains downstream of
+        // that approval boundary.
         val projectEvents = ledger.loadEvents(projectId)
         val intentAuthorityEventsPresent = projectEvents.any { it.type in setOf(
             EventTypes.INTENT_PARTIAL_CREATED,

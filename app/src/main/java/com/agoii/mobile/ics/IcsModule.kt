@@ -54,19 +54,24 @@ import com.agoii.mobile.core.EventTypes
  */
 class IcsModule {
 
-    // ── Intent Construction Loop (MQP-INTENT-ACTIVATION-LOOP-v1) ─────────────
+    // ── Intent Construction Step (MQP-INTENT-STEP-EXECUTION-v1) ──────────────
 
     /**
-     * Run the deterministic intent construction loop for the given [contract].
+     * Run exactly one deterministic intent construction step for the given [contract].
      *
-     * Emits the following chain to [ledger] in order:
-     *   INTENT_PARTIAL_CREATED → INTENT_IN_PROGRESS → INTENT_COMPLETED →
-     *   INTENT_APPROVAL_REQUESTED → INTENT_APPROVED
+     * Emits exactly one INTENT_* event per invocation. No internal loop, no auto-approval,
+     * no multi-event writes.
      *
-     * All transitions are legal per LedgerAudit (MQP-POST-INTENT-AUTHORITY-GATE-v1).
-     * The loop is idempotent: if any intent authority event is already present the method
-     * returns [IntentConstructionResult.AlreadyConstructed] (INTENT_APPROVED exists) or
-     * [IntentConstructionResult.Blocked] (construction started but not yet approved).
+     * Deterministic state machine:
+     *   NONE               -> INTENT_PARTIAL_CREATED
+     *   INTENT_PARTIAL_CREATED -> INTENT_IN_PROGRESS
+     *   INTENT_IN_PROGRESS / INTENT_UPDATED:
+     *       completeness < 1.0 -> INTENT_UPDATED or INTENT_IN_PROGRESS (LedgerAudit-safe)
+     *       completeness >= 1.0 -> INTENT_COMPLETED when legal
+     *   INTENT_COMPLETED   -> INTENT_APPROVAL_REQUESTED
+     *   INTENT_APPROVAL_REQUESTED -> Blocked("AWAITING_APPROVAL")
+     *   INTENT_APPROVED    -> AlreadyConstructed
+     *   INTENT_REJECTED    -> Blocked("INTENT_REJECTED_REQUIRES_RESTART")
      *
      * Called exclusively by [ExecutionEntryPoint.executeIntent] before the intent
      * authority gate check.  No other module may call this method.
@@ -76,16 +81,117 @@ class IcsModule {
      * @param ledger     [EventRepository] — sole write authority.
      * @return [IntentConstructionResult] — Constructed, AlreadyConstructed, or Blocked.
      */
-    fun constructIntent(
+    fun constructIntentStep(
         projectId: String,
         contract:  ICSContract,
         ledger:    EventRepository
     ): IntentConstructionResult {
-
         val events = ledger.loadEvents(projectId)
+        val lastIntentEvent = events.lastOrNull { it.type in INTENT_AUTHORITY_TYPES }
+        val lastType = lastIntentEvent?.type
+        val completeness = resolveCompleteness(lastIntentEvent?.payload?.get("completeness"))
 
-        // ── Idempotency guard ─────────────────────────────────────────────────
-        val intentAuthorityTypes = setOf(
+        val basePayload = mapOf(
+            "intentId" to contract.intentId,
+            "objective" to contract.userInput,
+            "contractId" to contract.contractId
+        )
+
+        return when (lastType) {
+            null -> {
+                appendIntentEvent(
+                    projectId = projectId,
+                    ledger = ledger,
+                    type = EventTypes.INTENT_PARTIAL_CREATED,
+                    payload = basePayload + mapOf("completeness" to 0.2)
+                )
+                IntentConstructionResult.Constructed(contract.intentId)
+            }
+
+            EventTypes.INTENT_PARTIAL_CREATED -> {
+                appendIntentEvent(
+                    projectId = projectId,
+                    ledger = ledger,
+                    type = EventTypes.INTENT_IN_PROGRESS,
+                    payload = basePayload + mapOf("completeness" to 1.0)
+                )
+                IntentConstructionResult.Constructed(contract.intentId)
+            }
+
+            EventTypes.INTENT_IN_PROGRESS -> {
+                if (completeness < 1.0) {
+                    appendIntentEvent(
+                        projectId = projectId,
+                        ledger = ledger,
+                        type = EventTypes.INTENT_UPDATED,
+                        payload = basePayload + mapOf("completeness" to 1.0)
+                    )
+                } else {
+                    appendIntentEvent(
+                        projectId = projectId,
+                        ledger = ledger,
+                        type = EventTypes.INTENT_COMPLETED,
+                        payload = basePayload + mapOf("completeness" to 1.0)
+                    )
+                }
+                IntentConstructionResult.Constructed(contract.intentId)
+            }
+
+            EventTypes.INTENT_UPDATED -> {
+                appendIntentEvent(
+                    projectId = projectId,
+                    ledger = ledger,
+                    type = EventTypes.INTENT_IN_PROGRESS,
+                    payload = basePayload + mapOf("completeness" to 1.0)
+                )
+                IntentConstructionResult.Constructed(contract.intentId)
+            }
+
+            EventTypes.INTENT_COMPLETED -> {
+                appendIntentEvent(
+                    projectId = projectId,
+                    ledger = ledger,
+                    type = EventTypes.INTENT_APPROVAL_REQUESTED,
+                    payload = basePayload + mapOf("completeness" to 1.0)
+                )
+                IntentConstructionResult.Constructed(contract.intentId)
+            }
+
+            EventTypes.INTENT_APPROVAL_REQUESTED ->
+                IntentConstructionResult.Blocked("AWAITING_APPROVAL")
+
+            EventTypes.INTENT_APPROVED ->
+                IntentConstructionResult.AlreadyConstructed(contract.intentId)
+
+            EventTypes.INTENT_REJECTED ->
+                IntentConstructionResult.Blocked("INTENT_REJECTED_REQUIRES_RESTART")
+
+            else ->
+                IntentConstructionResult.Blocked("UNSUPPORTED_INTENT_STATE:$lastType")
+        }
+    }
+
+    private fun appendIntentEvent(
+        projectId: String,
+        ledger: EventRepository,
+        type: String,
+        payload: Map<String, Any>
+    ) {
+        Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION_STEP] type=$type intentId=${payload["intentId"]}")
+        ledger.appendEvent(projectId, type, payload)
+    }
+
+    private fun resolveCompleteness(value: Any?): Double = when (value) {
+        is Double -> value
+        is Float -> value.toDouble()
+        is Int -> value.toDouble()
+        is Long -> value.toDouble()
+        is String -> value.toDoubleOrNull() ?: 0.0
+        else -> 0.0
+    }
+
+    private companion object {
+        val INTENT_AUTHORITY_TYPES = setOf(
             EventTypes.INTENT_PARTIAL_CREATED,
             EventTypes.INTENT_IN_PROGRESS,
             EventTypes.INTENT_UPDATED,
@@ -94,66 +200,6 @@ class IcsModule {
             EventTypes.INTENT_APPROVED,
             EventTypes.INTENT_REJECTED
         )
-        if (events.any { it.type in intentAuthorityTypes }) {
-            return if (events.any { it.type == EventTypes.INTENT_APPROVED }) {
-                Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] already_approved intentId=${contract.intentId}")
-                IntentConstructionResult.AlreadyConstructed(contract.intentId)
-            } else {
-                IntentConstructionResult.Blocked(
-                    "Intent construction already started for intentId='${contract.intentId}' but not approved"
-                )
-            }
-        }
-
-        // ── Deterministic construction loop ───────────────────────────────────
-        // All five transitions are legal per LedgerAudit:
-        //   INTENT_SUBMITTED          → INTENT_PARTIAL_CREATED
-        //   INTENT_PARTIAL_CREATED    → INTENT_IN_PROGRESS
-        //   INTENT_IN_PROGRESS        → INTENT_COMPLETED
-        //   INTENT_COMPLETED          → INTENT_APPROVAL_REQUESTED
-        //   INTENT_APPROVAL_REQUESTED → INTENT_APPROVED
-        val base = mapOf(
-            "intentId"   to contract.intentId,
-            "objective"  to contract.userInput,
-            "contractId" to contract.contractId
-        )
-
-        Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] partial_created intentId=${contract.intentId}")
-        ledger.appendEvent(
-            projectId,
-            EventTypes.INTENT_PARTIAL_CREATED,
-            base + mapOf("completeness" to 0.2)
-        )
-
-        Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] in_progress intentId=${contract.intentId}")
-        ledger.appendEvent(
-            projectId,
-            EventTypes.INTENT_IN_PROGRESS,
-            base + mapOf("completeness" to 0.6)
-        )
-
-        Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] completed intentId=${contract.intentId}")
-        ledger.appendEvent(
-            projectId,
-            EventTypes.INTENT_COMPLETED,
-            base + mapOf("completeness" to 1.0)
-        )
-
-        Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] approval_requested intentId=${contract.intentId}")
-        ledger.appendEvent(
-            projectId,
-            EventTypes.INTENT_APPROVAL_REQUESTED,
-            base + mapOf("approvalRequired" to true)
-        )
-
-        Log.e("AGOII_TRACE", "[INTENT_CONSTRUCTION] approved intentId=${contract.intentId}")
-        ledger.appendEvent(
-            projectId,
-            EventTypes.INTENT_APPROVED,
-            base + mapOf("source" to "INTENT_CONSTRUCTION_LOOP")
-        )
-
-        return IntentConstructionResult.Constructed(contract.intentId)
     }
 
     // ── ICS Processing Pipeline ───────────────────────────────────────────────
